@@ -5,9 +5,9 @@ export module parsley.version;
 
 export namespace parsley {
 
-inline constexpr int VERSION_MAJOR = 0;
-inline constexpr int VERSION_MINOR = 9;
+inline constexpr int VERSION_MAJOR = 1;
+inline constexpr int VERSION_MINOR = 0;
 inline constexpr int VERSION_PATCH = 0;
-inline constexpr std::string_view VERSION_STRING = "0.9.0";
+inline constexpr std::string_view VERSION_STRING = "1.0.0";
 
 } // namespace parsley
