@@ -12,6 +12,8 @@ import parsley.parser;
 import parsley.stdlib;
 import parsley.resolve;
 import parsley.typecheck;
+import parsley.ir;
+import parsley.desugar;
 
 namespace {
 
@@ -39,9 +41,9 @@ std::string read_fixture(std::string_view name) {
 
 void test_version() {
   check(parsley::VERSION_MAJOR == 0, "VERSION_MAJOR == 0");
-  check(parsley::VERSION_MINOR == 3, "VERSION_MINOR == 3");
+  check(parsley::VERSION_MINOR == 4, "VERSION_MINOR == 4");
   check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "0.3.0", "VERSION_STRING == 0.3.0");
+  check(parsley::VERSION_STRING == "0.4.0", "VERSION_STRING == 0.4.0");
 }
 
 void test_diagnostics() {
@@ -229,6 +231,73 @@ void test_stdlib_resolve_typecheck() {
   }
 }
 
+void test_ir_and_desugar() {
+  using namespace parsley;
+
+  // 1. Calc.parsley desugaring + IR JSON & S-expr
+  {
+    const std::string calc_src = read_fixture("Calc.parsley");
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(calc_src, "Calc.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+
+    check(!diags.has_errors(), "Calc.parsley desugars without errors");
+    check(grammar.module_name == "Calc", "IR module_name == Calc");
+    check(!grammar.gTokens.empty(), "IR gTokens non-empty");
+    check(grammar.gRules.find("program") != grammar.gRules.end(), "IR contains program rule");
+    check(grammar.gRules.find("expr") != grammar.gRules.end(), "IR contains expr rule");
+    check(grammar.gTypes.size() == 2, "IR has 2 ADTs (Op, Expr)");
+    check(grammar.gExamples.size() == 2, "IR has 2 examples");
+
+    // Check anonymous literals/keywords have higher priority than regex tokens
+    const auto* kw_let = ir::find_token(grammar, "kw_let");
+    const auto* tok_ident = ir::find_token(grammar, "ident");
+    check(tok_ident != nullptr, "IR has ident token");
+    if (kw_let && tok_ident) {
+      check(kw_let->priority > tok_ident->priority, "keyword priority > regex ident priority");
+    }
+
+    const std::string json = ir::to_json(grammar);
+    const std::string sexpr = ir::to_sexpr(grammar);
+    check(json.find("\"module\": \"Calc\"") != std::string::npos ||
+          json.find("\"module\":\"Calc\"") != std::string::npos, "IR JSON contains Calc module");
+    check(json.find("PrecTable") != std::string::npos, "IR JSON contains PrecTable");
+    check(sexpr.find("(grammar") != std::string::npos &&
+          sexpr.find("(module \"Calc\")") != std::string::npos, "IR S-expr contains Calc grammar");
+  }
+
+  // 2. LexModes.parsley desugaring
+  {
+    const std::string modes_src = read_fixture("LexModes.parsley");
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(modes_src, "LexModes.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+    check(!diags.has_errors(), "LexModes.parsley desugars without errors");
+    check(grammar.gModes.size() == 1 && grammar.gModes[0].name == "string", "IR has string lex mode");
+  }
+
+  // 3. E0400: infinite parameterized rule expansion guard
+  {
+    const std::string rec_src =
+        "module BadRec (entry) where\n"
+        "token a = /a/ :: Text\n"
+        "loop :: Rule a -> Rule a\n"
+        "loop p = loop (loop p)\n"
+        "entry :: Text\n"
+        "entry = loop a\n";
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(rec_src, "BadRec.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    (void)desugar::desugar_module(mod, resolved, typed, diags);
+    check(has_diag_code(diags, "E0400"), "E0400 emitted on infinite parameterized rule expansion");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -236,11 +305,12 @@ int main() {
   test_diagnostics();
   test_lexer_and_parser();
   test_stdlib_resolve_typecheck();
+  test_ir_and_desugar();
 
   if (g_failures > 0) {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v0.3.0 tests passed.\n";
+  std::cout << "All Phase v0.4.0 tests passed.\n";
   return 0;
 }

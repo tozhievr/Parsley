@@ -25,6 +25,8 @@ target_sources(parsley_core
       src/stdlib.cppm
       src/resolve.cppm
       src/typecheck.cppm
+      src/ir.cppm
+      src/desugar.cppm
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
