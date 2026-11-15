@@ -86,6 +86,10 @@ install(FILES
   DESTINATION share/doc/parsley
 )
 
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/editors/vscode"
+  DESTINATION share/parsley/editors
+)
+
 set(CPACK_PACKAGE_NAME "parsley")
 set(CPACK_PACKAGE_VENDOR "Parsley Project")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Parsley — Haskell-style DSL for declarative grammar definitions and ISO C17 parser generation")

@@ -1,0 +1,321 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Parsley",
+  "scopeName": "source.parsley",
+  "patterns": [
+    {
+      "include": "#pragma"
+    },
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#char"
+    },
+    {
+      "include": "#regex"
+    },
+    {
+      "include": "#module_decl"
+    },
+    {
+      "include": "#import_decl"
+    },
+    {
+      "include": "#data_decl"
+    },
+    {
+      "include": "#token_decl"
+    },
+    {
+      "include": "#example_decl"
+    },
+    {
+      "include": "#type_signature"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#backtick_infix"
+    },
+    {
+      "include": "#number"
+    },
+    {
+      "include": "#type_or_ctor"
+    },
+    {
+      "include": "#identifier"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "pragma": {
+      "name": "meta.preprocessor.pragma.parsley",
+      "begin": "\\{-#",
+      "end": "#-\\}",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.pragma.begin.parsley"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.pragma.end.parsley"
+        }
+      },
+      "patterns": [
+        {
+          "match": "\\b(START|MODE|BACKEND|PREC|NOFACTOR|LL1|LLK|LALR|LR|PEG|PACKRAT|GLR|GLL)\\b",
+          "name": "keyword.other.pragma.parsley"
+        },
+        {
+          "match": "[<>]",
+          "name": "keyword.operator.pragma.parsley"
+        },
+        {
+          "match": "[A-Za-z_][A-Za-z0-9_']*",
+          "name": "entity.name.tag.pragma.parsley"
+        }
+      ]
+    },
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.double-dash.parsley",
+          "match": "--.*$"
+        },
+        {
+          "include": "#block_comment"
+        }
+      ]
+    },
+    "block_comment": {
+      "name": "comment.block.parsley",
+      "begin": "\\{-",
+      "end": "-\\}",
+      "patterns": [
+        {
+          "include": "#block_comment"
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.parsley",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.parsley",
+          "match": "\\\\(?:[\"\\\\abfnrtv0]|x[0-9A-Fa-f]+|u\\{[0-9A-Fa-f]+\\}|u[0-9A-Fa-f]{4})"
+        }
+      ]
+    },
+    "char": {
+      "name": "string.quoted.single.parsley",
+      "match": "'(?:[^'\\\\]|\\\\.)'"
+    },
+    "regex": {
+      "name": "string.regexp.parsley",
+      "begin": "/",
+      "end": "/",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.parsley"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.parsley"
+        }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.regexp.parsley",
+          "match": "\\\\."
+        },
+        {
+          "name": "constant.other.character-class.set.regexp.parsley",
+          "begin": "\\[",
+          "end": "\\]",
+          "patterns": [
+            {
+              "name": "constant.character.escape.regexp.parsley",
+              "match": "\\\\."
+            },
+            {
+              "name": "support.class.posix.regexp.parsley",
+              "match": "\\[:[a-z]+:\\]"
+            }
+          ]
+        }
+      ]
+    },
+    "module_decl": {
+      "match": "^\\s*(module)\\s+([A-Z][A-Za-z0-9_'.]*)",
+      "captures": {
+        "1": {
+          "name": "keyword.control.module.parsley"
+        },
+        "2": {
+          "name": "entity.name.namespace.parsley"
+        }
+      }
+    },
+    "import_decl": {
+      "match": "^\\s*(import)\\s+(?:(qualified)\\s+)?([A-Z][A-Za-z0-9_'.]*)(?:\\s+(as)\\s+([A-Z][A-Za-z0-9_']*))?(?:\\s+(hiding))?",
+      "captures": {
+        "1": {
+          "name": "keyword.control.import.parsley"
+        },
+        "2": {
+          "name": "keyword.control.import.qualified.parsley"
+        },
+        "3": {
+          "name": "entity.name.namespace.parsley"
+        },
+        "4": {
+          "name": "keyword.control.import.as.parsley"
+        },
+        "5": {
+          "name": "entity.name.namespace.alias.parsley"
+        },
+        "6": {
+          "name": "keyword.control.import.hiding.parsley"
+        }
+      }
+    },
+    "data_decl": {
+      "match": "^\\s*(foreign\\s+data|newtype|data|type)\\s+([A-Z][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.data.parsley"
+        },
+        "2": {
+          "name": "entity.name.type.parsley"
+        }
+      }
+    },
+    "token_decl": {
+      "patterns": [
+        {
+          "match": "^\\s*(mode)\\s+([a-z_][A-Za-z0-9_']*)\\s+(where)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.mode.parsley"
+            },
+            "2": {
+              "name": "entity.name.section.mode.parsley"
+            },
+            "3": {
+              "name": "keyword.control.where.parsley"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(token|skip)\\s+([a-z_][A-Za-z0-9_']*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.token.parsley"
+            },
+            "2": {
+              "name": "variable.other.token.declaration.parsley"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(keywords)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.keywords.parsley"
+            }
+          }
+        }
+      ]
+    },
+    "example_decl": {
+      "match": "^\\s*(example)\\b",
+      "captures": {
+        "1": {
+          "name": "keyword.other.example.parsley"
+        }
+      }
+    },
+    "type_signature": {
+      "match": "^\\s*([a-z_][A-Za-z0-9_']*)\\s*(::)",
+      "captures": {
+        "1": {
+          "name": "entity.name.function.rule.declaration.parsley"
+        },
+        "2": {
+          "name": "keyword.operator.double-colon.parsley"
+        }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.parsley",
+          "match": "\\b(module|where|import|qualified|as|hiding|do|context|pure|exactly)\\b"
+        },
+        {
+          "name": "keyword.declaration.parsley",
+          "match": "\\b(data|newtype|foreign|type|token|skip|keywords|mode|push|pop)\\b"
+        },
+        {
+          "name": "keyword.other.operators.parsley",
+          "match": "\\b(operators|infixl|infixr|infix|prefix|postfix|mixfix)\\b"
+        },
+        {
+          "name": "keyword.other.test.parsley",
+          "match": "\\b(example|parses-to|fails-at|expecting)\\b"
+        },
+        {
+          "name": "support.function.prelude.parsley",
+          "match": "\\b(sepBy|sepEndBy|many|some|optional|between|eof|lookahead|notFollowedBy|recover)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "name": "keyword.operator.combinator.parsley",
+      "match": "(<\\$>|<\\*>|<\\*\\*>|\\*>|<\\*|<\\|>|<\\?>|<-|->|=>|::|=|\\|)"
+    },
+    "backtick_infix": {
+      "name": "entity.name.function.infix.parsley",
+      "match": "`[a-zA-Z_][a-zA-Z0-9_.']*`"
+    },
+    "number": {
+      "name": "constant.numeric.parsley",
+      "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\\b"
+    },
+    "type_or_ctor": {
+      "patterns": [
+        {
+          "name": "support.type.builtin.parsley",
+          "match": "\\b(Rule|Text|Double|Int|Bool|Char|Maybe|Either|String|Void)\\b"
+        },
+        {
+          "name": "entity.name.type.constructor.parsley",
+          "match": "\\b[A-Z][A-Za-z0-9_']*\\b"
+        }
+      ]
+    },
+    "identifier": {
+      "name": "variable.other.parsley",
+      "match": "\\b[a-z_][A-Za-z0-9_']*\\b"
+    },
+    "punctuation": {
+      "name": "punctuation.parsley",
+      "match": "[(){}\\[\\],:.]"
+    }
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "Module Declaration": {
+    "prefix": "module",
+    "body": [
+      "module ${1:MyGrammar} (${2:program}) where",
+      "",
+      "import Parsley.Prelude (${3:sepBy, many, eof})",
+      "",
+      "-- Lexer",
+      "skip  ws    = /[[:space:]]+/",
+      "token ident = /[a-zA-Z_][a-zA-Z0-9_]*/ :: Text",
+      "",
+      "-- AST",
+      "data ${4:Ast}",
+      "  = ${5:Node} Text",
+      "",
+      "-- Syntax",
+      "${2:program} :: ${4:Ast}",
+      "${2:program} = (${5:Node} <$> ident) <* eof",
+      "",
+      "example \"basic\" : \"${6:hello}\" parses-to ${5:Node} \"${6:hello}\"",
+      "$0"
+    ],
+    "description": "Create a new Parsley grammar module with lexer, AST, start rule, and example"
+  },
+  "Token Declaration": {
+    "prefix": "token",
+    "body": [
+      "token ${1:name} = /${2:[a-zA-Z_][a-zA-Z0-9_]*}/ :: ${3:Text}$0"
+    ],
+    "description": "Declare a named regex token with a result type"
+  },
+  "Skip Token Declaration": {
+    "prefix": "skip",
+    "body": [
+      "skip ${1:ws} = /${2:[[:space:]]+}/$0"
+    ],
+    "description": "Declare a skipped token (whitespace or comment)"
+  },
+  "Lexer Mode": {
+    "prefix": "mode",
+    "body": [
+      "mode ${1:string} where",
+      "  token ${2:chars} = /${3:[^\"]+}/",
+      "  token ${4:close} = \"${5:\\\"}\" -> pop",
+      "",
+      "token ${6:open} = \"${5:\\\"}\" -> push ${1:string}$0"
+    ],
+    "description": "Declare a stateful lexer mode with push/pop transitions"
+  },
+  "Data Type ADT": {
+    "prefix": "data",
+    "body": [
+      "data ${1:Expr}",
+      "  = ${2:Ctor1} ${3:Text}",
+      "  | ${4:Ctor2} ${1:Expr} ${1:Expr}$0"
+    ],
+    "description": "Declare an algebraic data type for the AST"
+  },
+  "Rule Signature and Definition": {
+    "prefix": "rule",
+    "body": [
+      "${1:myRule} :: ${2:Expr}",
+      "${1:myRule}",
+      "  = ${3:Ctor} <$> ${4:ident}",
+      "  | ${5:fallback}$0"
+    ],
+    "description": "Declare a typed grammar rule with alternatives"
+  },
+  "Operators Precedence Table": {
+    "prefix": "operators",
+    "body": [
+      "operators ${1:atom}",
+      "  [ infixl ${2:6} [\"${3:+}\" => ${4:Bin Add}, \"${5:-}\" => ${6:Bin Sub}]",
+      "  , infixl ${7:7} [\"${8:*}\" => ${9:Bin Mul}, \"${10:/}\" => ${11:Bin Div}]",
+      "  , prefix ${12:9} [\"${13:-}\" => ${14:Neg}]",
+      "  ]$0"
+    ],
+    "description": "Create an operators precedence/associativity table"
+  },
+  "Applicative Do Block": {
+    "prefix": "do",
+    "body": [
+      "do",
+      "  ${1:x} <- ${2:ident}",
+      "  \"${3:=}\"",
+      "  ${4:e} <- ${5:expr}",
+      "  pure (${6:Ctor} ${1:x} ${4:e})$0"
+    ],
+    "description": "Create an ApplicativeDo sequence block"
+  },
+  "Context-Sensitive Do Block": {
+    "prefix": "context do",
+    "body": [
+      "context do",
+      "  ${1:name} <- \"<\" *> ${2:ident} <* \">\"",
+      "  ${3:body} <- many ${4:node}",
+      "  \"</\" *> exactly ${1:name} <* \">\"",
+      "  pure (${5:Elem} ${1:name} ${3:body})$0"
+    ],
+    "description": "Create a context-sensitive monadic do block using `exactly`"
+  },
+  "Example Parses-To Assertion": {
+    "prefix": "example",
+    "body": [
+      "example \"${1:test name}\" : \"${2:input}\" parses-to ${3:ExpectedAst}$0"
+    ],
+    "description": "Add an inline `parses-to` grammar assertion"
+  },
+  "Example Fails-At Assertion": {
+    "prefix": "fails-at",
+    "body": [
+      "example \"${1:error case}\" : \"${2:bad input}\" fails-at (${3:1}, ${4:4}) expecting \"${5:expression}\"$0"
+    ],
+    "description": "Add an inline `fails-at` negative grammar assertion"
+  },
+  "Compiler Pragma": {
+    "prefix": "pragma",
+    "body": [
+      "{-# ${1|START,MODE,BACKEND,PREC,NOFACTOR|} ${2:program} #-}$0"
+    ],
+    "description": "Insert a Parsley compiler pragma ({-# ... #-})"
+  }
+}

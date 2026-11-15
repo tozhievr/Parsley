@@ -48,9 +48,9 @@ std::string read_fixture(std::string_view name) {
 
 void test_version() {
   check(parsley::VERSION_MAJOR == 1, "VERSION_MAJOR == 1");
-  check(parsley::VERSION_MINOR == 2, "VERSION_MINOR == 2");
+  check(parsley::VERSION_MINOR == 3, "VERSION_MINOR == 3");
   check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "1.2.0", "VERSION_STRING == 1.2.0");
+  check(parsley::VERSION_STRING == "1.3.0", "VERSION_STRING == 1.3.0");
 }
 
 void test_diagnostics() {
@@ -697,16 +697,22 @@ void test_tooling_compiler_cli() {
   check(dot.find("digraph") != std::string::npos, "generate_dot produces digraph");
   check(svg.find("<svg") != std::string::npos, "generate_railroad_svg produces <svg");
 
-  // 4. LSP server JSON-RPC 2.0 tests
+  // 4. LSP server JSON-RPC 2.0 tests (v1.3.0 semantic/debug/IDE capabilities)
   {
     tooling::LspServer lsp;
     auto init_resp = lsp.process_message(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})");
-    check(init_resp.size() == 1 && init_resp[0].find("hoverProvider") != std::string::npos,
-          "LSP initialize returns capabilities");
+    check(init_resp.size() == 1 &&
+          init_resp[0].find("hoverProvider") != std::string::npos &&
+          init_resp[0].find("semanticTokensProvider") != std::string::npos &&
+          init_resp[0].find("documentSymbolProvider") != std::string::npos &&
+          init_resp[0].find("documentFormattingProvider") != std::string::npos &&
+          init_resp[0].find("completionProvider") != std::string::npos &&
+          init_resp[0].find("codeActionProvider") != std::string::npos &&
+          init_resp[0].find("codeLensProvider") != std::string::npos,
+          "LSP initialize returns full v1.3.0 capabilities");
 
-    // Escape calc_src as JSON string minimally by using a simple grammar
     auto open_resp = lsp.process_message(
-        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///T.parsley","languageId":"parsley","version":1,"text":"module T (expr) where\ntoken n = /[0-9]+/ :: Text\nexpr :: Text\nexpr = n\n"}}})");
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///T.parsley","languageId":"parsley","version":1,"text":"module T (expr) where\ntoken n = /[0-9]+/ :: Text\nexpr :: Text\nexpr = n\nexample \"num\" : \"42\" parses-to \"42\"\n"}}})");
     check(open_resp.size() == 1 && open_resp[0].find("publishDiagnostics") != std::string::npos,
           "LSP didOpen publishes diagnostics");
 
@@ -725,7 +731,54 @@ void test_tooling_compiler_cli() {
     check(refs_resp.size() == 1 && refs_resp[0].find("file:///T.parsley") != std::string::npos,
           "LSP references returns locations");
 
-    auto shut_resp = lsp.process_message(R"({"jsonrpc":"2.0","id":5,"method":"shutdown"})");
+    auto sem_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":5,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"file:///T.parsley"}}})");
+    check(sem_resp.size() == 1 && sem_resp[0].find("\"data\":[") != std::string::npos &&
+          sem_resp[0].find("\"data\":[]") == std::string::npos,
+          "LSP semanticTokens/full returns non-empty delta-encoded tokens");
+
+    auto sym_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":6,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file:///T.parsley"}}})");
+    check(sym_resp.size() == 1 && sym_resp[0].find("expr") != std::string::npos,
+          "LSP documentSymbol returns hierarchical symbols");
+
+    auto fmt_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":7,"method":"textDocument/formatting","params":{"textDocument":{"uri":"file:///T.parsley"},"options":{"tabSize":2,"insertSpaces":true}}})");
+    check(fmt_resp.size() == 1 && fmt_resp[0].find("newText") != std::string::npos,
+          "LSP formatting returns TextEdit");
+
+    auto comp_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":8,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///T.parsley"},"position":{"line":3,"character":7}}})");
+    check(comp_resp.size() == 1 && comp_resp[0].find("sepBy") != std::string::npos &&
+          comp_resp[0].find("expr") != std::string::npos,
+          "LSP completion returns rules and Prelude combinators");
+
+    auto lens_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":9,"method":"textDocument/codeLens","params":{"textDocument":{"uri":"file:///T.parsley"}}})");
+    check(lens_resp.size() == 1 && lens_resp[0].find("parsley.buildC17") != std::string::npos &&
+          lens_resp[0].find("parsley.debugExample") != std::string::npos,
+          "LSP codeLens returns module and example lenses");
+
+    auto eval_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":10,"method":"parsley/evalInput","params":{"uri":"file:///T.parsley","input":"42"}})");
+    check(eval_resp.size() == 1 && eval_resp[0].find("\"ok\":true") != std::string::npos &&
+          eval_resp[0].find("\"tokens\"") != std::string::npos,
+          "LSP parsley/evalInput parses input and returns tokens/AST");
+
+    auto svg_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":11,"method":"parsley/railroadSvg","params":{"uri":"file:///T.parsley"}})");
+    check(svg_resp.size() == 1 && svg_resp[0].find("<svg") != std::string::npos,
+          "LSP parsley/railroadSvg returns SVG diagram");
+
+    // codeAction quickfix for E0301 (missing explicit type signature)
+    (void)lsp.process_message(
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///NoSig.parsley","languageId":"parsley","version":1,"text":"module NoSig (entry) where\ntoken n = /[0-9]+/ :: Text\nentry = n\n"}}})");
+    auto act_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":12,"method":"textDocument/codeAction","params":{"textDocument":{"uri":"file:///NoSig.parsley"},"range":{"start":{"line":0,"character":0},"end":{"line":3,"character":0}},"context":{"diagnostics":[]}}})");
+    check(act_resp.size() == 1 && act_resp[0].find("entry ::") != std::string::npos,
+          "LSP codeAction offers E0301 type signature quickfix");
+
+    auto shut_resp = lsp.process_message(R"({"jsonrpc":"2.0","id":13,"method":"shutdown"})");
     check(shut_resp.size() == 1, "LSP shutdown responds");
     (void)lsp.process_message(R"({"jsonrpc":"2.0","method":"exit"})");
     check(lsp.should_exit() && lsp.exit_code() == 0, "LSP clean exit returns 0");
@@ -844,6 +897,58 @@ void test_e2e_analyzers() {
   }
 }
 
+void test_vscode_extension() {
+  namespace fs = std::filesystem;
+  const fs::path ext_dir = fs::path(PARSLEY_SOURCE_DIR) / "editors" / "vscode";
+  const std::string required_files[] = {
+      "package.json",
+      "language-configuration.json",
+      "syntaxes/parsley.tmLanguage.json",
+      "snippets/parsley.code-snippets",
+      "tsconfig.json",
+      "src/extension.ts",
+      "out/extension.js",
+      "media/parsley-icon.svg",
+      ".vscodeignore",
+      "README.md",
+  };
+  for (const auto& rel : required_files) {
+    check(fs::exists(ext_dir / rel), std::string("editors/vscode/") + rel + " exists");
+  }
+
+  // Validate JSON files (minimal structural check + node JSON.parse/syntax check if node is present)
+  const std::string json_files[] = {
+      "package.json",
+      "language-configuration.json",
+      "syntaxes/parsley.tmLanguage.json",
+      "snippets/parsley.code-snippets",
+      "tsconfig.json",
+  };
+  for (const auto& rel : json_files) {
+    std::ifstream in(ext_dir / rel, std::ios::binary);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    const std::string body = ss.str();
+    check(!body.empty() && body.find('{') != std::string::npos && body.find('}') != std::string::npos,
+          std::string("editors/vscode/") + rel + " is non-empty JSON");
+  }
+
+#if defined(_WIN32)
+  const char* node_probe = "node --version > nul 2>&1";
+#else
+  const char* node_probe = "node --version >/dev/null 2>&1";
+#endif
+  if (run_shell(node_probe) == 0) {
+    check(run_shell("node --check \"" + (ext_dir / "out" / "extension.js").string() + "\"") == 0,
+          "editors/vscode/out/extension.js passes node --check");
+    for (const auto& rel : json_files) {
+      check(run_shell("node -e \"JSON.parse(require('fs').readFileSync('" +
+                      (ext_dir / rel).generic_string() + "','utf8'))\"") == 0,
+            std::string("JSON.parse succeeds for editors/vscode/") + rel);
+    }
+  }
+}
+
 } // namespace
 
 int main() {
@@ -857,11 +962,12 @@ int main() {
   test_codegen_c17();
   test_tooling_compiler_cli();
   test_e2e_analyzers();
+  test_vscode_extension();
 
   if (g_failures > 0) {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v1.2.0 tests passed.\n";
+  std::cout << "All Phase v1.3.0 tests passed.\n";
   return 0;
 }

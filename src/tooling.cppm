@@ -9,6 +9,7 @@ module;
 #include <iostream>
 #include <map>
 #include <optional>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -17,6 +18,11 @@ module;
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <cstdio>
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 export module parsley.tooling;
 
@@ -30,6 +36,7 @@ import parsley.parser;
 import parsley.resolve;
 import parsley.typecheck;
 import parsley.desugar;
+import parsley.eval;
 
 namespace parsley::tooling::detail {
 
@@ -338,6 +345,13 @@ struct Json {
     j.is_int = true;
     j.int_val = v;
     j.num_val = static_cast<double>(v);
+    return j;
+  }
+  static Json make_double(double v) {
+    Json j;
+    j.kind = Kind::Number;
+    j.is_int = false;
+    j.num_val = v;
     return j;
   }
   static Json make_string(std::string s) {
@@ -1269,15 +1283,57 @@ public:
     };
 
     if (method == "initialize") {
+      detail::Json sem_legend = detail::Json::make_object({
+          {"tokenTypes", detail::Json::make_array({
+                             detail::Json::make_string("namespace"),
+                             detail::Json::make_string("keyword"),
+                             detail::Json::make_string("type"),
+                             detail::Json::make_string("enumMember"),
+                             detail::Json::make_string("function"),
+                             detail::Json::make_string("variable"),
+                             detail::Json::make_string("operator"),
+                             detail::Json::make_string("regexp"),
+                             detail::Json::make_string("string"),
+                             detail::Json::make_string("number"),
+                             detail::Json::make_string("comment"),
+                             detail::Json::make_string("macro"),
+                         })},
+          {"tokenModifiers", detail::Json::make_array({
+                                 detail::Json::make_string("declaration"),
+                                 detail::Json::make_string("definition"),
+                                 detail::Json::make_string("readonly"),
+                             })},
+      });
       detail::Json caps = detail::Json::make_object({
           {"textDocumentSync", detail::Json::make_int(1)},
           {"hoverProvider", detail::Json::make_bool(true)},
           {"definitionProvider", detail::Json::make_bool(true)},
           {"referencesProvider", detail::Json::make_bool(true)},
+          {"documentSymbolProvider", detail::Json::make_bool(true)},
+          {"documentFormattingProvider", detail::Json::make_bool(true)},
+          {"completionProvider",
+           detail::Json::make_object({
+               {"triggerCharacters", detail::Json::make_array({
+                                         detail::Json::make_string("."),
+                                         detail::Json::make_string(":"),
+                                         detail::Json::make_string("<"),
+                                         detail::Json::make_string("`"),
+                                     })},
+           })},
+          {"codeActionProvider",
+           detail::Json::make_object({
+               {"codeActionKinds", detail::Json::make_array({detail::Json::make_string("quickfix")})},
+           })},
+          {"codeLensProvider", detail::Json::make_object({{"resolveProvider", detail::Json::make_bool(false)}})},
+          {"semanticTokensProvider",
+           detail::Json::make_object({
+               {"legend", std::move(sem_legend)},
+               {"full", detail::Json::make_bool(true)},
+           })},
       });
       detail::Json info = detail::Json::make_object({
           {"name", detail::Json::make_string("parsley-lsp")},
-          {"version", detail::Json::make_string("0.1.0")},
+          {"version", detail::Json::make_string("1.3.0")},
       });
       out.push_back(make_response(detail::Json::make_object({
           {"capabilities", std::move(caps)},
@@ -1343,6 +1399,46 @@ public:
 
     if (method == "textDocument/references" && params) {
       out.push_back(make_response(handle_references(*params)));
+      return out;
+    }
+
+    if (method == "textDocument/semanticTokens/full" && params) {
+      out.push_back(make_response(handle_semantic_tokens_full(*params)));
+      return out;
+    }
+
+    if (method == "textDocument/documentSymbol" && params) {
+      out.push_back(make_response(handle_document_symbol(*params)));
+      return out;
+    }
+
+    if (method == "textDocument/formatting" && params) {
+      out.push_back(make_response(handle_formatting(*params)));
+      return out;
+    }
+
+    if (method == "textDocument/completion" && params) {
+      out.push_back(make_response(handle_completion(*params)));
+      return out;
+    }
+
+    if (method == "textDocument/codeAction" && params) {
+      out.push_back(make_response(handle_code_action(*params)));
+      return out;
+    }
+
+    if (method == "textDocument/codeLens" && params) {
+      out.push_back(make_response(handle_code_lens(*params)));
+      return out;
+    }
+
+    if (method == "parsley/evalInput" && params) {
+      out.push_back(make_response(handle_eval_input(*params)));
+      return out;
+    }
+
+    if (method == "parsley/railroadSvg" && params) {
+      out.push_back(make_response(handle_railroad_svg(*params)));
       return out;
     }
 
@@ -1537,9 +1633,801 @@ private:
     }
     return locs;
   }
+
+  static std::string extract_doc_uri(const detail::Json& params) {
+    if (const auto* td = params.get("textDocument"); td && td->get("uri")) {
+      return td->get("uri")->as_string();
+    }
+    if (const auto* u = params.get("uri")) {
+      return u->as_string();
+    }
+    return "";
+  }
+
+  static std::pair<int, int> source_end_position(std::string_view src) {
+    int line = 0;
+    int col = 0;
+    for (char c : src) {
+      if (c == '\n') {
+        ++line;
+        col = 0;
+      } else {
+        ++col;
+      }
+    }
+    return {line, col};
+  }
+
+  static detail::Json make_lsp_range(int sl, int sc, int el, int ec) {
+    return detail::Json::make_object({
+        {"start", detail::Json::make_object({{"line", detail::Json::make_int(sl)}, {"character", detail::Json::make_int(sc)}})},
+        {"end", detail::Json::make_object({{"line", detail::Json::make_int(el)}, {"character", detail::Json::make_int(ec)}})},
+    });
+  }
+
+  static detail::Json valid_span_or_default(const Span& sp) {
+    if (sp.is_valid()) return detail::span_to_lsp_range(sp);
+    return make_lsp_range(0, 0, 0, 1);
+  }
+
+  static detail::Json eval_value_to_json(const eval::EvalValue& v) {
+    switch (v.kind) {
+      case eval::EvalValue::Kind::Unit:
+        return detail::Json::make_null();
+      case eval::EvalValue::Kind::Bool:
+        return detail::Json::make_bool(v.bool_value);
+      case eval::EvalValue::Kind::Number:
+        if (v.is_int) {
+          return detail::Json::make_int(static_cast<std::int64_t>(v.number_value));
+        }
+        return detail::Json::make_double(v.number_value);
+      case eval::EvalValue::Kind::String:
+        return detail::Json::make_string(v.string_value);
+      case eval::EvalValue::Kind::List:
+      case eval::EvalValue::Kind::Tuple: {
+        detail::Json arr = detail::Json::make_array();
+        arr.arr_val.reserve(v.elements.size());
+        for (const auto& elem : v.elements) {
+          arr.arr_val.push_back(eval_value_to_json(elem));
+        }
+        return arr;
+      }
+      case eval::EvalValue::Kind::Ctor: {
+        detail::Json fields = detail::Json::make_array();
+        fields.arr_val.reserve(v.elements.size());
+        for (const auto& f : v.elements) {
+          fields.arr_val.push_back(eval_value_to_json(f));
+        }
+        return detail::Json::make_object({
+            {"ctor", detail::Json::make_string(v.ctor_name)},
+            {"fields", std::move(fields)},
+        });
+      }
+    }
+    return detail::Json::make_null();
+  }
+
+  static std::vector<detail::Json> tokenize_input_with_grammar(const ir::Grammar& g,
+                                                                 std::string_view input) {
+    std::vector<detail::Json> out;
+    std::size_t pos = 0;
+    int line = 1;
+    int col = 1;
+    std::vector<std::string> mode_stack = {"default"};
+
+    auto advance_pos = [&](std::size_t len) {
+      for (std::size_t i = 0; i < len && pos + i < input.size(); ++i) {
+        if (input[pos + i] == '\n') {
+          ++line;
+          col = 1;
+        } else {
+          ++col;
+        }
+      }
+      pos += len;
+    };
+
+    while (pos < input.size()) {
+      const std::string cur_mode = mode_stack.back();
+      std::size_t best_len = 0;
+      const ir::TokenDef* best_tok = nullptr;
+
+      const std::vector<ir::TokenDef>* pool = &g.gTokens;
+      if (cur_mode != "default") {
+        for (const auto& lm : g.gModes) {
+          if (lm.name == cur_mode) {
+            pool = &lm.tokens;
+            break;
+          }
+        }
+      }
+
+      for (const auto& td : *pool) {
+        if (cur_mode == "default" && !td.mode.empty() && td.mode != "default") continue;
+        std::size_t matched = 0;
+        if (!td.is_regex) {
+          if (!td.pattern.empty() && input.substr(pos).starts_with(td.pattern)) {
+            matched = td.pattern.size();
+          }
+        } else if (!td.pattern.empty()) {
+          try {
+            std::regex rx(td.pattern, std::regex_constants::ECMAScript);
+            std::cmatch m;
+            const char* beg = input.data() + pos;
+            const char* end = input.data() + input.size();
+            if (std::regex_search(beg, end, m, rx, std::regex_constants::match_continuous)) {
+              matched = static_cast<std::size_t>(m.length());
+            }
+          } catch (const std::regex_error&) {
+          }
+        }
+        if (matched > best_len ||
+            (matched > 0 && matched == best_len && best_tok &&
+             !best_tok->is_keyword && td.is_keyword)) {
+          best_len = matched;
+          best_tok = &td;
+        }
+      }
+
+      if (best_len == 0 || !best_tok) {
+        if (!std::isspace(static_cast<unsigned char>(input[pos]))) {
+          out.push_back(detail::Json::make_object({
+              {"id", detail::Json::make_string("<unknown>")},
+              {"lexeme", detail::Json::make_string(std::string(1, input[pos]))},
+              {"line", detail::Json::make_int(line)},
+              {"col", detail::Json::make_int(col)},
+          }));
+        }
+        advance_pos(1);
+        continue;
+      }
+
+      if (!best_tok->is_skip) {
+        out.push_back(detail::Json::make_object({
+            {"id", detail::Json::make_string(best_tok->id)},
+            {"lexeme", detail::Json::make_string(std::string(input.substr(pos, best_len)))},
+            {"line", detail::Json::make_int(line)},
+            {"col", detail::Json::make_int(col)},
+        }));
+      }
+
+      if (best_tok->action == ir::LexActionKind::Pop) {
+        if (mode_stack.size() > 1) mode_stack.pop_back();
+      } else if (best_tok->action == ir::LexActionKind::Push && !best_tok->target_mode.empty()) {
+        mode_stack.push_back(best_tok->target_mode);
+      }
+
+      advance_pos(best_len);
+    }
+    return out;
+  }
+
+  detail::Json handle_semantic_tokens_full(const detail::Json& params) const {
+    const std::string uri = extract_doc_uri(params);
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) {
+      return detail::Json::make_object({{"data", detail::Json::make_array()}});
+    }
+    const DocState& doc = it->second;
+    DiagnosticBag lex_diags;
+    lexer::LexResult lex = lexer::tokenize(doc.source, doc.uri, lex_diags);
+
+    struct SemTok {
+      int line = 0;
+      int col = 0;
+      int len = 0;
+      int type = 0;
+      int mods = 0;
+    };
+    std::vector<SemTok> toks;
+
+    auto push_multiline = [&](int line0, int col0, std::string_view text, int type, int mods) {
+      std::size_t p = 0;
+      int cur_line = line0;
+      int cur_col = col0;
+      while (p <= text.size()) {
+        std::size_t nl = text.find('\n', p);
+        std::size_t end_p = (nl == std::string_view::npos) ? text.size() : nl;
+        int seg_len = static_cast<int>(end_p - p);
+        if (seg_len > 0) {
+          toks.push_back({cur_line, cur_col, seg_len, type, mods});
+        }
+        if (nl == std::string_view::npos) break;
+        p = nl + 1;
+        ++cur_line;
+        cur_col = 0;
+      }
+    };
+
+    for (const auto& c : lex.comments) {
+      if (c.span.start_line > 0 && c.span.start_col > 0) {
+        std::string full_comment = c.is_block ? ("{-" + c.text + "-}") : ("--" + c.text);
+        push_multiline(c.span.start_line - 1, c.span.start_col - 1, full_comment, 10, 0);
+      }
+    }
+
+    auto make_pos_key = [](int l, int c) -> std::uint64_t {
+      return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(l)) << 32) |
+             static_cast<std::uint32_t>(c);
+    };
+    std::unordered_map<std::uint64_t, int> decl_mods;
+    for (const auto& t : doc.ast_mod.tokens) {
+      if (t.span.is_valid()) {
+        decl_mods[make_pos_key(t.span.start_line - 1, t.span.start_col - 1)] |= 5; // decl | readonly
+      }
+    }
+    for (const auto& s : doc.ast_mod.skips) {
+      if (s.span.is_valid()) {
+        decl_mods[make_pos_key(s.span.start_line - 1, s.span.start_col - 1)] |= 5;
+      }
+    }
+    for (const auto& d : doc.ast_mod.data_decls) {
+      if (d.span.is_valid()) {
+        decl_mods[make_pos_key(d.span.start_line - 1, d.span.start_col - 1)] |= 3;
+      }
+      for (const auto& c : d.constructors) {
+        if (c.span.is_valid()) {
+          decl_mods[make_pos_key(c.span.start_line - 1, c.span.start_col - 1)] |= 3;
+        }
+      }
+    }
+    for (const auto& sig : doc.ast_mod.rule_sigs) {
+      if (sig.span.is_valid()) {
+        decl_mods[make_pos_key(sig.span.start_line - 1, sig.span.start_col - 1)] |= 1;
+      }
+    }
+    for (const auto& rd : doc.ast_mod.rule_defs) {
+      if (rd.span.is_valid()) {
+        decl_mods[make_pos_key(rd.span.start_line - 1, rd.span.start_col - 1)] |= 2;
+      }
+    }
+
+    static const std::unordered_set<std::string_view> kBuiltinTypes = {
+        "Int", "Float", "Text", "Bool", "Char", "Unit", "Rule", "Maybe", "Either", "String"};
+
+    bool after_module_or_import = false;
+    for (const auto& tok : lex.tokens) {
+      if (tok.is_virtual || tok.kind == lexer::TokenKind::Eof ||
+          tok.kind == lexer::TokenKind::Invalid) {
+        continue;
+      }
+      if (tok.span.start_line <= 0 || tok.span.start_col <= 0) continue;
+      int l0 = tok.span.start_line - 1;
+      int c0 = tok.span.start_col - 1;
+      int extra_mods = 0;
+      if (auto dit = decl_mods.find(make_pos_key(l0, c0)); dit != decl_mods.end()) {
+        extra_mods = dit->second;
+      }
+
+      if (tok.kind >= lexer::TokenKind::KwModule && tok.kind <= lexer::TokenKind::KwPop) {
+        int mods = (tok.kind == lexer::TokenKind::KwPure) ? 4 : 0;
+        push_multiline(l0, c0, tok.lexeme, 1, mods);
+        after_module_or_import = (tok.kind == lexer::TokenKind::KwModule ||
+                                  tok.kind == lexer::TokenKind::KwImport ||
+                                  tok.kind == lexer::TokenKind::KwQualified);
+        continue;
+      }
+
+      if (after_module_or_import &&
+          (tok.kind == lexer::TokenKind::UpperIdent || tok.kind == lexer::TokenKind::LowerIdent)) {
+        push_multiline(l0, c0, tok.lexeme, 0, 2); // namespace
+        continue;
+      }
+      if (tok.kind != lexer::TokenKind::Dot) {
+        after_module_or_import = false;
+      } else {
+        continue;
+      }
+
+      switch (tok.kind) {
+        case lexer::TokenKind::Pragma:
+          push_multiline(l0, c0, tok.lexeme, 11, 0);
+          break;
+        case lexer::TokenKind::RegexLit:
+          push_multiline(l0, c0, tok.lexeme, 7, 0);
+          break;
+        case lexer::TokenKind::StringLit:
+          push_multiline(l0, c0, tok.lexeme, 8, 0);
+          break;
+        case lexer::TokenKind::IntLit:
+        case lexer::TokenKind::FloatLit:
+          push_multiline(l0, c0, tok.lexeme, 9, 0);
+          break;
+        case lexer::TokenKind::UpperIdent: {
+          if (doc.resolved.lookup_type(tok.lexeme) || kBuiltinTypes.contains(tok.lexeme)) {
+            push_multiline(l0, c0, tok.lexeme, 2, extra_mods);
+          } else if (doc.resolved.lookup_ctor(tok.lexeme)) {
+            push_multiline(l0, c0, tok.lexeme, 3, extra_mods);
+          } else {
+            push_multiline(l0, c0, tok.lexeme, 2, extra_mods);
+          }
+          break;
+        }
+        case lexer::TokenKind::LowerIdent: {
+          if (auto vs = doc.resolved.lookup_value(tok.lexeme)) {
+            if (vs->kind == resolve::SymbolKind::Token || vs->kind == resolve::SymbolKind::Skip) {
+              push_multiline(l0, c0, tok.lexeme, 5, extra_mods | 4);
+            } else if (vs->kind == resolve::SymbolKind::Rule ||
+                       vs->kind == resolve::SymbolKind::BuiltinCombinator) {
+              int mods = extra_mods | (vs->is_builtin ? 4 : 0);
+              push_multiline(l0, c0, tok.lexeme, 4, mods);
+            } else {
+              push_multiline(l0, c0, tok.lexeme, 5, extra_mods);
+            }
+          } else {
+            push_multiline(l0, c0, tok.lexeme, 5, extra_mods);
+          }
+          break;
+        }
+        case lexer::TokenKind::BacktickIdent:
+        case lexer::TokenKind::ColonColon:
+        case lexer::TokenKind::Equals:
+        case lexer::TokenKind::Pipe:
+        case lexer::TokenKind::Arrow:
+        case lexer::TokenKind::LArrow:
+        case lexer::TokenKind::FatArrow:
+        case lexer::TokenKind::OpFmap:
+        case lexer::TokenKind::OpAp:
+        case lexer::TokenKind::OpSeqR:
+        case lexer::TokenKind::OpSeqL:
+        case lexer::TokenKind::OpAlt:
+        case lexer::TokenKind::OpLabel:
+          push_multiline(l0, c0, tok.lexeme, 6, 0);
+          break;
+        default:
+          break;
+      }
+    }
+
+    std::sort(toks.begin(), toks.end(), [](const SemTok& a, const SemTok& b) {
+      if (a.line != b.line) return a.line < b.line;
+      return a.col < b.col;
+    });
+
+    detail::Json data = detail::Json::make_array();
+    int prev_line = 0;
+    int prev_col = 0;
+    for (const auto& t : toks) {
+      if (t.len <= 0 || t.line < 0 || t.col < 0) continue;
+      if (t.line == prev_line && t.col < prev_col) continue;
+      int dl = t.line - prev_line;
+      int ds = (dl == 0) ? (t.col - prev_col) : t.col;
+      data.arr_val.push_back(detail::Json::make_int(dl));
+      data.arr_val.push_back(detail::Json::make_int(ds));
+      data.arr_val.push_back(detail::Json::make_int(t.len));
+      data.arr_val.push_back(detail::Json::make_int(t.type));
+      data.arr_val.push_back(detail::Json::make_int(t.mods));
+      prev_line = t.line;
+      prev_col = t.col;
+    }
+
+    return detail::Json::make_object({{"data", std::move(data)}});
+  }
+
+  detail::Json handle_document_symbol(const detail::Json& params) const {
+    const std::string uri = extract_doc_uri(params);
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) return detail::Json::make_array();
+    const DocState& doc = it->second;
+
+    detail::Json children = detail::Json::make_array();
+
+    for (const auto& t : doc.ast_mod.tokens) {
+      detail::Json r = valid_span_or_default(t.span);
+      children.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(t.name)},
+          {"detail", detail::Json::make_string(t.is_regex ? ("/" + t.pattern + "/") : ("\"" + t.pattern + "\""))},
+          {"kind", detail::Json::make_int(14)}, // Constant
+          {"range", r},
+          {"selectionRange", r},
+      }));
+    }
+
+    for (const auto& s : doc.ast_mod.skips) {
+      detail::Json r = valid_span_or_default(s.span);
+      children.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(s.name.empty() ? "skip" : s.name)},
+          {"detail", detail::Json::make_string(s.is_regex ? ("/" + s.pattern + "/") : ("\"" + s.pattern + "\""))},
+          {"kind", detail::Json::make_int(14)}, // Constant
+          {"range", r},
+          {"selectionRange", r},
+      }));
+    }
+
+    for (const auto& m : doc.ast_mod.modes) {
+      detail::Json r = valid_span_or_default(m.span);
+      detail::Json mode_children = detail::Json::make_array();
+      for (const auto& t : m.tokens) {
+        detail::Json tr = valid_span_or_default(t.span);
+        mode_children.arr_val.push_back(detail::Json::make_object({
+            {"name", detail::Json::make_string(t.name)},
+            {"detail", detail::Json::make_string("mode token")},
+            {"kind", detail::Json::make_int(14)},
+            {"range", tr},
+            {"selectionRange", tr},
+        }));
+      }
+      children.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(m.name)},
+          {"detail", detail::Json::make_string("lexer mode")},
+          {"kind", detail::Json::make_int(3)}, // Namespace
+          {"range", r},
+          {"selectionRange", r},
+          {"children", std::move(mode_children)},
+      }));
+    }
+
+    for (const auto& d : doc.ast_mod.data_decls) {
+      detail::Json r = valid_span_or_default(d.span);
+      detail::Json ctor_arr = detail::Json::make_array();
+      for (const auto& c : d.constructors) {
+        detail::Json cr = valid_span_or_default(c.span);
+        ctor_arr.arr_val.push_back(detail::Json::make_object({
+            {"name", detail::Json::make_string(c.name)},
+            {"detail", detail::Json::make_string("constructor of " + d.name)},
+            {"kind", detail::Json::make_int(22)}, // EnumMember
+            {"range", cr},
+            {"selectionRange", cr},
+        }));
+      }
+      children.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(d.name)},
+          {"detail", detail::Json::make_string(d.is_newtype ? "newtype" : "data")},
+          {"kind", detail::Json::make_int(5)}, // Class
+          {"range", r},
+          {"selectionRange", r},
+          {"children", std::move(ctor_arr)},
+      }));
+    }
+
+    for (const auto& rd : doc.ast_mod.rule_defs) {
+      detail::Json r = valid_span_or_default(rd.span);
+      std::string ty_detail = "rule";
+      if (auto ts = doc.typed.lookup_rule_type_string(rd.name)) {
+        ty_detail = ":: " + *ts;
+      } else if (rd.signature) {
+        ty_detail = ":: " + detail::format_type_expr(*rd.signature);
+      }
+      children.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(rd.name)},
+          {"detail", detail::Json::make_string(ty_detail)},
+          {"kind", detail::Json::make_int(12)}, // Function
+          {"range", r},
+          {"selectionRange", r},
+      }));
+    }
+
+    for (const auto& ex : doc.ast_mod.examples) {
+      detail::Json r = valid_span_or_default(ex.span);
+      children.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(ex.name)},
+          {"detail", detail::Json::make_string(ex.kind == ast::ExampleDecl::Kind::ParsesTo ? "example (parses-to)" : "example (fails-at)")},
+          {"kind", detail::Json::make_int(24)}, // Event
+          {"range", r},
+          {"selectionRange", r},
+      }));
+    }
+
+    auto [end_l, end_c] = source_end_position(doc.source);
+    detail::Json full_range = make_lsp_range(0, 0, end_l, end_c);
+    detail::Json mod_sel = valid_span_or_default(doc.ast_mod.span);
+    if (!doc.ast_mod.span.is_valid()) {
+      mod_sel = make_lsp_range(0, 0, 0, std::max(1, end_c));
+    }
+
+    detail::Json result = detail::Json::make_array();
+    result.arr_val.push_back(detail::Json::make_object({
+        {"name", detail::Json::make_string(doc.ast_mod.name)},
+        {"detail", detail::Json::make_string("module")},
+        {"kind", detail::Json::make_int(2)}, // Module
+        {"range", full_range},
+        {"selectionRange", mod_sel},
+        {"children", std::move(children)},
+    }));
+    return result;
+  }
+
+  detail::Json handle_formatting(const detail::Json& params) const {
+    const std::string uri = extract_doc_uri(params);
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) return detail::Json::make_array();
+    const DocState& doc = it->second;
+    std::string formatted = format_module(doc.ast_mod, doc.source);
+    auto [end_l, end_c] = source_end_position(doc.source);
+    detail::Json edits = detail::Json::make_array();
+    edits.arr_val.push_back(detail::Json::make_object({
+        {"range", make_lsp_range(0, 0, end_l, end_c)},
+        {"newText", detail::Json::make_string(std::move(formatted))},
+    }));
+    return edits;
+  }
+
+  detail::Json handle_completion(const detail::Json& params) const {
+    const std::string uri = extract_doc_uri(params);
+    detail::Json items = detail::Json::make_array();
+    std::unordered_set<std::string> seen;
+
+    auto add_item = [&](const std::string& label, int kind, const std::string& detail_str) {
+      if (label.empty() || !seen.insert(label).second) return;
+      items.arr_val.push_back(detail::Json::make_object({
+          {"label", detail::Json::make_string(label)},
+          {"kind", detail::Json::make_int(kind)},
+          {"detail", detail::Json::make_string(detail_str)},
+          {"insertText", detail::Json::make_string(label)},
+      }));
+    };
+
+    if (auto it = docs_.find(uri); it != docs_.end()) {
+      const DocState& doc = it->second;
+      for (const auto& rd : doc.ast_mod.rule_defs) {
+        std::string ty = "rule";
+        if (auto ts = doc.typed.lookup_rule_type_string(rd.name)) ty = ":: " + *ts;
+        add_item(rd.name, 3, ty);
+      }
+      for (const auto& t : doc.ast_mod.tokens) {
+        add_item(t.name, 21, "token");
+      }
+      for (const auto& s : doc.ast_mod.skips) {
+        add_item(s.name, 21, "skip");
+      }
+      for (const auto& d : doc.ast_mod.data_decls) {
+        add_item(d.name, 7, d.is_newtype ? "newtype" : "data");
+        for (const auto& c : d.constructors) {
+          add_item(c.name, 20, "constructor of " + d.name);
+        }
+      }
+    }
+
+    static const std::pair<const char*, const char*> kCombinators[] = {
+        {"many", "Rule a -> Rule [a]"},
+        {"some", "Rule a -> Rule [a]"},
+        {"optional", "Rule a -> Rule [a]"},
+        {"sepBy", "Rule a -> Rule s -> Rule [a]"},
+        {"sepBy1", "Rule a -> Rule s -> Rule [a]"},
+        {"sepEndBy", "Rule a -> Rule s -> Rule [a]"},
+        {"between", "Rule o -> Rule c -> Rule a -> Rule a"},
+        {"choice", "[Rule a] -> Rule a"},
+        {"lookAhead", "Rule a -> Rule a"},
+        {"notFollowedBy", "Rule a -> Rule Unit"},
+        {"try", "Rule a -> Rule a"},
+        {"recover", "Rule a -> Rule s -> Rule a"},
+        {"eof", "Rule Unit"},
+        {"anyChar", "Rule Char"},
+        {"satisfy", "(Char -> Bool) -> Rule Char"},
+        {"pure", "a -> Rule a"},
+        {"exactly", "Text -> Rule Text"},
+        {"fail", "Text -> Rule a"},
+        {"empty", "Rule a"},
+    };
+    for (const auto& [name, sig] : kCombinators) {
+      add_item(name, 3, std::string("Parsley.Prelude :: ") + sig);
+    }
+
+    static const char* const kBuiltinTypes[] = {
+        "Int", "Float", "Text", "Bool", "Char", "Unit", "Rule", "Maybe", "Either"};
+    for (const char* t : kBuiltinTypes) {
+      add_item(t, 7, "builtin type");
+    }
+
+    static const char* const kBuiltinCtors[] = {"Just", "Nothing", "Left", "Right", "True", "False"};
+    for (const char* c : kBuiltinCtors) {
+      add_item(c, 20, "builtin constructor");
+    }
+
+    static const char* const kKeywords[] = {
+        "module", "where", "import", "qualified", "as", "hiding", "data", "newtype",
+        "foreign", "token", "skip", "keywords", "mode", "operators", "infixl", "infixr",
+        "infix", "prefix", "postfix", "mixfix", "do", "context", "pure", "exactly",
+        "example", "parses-to", "fails-at", "expecting", "push", "pop"};
+    for (const char* kw : kKeywords) {
+      add_item(kw, 14, "keyword");
+    }
+
+    return items;
+  }
+
+  detail::Json handle_code_action(const detail::Json& params) const {
+    const std::string uri = extract_doc_uri(params);
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) return detail::Json::make_array();
+    const DocState& doc = it->second;
+
+    int req_start_line = 0;
+    int req_end_line = 1000000;
+    if (const auto* r = params.get("range")) {
+      if (const auto* s = r->get("start"); s && s->get("line")) {
+        req_start_line = static_cast<int>(s->get("line")->as_int(0));
+      }
+      if (const auto* e = r->get("end"); e && e->get("line")) {
+        req_end_line = static_cast<int>(e->get("line")->as_int(req_start_line));
+      }
+    }
+
+    detail::Json actions = detail::Json::make_array();
+    std::unordered_set<std::string> emitted;
+
+    auto add_sig_fix = [&](const std::string& rule_name, int insert_line) {
+      if (rule_name.empty()) return;
+      auto ty = doc.typed.lookup_rule_type_string(rule_name);
+      if (!ty) return;
+      const std::string key = "E0301:" + rule_name;
+      if (!emitted.insert(key).second) return;
+      detail::Json edit_arr = detail::Json::make_array();
+      edit_arr.arr_val.push_back(detail::Json::make_object({
+          {"range", make_lsp_range(insert_line, 0, insert_line, 0)},
+          {"newText", detail::Json::make_string(rule_name + " :: " + *ty + "\n")},
+      }));
+      actions.arr_val.push_back(detail::Json::make_object({
+          {"title", detail::Json::make_string("Add type signature `" + rule_name + " :: " + *ty + "`")},
+          {"kind", detail::Json::make_string("quickfix")},
+          {"edit", detail::Json::make_object({
+                       {"changes", detail::Json::make_object({{uri, std::move(edit_arr)}})},
+                   })},
+      }));
+    };
+
+    auto add_nofactor_fix = [&]() {
+      if (!emitted.insert("E0214:NOFACTOR").second) return;
+      detail::Json edit_arr = detail::Json::make_array();
+      edit_arr.arr_val.push_back(detail::Json::make_object({
+          {"range", make_lsp_range(0, 0, 0, 0)},
+          {"newText", detail::Json::make_string("{-# NOFACTOR #-}\n")},
+      }));
+      actions.arr_val.push_back(detail::Json::make_object({
+          {"title", detail::Json::make_string("Insert {-# NOFACTOR #-} pragma")},
+          {"kind", detail::Json::make_string("quickfix")},
+          {"edit", detail::Json::make_object({
+                       {"changes", detail::Json::make_object({{uri, std::move(edit_arr)}})},
+                   })},
+      }));
+    };
+
+    auto extract_backtick = [](std::string_view msg) -> std::string {
+      std::size_t q1 = msg.find('`');
+      if (q1 == std::string_view::npos) return "";
+      std::size_t q2 = msg.find('`', q1 + 1);
+      if (q2 == std::string_view::npos || q2 <= q1 + 1) return "";
+      return std::string(msg.substr(q1 + 1, q2 - q1 - 1));
+    };
+
+    for (const auto& d : doc.diags.items()) {
+      int dl_start = std::max(0, d.span.start_line - 1);
+      int dl_end = std::max(dl_start, d.span.end_line - 1);
+      if (dl_end < req_start_line || dl_start > req_end_line) continue;
+      if (d.code == "E0301") {
+        add_sig_fix(extract_backtick(d.message), dl_start);
+      } else if (d.code == "E0214") {
+        add_nofactor_fix();
+      }
+    }
+
+    if (const auto* ctx = params.get("context")) {
+      if (const auto* cdiags = ctx->get("diagnostics");
+          cdiags && cdiags->kind == detail::Json::Kind::Array) {
+        for (const auto& cd : cdiags->arr_val) {
+          std::string code = cd.get("code") ? cd.get("code")->as_string() : "";
+          std::string msg = cd.get("message") ? cd.get("message")->as_string() : "";
+          int line0 = req_start_line;
+          if (const auto* r = cd.get("range"); r && r->get("start") && r->get("start")->get("line")) {
+            line0 = static_cast<int>(r->get("start")->get("line")->as_int(req_start_line));
+          }
+          if (code == "E0301") {
+            add_sig_fix(extract_backtick(msg), line0);
+          } else if (code == "E0214") {
+            add_nofactor_fix();
+          }
+        }
+      }
+    }
+
+    return actions;
+  }
+
+  detail::Json handle_code_lens(const detail::Json& params) const {
+    const std::string uri = extract_doc_uri(params);
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) return detail::Json::make_array();
+    const DocState& doc = it->second;
+
+    detail::Json lenses = detail::Json::make_array();
+    int mod_line = 0;
+    if (doc.ast_mod.has_module_header && doc.ast_mod.span.is_valid()) {
+      mod_line = std::max(0, doc.ast_mod.span.start_line - 1);
+    }
+    detail::Json mod_range = make_lsp_range(mod_line, 0, mod_line, 0);
+
+    auto make_lens = [&](detail::Json range, const std::string& title, const std::string& cmd,
+                         std::vector<detail::Json> args) {
+      return detail::Json::make_object({
+          {"range", std::move(range)},
+          {"command", detail::Json::make_object({
+                          {"title", detail::Json::make_string(title)},
+                          {"command", detail::Json::make_string(cmd)},
+                          {"arguments", detail::Json::make_array(std::move(args))},
+                      })},
+      });
+    };
+
+    lenses.arr_val.push_back(make_lens(mod_range, "Build ISO C17 Parser", "parsley.buildC17",
+                                       {detail::Json::make_string(uri)}));
+    lenses.arr_val.push_back(make_lens(mod_range, "Show Railroad Diagram", "parsley.showRailroad",
+                                       {detail::Json::make_string(uri)}));
+    lenses.arr_val.push_back(make_lens(mod_range, "Open Live Playground", "parsley.openPlayground",
+                                       {detail::Json::make_string(uri)}));
+
+    for (const auto& ex : doc.ast_mod.examples) {
+      detail::Json er = valid_span_or_default(ex.span);
+      lenses.arr_val.push_back(make_lens(er, "Run Example: " + ex.name, "parsley.debugExample",
+                                         {detail::Json::make_string(uri),
+                                          detail::Json::make_string(ex.name),
+                                          detail::Json::make_string(ex.input)}));
+    }
+
+    return lenses;
+  }
+
+  detail::Json handle_eval_input(const detail::Json& params) const {
+    const std::string uri = extract_doc_uri(params);
+    const std::string input = params.get("input") ? params.get("input")->as_string() : "";
+    const std::string start_rule =
+        params.get("startRule") ? params.get("startRule")->as_string() : "";
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) {
+      return detail::Json::make_object({
+          {"ok", detail::Json::make_bool(false)},
+          {"formattedAst", detail::Json::make_string("")},
+          {"astJson", detail::Json::make_null()},
+          {"error", detail::Json::make_object({
+                        {"line", detail::Json::make_int(1)},
+                        {"col", detail::Json::make_int(1)},
+                        {"expected", detail::Json::make_string("")},
+                        {"found", detail::Json::make_string("")},
+                        {"message", detail::Json::make_string("document not opened")},
+                    })},
+          {"tokens", detail::Json::make_array()},
+      });
+    }
+    const DocState& doc = it->second;
+    eval::EvalResult res = eval::parse_input(doc.grammar, input, start_rule);
+    std::vector<detail::Json> toks = tokenize_input_with_grammar(doc.grammar, input);
+
+    detail::Json err_json = detail::Json::make_null();
+    if (!res.ok && res.error) {
+      err_json = detail::Json::make_object({
+          {"line", detail::Json::make_int(res.error->line)},
+          {"col", detail::Json::make_int(res.error->col)},
+          {"expected", detail::Json::make_string(res.error->expected)},
+          {"found", detail::Json::make_string(res.error->found)},
+          {"message", detail::Json::make_string(res.error->message)},
+      });
+    }
+
+    return detail::Json::make_object({
+        {"ok", detail::Json::make_bool(res.ok)},
+        {"formattedAst", detail::Json::make_string(res.ok ? eval::format_value(res.value) : "")},
+        {"astJson", res.ok ? eval_value_to_json(res.value) : detail::Json::make_null()},
+        {"error", std::move(err_json)},
+        {"tokens", detail::Json::make_array(std::move(toks))},
+    });
+  }
+
+  detail::Json handle_railroad_svg(const detail::Json& params) const {
+    const std::string uri = extract_doc_uri(params);
+    auto it = docs_.find(uri);
+    if (it == docs_.end()) {
+      return detail::Json::make_object({{"svg", detail::Json::make_string("")}});
+    }
+    return detail::Json::make_object({
+        {"svg", detail::Json::make_string(generate_railroad_svg(it->second.grammar))},
+    });
+  }
 };
 
 inline int run_lsp_server() {
+#ifdef _WIN32
+  _setmode(_fileno(stdin), _O_BINARY);
+  _setmode(_fileno(stdout), _O_BINARY);
+#endif
   LspServer server;
   std::string line;
   while (!server.should_exit()) {
