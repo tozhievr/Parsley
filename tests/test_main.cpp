@@ -634,11 +634,11 @@ int main(void) {
 #  endif
     const fs::path exe_path = shared_dir / "consumer";
     const std::string build_so = "\"" + cc + "\" -std=c17 -Wall -Wextra -fPIC -shared \"" +
-                                 (out_dir / "parser.c").string() + "\" -o \"" + so_path.string() + "\"";
+                                 (out_dir / "parser.c").string() + "\" -o \"" + so_path.string() + "\" -lm";
     check(run_shell(build_so) == 0, "Direct clang -std=c17 -shared builds shared library");
     const std::string build_exe = "\"" + cc + "\" -std=c17 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
                                   consumer_c.string() + "\" \"" + so_path.string() + "\" -Wl,-rpath,\"" +
-                                  shared_dir.string() + "\" -o \"" + exe_path.string() + "\"";
+                                  shared_dir.string() + "\" -o \"" + exe_path.string() + "\" -lm";
     check(run_shell(build_exe) == 0, "Direct clang -std=c17 links consumer against shared library");
     check(run_shell("\"" + exe_path.string() + "\"") == 0,
           "C17 consumer executable passes against shared library");
@@ -666,7 +666,12 @@ int main(void) {
 #endif
     const std::string cmd = "\"" + cc + "\" -std=c17 -DPARSLEY_STATIC -I\"" + out_dir.string() + "\" \"" +
                             (out_dir / "parser.c").string() + "\" \"" +
-                            (out_dir / "test_parser.c").string() + "\" -o \"" + exe_path.string() + "\"";
+                            (out_dir / "test_parser.c").string() + "\" -o \"" + exe_path.string() + "\"" +
+#if defined(_WIN32)
+                            "";
+#else
+                            " -lm";
+#endif
     check(run_shell(cmd) == 0, std::string(fixture) + " C17 test_parser compiles with -std=c17");
     check(run_shell("\"" + exe_path.string() + "\"") == 0,
           std::string(fixture) + " C17 test_parser runs and passes");
