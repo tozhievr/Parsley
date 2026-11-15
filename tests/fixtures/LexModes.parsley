@@ -1,0 +1,31 @@
+module LexModes (program) where
+
+import Parsley.Prelude (eof)
+
+-- Лексика ---------------------------------------------
+skip ws = /[[:space:]]+/
+
+mode string where
+  token chars  = /[^"]+/
+  token escape = /[\\][nrt"]/
+  token close  = "\"" -> pop
+
+token open = "\"" -> push string
+
+-- AST -------------------------------------------------
+data Expr
+  = StrLit Text
+
+-- Синтаксис -------------------------------------------
+program :: Expr
+program = stringLit <* eof
+
+stringLit :: Expr
+stringLit = do
+  open
+  s <- chars
+  close
+  pure (StrLit s)
+
+-- Примеры ---------------------------------------------
+example "строка" : "\"hello\"" parses-to StrLit "hello"

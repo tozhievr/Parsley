@@ -19,6 +19,9 @@ target_sources(parsley_core
     FILE_SET CXX_MODULES FILES
       src/version.cppm
       src/diagnostic.cppm
+      src/lexer.cppm
+      src/ast.cppm
+      src/parser.cppm
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

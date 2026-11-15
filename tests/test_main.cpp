@@ -1,10 +1,14 @@
-#include <cassert>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 
 import parsley.version;
 import parsley.diagnostic;
+import parsley.lexer;
+import parsley.ast;
+import parsley.parser;
 
 namespace {
 
@@ -17,11 +21,24 @@ void check(bool cond, std::string_view msg) {
   }
 }
 
+std::string read_fixture(std::string_view name) {
+  std::string path = std::string(PARSLEY_FIXTURES_DIR) + "/" + std::string(name);
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    std::cerr << "[FAIL] Cannot open fixture: " << path << "\n";
+    ++g_failures;
+    return {};
+  }
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  return ss.str();
+}
+
 void test_version() {
   check(parsley::VERSION_MAJOR == 0, "VERSION_MAJOR == 0");
-  check(parsley::VERSION_MINOR == 1, "VERSION_MINOR == 1");
+  check(parsley::VERSION_MINOR == 2, "VERSION_MINOR == 2");
   check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "0.1.0", "VERSION_STRING == 0.1.0");
+  check(parsley::VERSION_STRING == "0.2.0", "VERSION_STRING == 0.2.0");
 }
 
 void test_diagnostics() {
@@ -65,16 +82,79 @@ void test_diagnostics() {
   check(format_error_explanation("E0214").find("E0214") != std::string::npos, "format_error_explanation E0214");
 }
 
+void test_lexer_and_parser() {
+  using namespace parsley;
+
+  // 1. Calc.parsley
+  const std::string calc_src = read_fixture("Calc.parsley");
+  check(!calc_src.empty(), "Calc.parsley loaded");
+
+  DiagnosticBag lex_diags;
+  auto lexed = lexer::tokenize(calc_src, "Calc.parsley", lex_diags);
+  check(!lex_diags.has_errors(), "Calc.parsley lexed without errors");
+  check(!lexed.tokens.empty(), "Calc.parsley produced tokens");
+  check(!lexed.comments.empty(), "Calc.parsley captured comments");
+
+  DiagnosticBag parse_diags;
+  auto calc_mod = parser::parse_module(calc_src, "Calc.parsley", parse_diags);
+  check(!parse_diags.has_errors(), "Calc.parsley parsed without errors");
+  check(calc_mod.name == "Calc", "Calc module name");
+  check(calc_mod.has_module_header, "Calc has module header");
+  check(calc_mod.exports.size() == 1 && calc_mod.exports[0].name == "program", "Calc exports program");
+  check(calc_mod.imports.size() == 1 && calc_mod.imports[0].module_name == "Parsley.Prelude", "Calc imports Parsley.Prelude");
+  check(calc_mod.tokens.size() == 2, "Calc has 2 token decls");
+  check(calc_mod.skips.size() == 2, "Calc has 2 skip decls");
+  check(calc_mod.keywords.size() == 1, "Calc has 1 keywords decl");
+  check(calc_mod.data_decls.size() == 2, "Calc has 2 data decls (Op, Expr)");
+  check(calc_mod.rule_defs.size() == 5, "Calc has 5 rules (program, expr, atom, letExpr, parens)");
+  check(calc_mod.examples.size() == 2, "Calc has 2 examples");
+
+  // 2. LexModes.parsley
+  const std::string modes_src = read_fixture("LexModes.parsley");
+  DiagnosticBag modes_diags;
+  auto modes_mod = parser::parse_module(modes_src, "LexModes.parsley", modes_diags);
+  check(!modes_diags.has_errors(), "LexModes.parsley parsed without errors");
+  check(modes_mod.name == "LexModes", "LexModes module name");
+  check(modes_mod.modes.size() == 1 && modes_mod.modes[0].name == "string", "LexModes has mode string");
+  check(modes_mod.modes[0].tokens.size() == 3, "LexModes string mode has 3 tokens");
+
+  // 3. HtmlContext.parsley
+  const std::string html_src = read_fixture("HtmlContext.parsley");
+  DiagnosticBag html_diags;
+  auto html_mod = parser::parse_module(html_src, "HtmlContext.parsley", html_diags);
+  check(!html_diags.has_errors(), "HtmlContext.parsley parsed without errors");
+  check(html_mod.name == "HtmlContext", "HtmlContext module name");
+  bool found_context_do = false;
+  for (const auto& r : html_mod.rule_defs) {
+    if (r.name == "htmlTag" && r.body && r.body->kind == ast::RuleExpr::Kind::Do && r.body->is_context) {
+      found_context_do = true;
+    }
+  }
+  check(found_context_do, "HtmlContext htmlTag uses context do");
+
+  // 4. Error recovery test
+  const std::string bad_src =
+      "module Bad where\n"
+      "data T = \n"
+      "good :: Text\n"
+      "good = \"ok\"\n";
+  DiagnosticBag bad_diags;
+  auto bad_mod = parser::parse_module(bad_src, "Bad.parsley", bad_diags);
+  check(bad_diags.has_errors(), "Bad.parsley reports syntax error");
+  check(!bad_mod.rule_defs.empty(), "Parser recovered to parse subsequent rule `good`");
+}
+
 } // namespace
 
 int main() {
   test_version();
   test_diagnostics();
+  test_lexer_and_parser();
 
   if (g_failures > 0) {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v0.1.0 tests passed.\n";
+  std::cout << "All Phase v0.2.0 tests passed.\n";
   return 0;
 }
