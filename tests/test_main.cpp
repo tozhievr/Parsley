@@ -48,9 +48,9 @@ std::string read_fixture(std::string_view name) {
 
 void test_version() {
   check(parsley::VERSION_MAJOR == 1, "VERSION_MAJOR == 1");
-  check(parsley::VERSION_MINOR == 0, "VERSION_MINOR == 0");
-  check(parsley::VERSION_PATCH == 1, "VERSION_PATCH == 1");
-  check(parsley::VERSION_STRING == "1.0.1", "VERSION_STRING == 1.0.1");
+  check(parsley::VERSION_MINOR == 1, "VERSION_MINOR == 1");
+  check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
+  check(parsley::VERSION_STRING == "1.1.0", "VERSION_STRING == 1.1.0");
 }
 
 void test_diagnostics() {
@@ -169,10 +169,14 @@ void test_stdlib_resolve_typecheck() {
   using namespace parsley;
 
   // Stdlib
-  check(stdlib::builtin_modules().size() >= 5, "builtin_modules has >= 5 modules");
+  check(stdlib::builtin_modules().size() >= 9, "builtin_modules has >= 9 modules");
   check(stdlib::find_builtin_module("Parsley.Prelude").has_value(), "Parsley.Prelude found");
   check(stdlib::find_builtin_module("Json").has_value(), "Json found");
   check(stdlib::find_builtin_module("Sql").has_value(), "Sql found");
+  check(stdlib::find_builtin_module("Python").has_value(), "Python stdlib module found");
+  check(stdlib::find_builtin_module("Swift").has_value(), "Swift stdlib module found");
+  check(stdlib::find_builtin_module("Kotlin").has_value(), "Kotlin stdlib module found");
+  check(stdlib::find_builtin_module("Haskell").has_value(), "Haskell stdlib module found");
 
   // Calc.parsley resolve + typecheck
   {

@@ -918,7 +918,16 @@ private:
       case ast::RuleExpr::Kind::App: {
         TyPtr fn_ty = prune(infer_expr(expr->lhs, nullptr));
         if (fn_ty && fn_ty->kind == Ty::Kind::Arrow && fn_ty->args.size() == 2) {
-          TyPtr arg_ty = infer_expr(expr->rhs, fn_ty->args[0]);
+          if (expected) {
+            unify(fn_ty->args[1], expected, expr->span);
+          }
+          TyPtr arg_exp = prune(fn_ty->args[0]);
+          if (expr->lhs && expr->lhs->kind == ast::RuleExpr::Kind::Var &&
+              expr->lhs->text == "pure" && arg_exp && arg_exp->kind == Ty::Kind::Var &&
+              expr->rhs && expr->rhs->kind == ast::RuleExpr::Kind::Lit) {
+            arg_exp = make_con("Text");
+          }
+          TyPtr arg_ty = infer_expr(expr->rhs, arg_exp);
           unify(fn_ty->args[0], arg_ty, expr->rhs ? expr->rhs->span : expr->span);
           return prune(fn_ty->args[1]);
         }

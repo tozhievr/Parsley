@@ -1,0 +1,318 @@
+module Swift (topLevel) where
+
+import Parsley.Prelude (sepBy, many, eof)
+
+-- Лексика (по мотивам Swift5Lexer.g4) ----------------
+skip ws           = /[[:space:]]+/
+skip lineComment  = /\/\/[^\n\r]*/
+skip blockComment = /\/\*([^*]|\*+[^*/])*\*+\//
+
+token number    = /[0-9]+([.][0-9]+)?/   :: Double
+token stringLit = /"([^"\\]|\\.)*"/      :: Text
+token ident     = /[a-zA-Z_][a-zA-Z0-9_]*/ :: Text
+
+keywords =
+  [ "import", "struct", "class", "enum", "case", "func"
+  , "let", "var", "if", "else", "guard", "while", "for"
+  , "in", "return", "true", "false", "nil"
+  ]
+
+-- AST (Swift 5 subset) ---------------------------------
+data SwiftOp
+  = SwAdd | SwSub | SwMul | SwDiv | SwMod
+  | SwEq  | SwNeq | SwLt  | SwLe  | SwGt | SwGe
+  | SwAnd | SwOr  | SwAssign
+
+data SwiftUnaryOp = SwNeg | SwNot
+
+data SwiftExpr
+  = SwNum Double
+  | SwStr Text
+  | SwBool Bool
+  | SwNil
+  | SwVar Text
+  | SwUnary SwiftUnaryOp SwiftExpr
+  | SwBin SwiftOp SwiftExpr SwiftExpr
+  | SwCall SwiftExpr [SwiftExpr]
+  | SwMember SwiftExpr Text
+  | SwArray [SwiftExpr]
+
+data SwiftParam = SwParam Text Text
+
+data SwiftField = SwField Bool Text Text [SwiftExpr]
+
+data SwiftStmt
+  = StmtLet Text Text SwiftExpr
+  | StmtVar Text Text SwiftExpr
+  | StmtIf SwiftExpr [SwiftStmt] [SwiftStmt]
+  | StmtGuard SwiftExpr [SwiftStmt]
+  | StmtWhile SwiftExpr [SwiftStmt]
+  | StmtFor Text SwiftExpr [SwiftStmt]
+  | StmtReturn [SwiftExpr]
+  | StmtExpr SwiftExpr
+
+data SwiftDecl
+  = DeclImport Text
+  | DeclStruct Text [SwiftDecl]
+  | DeclClass Text Text [SwiftDecl]
+  | DeclEnum Text [SwiftDecl]
+  | DeclEnumCase [Text]
+  | DeclFunc Text [SwiftParam] Text [SwiftStmt]
+  | DeclField SwiftField
+  | DeclStmt SwiftStmt
+
+data SwiftFile = SwFile [SwiftDecl]
+
+-- Синтаксис --------------------------------------------
+topLevel :: SwiftFile
+topLevel = SwFile <$> many topDecl <* many ";" <* eof
+
+topDecl :: SwiftDecl
+topDecl
+  =  importDecl
+  |  structDecl
+  |  classDecl
+  |  enumDecl
+  |  funcDecl
+  |  DeclStmt <$> stmt
+
+importDecl :: SwiftDecl
+importDecl = DeclImport <$> ("import" *> ident <* many ";")
+
+structDecl :: SwiftDecl
+structDecl = do
+  "struct"
+  name <- ident
+  "{"
+  members <- many memberDecl
+  "}"
+  many ";"
+  pure (DeclStruct name members)
+
+classDecl :: SwiftDecl
+classDecl = do
+  "class"
+  name <- ident
+  super <- optSuper
+  "{"
+  members <- many memberDecl
+  "}"
+  many ";"
+  pure (DeclClass name super members)
+
+optSuper :: Text
+optSuper = (":" *> typeRef) <|> pure ""
+
+enumDecl :: SwiftDecl
+enumDecl = do
+  "enum"
+  name <- ident
+  "{"
+  members <- many enumMember
+  "}"
+  many ";"
+  pure (DeclEnum name members)
+
+enumMember :: SwiftDecl
+enumMember
+  =  enumCaseDecl
+  |  memberDecl
+
+enumCaseDecl :: SwiftDecl
+enumCaseDecl = DeclEnumCase <$> ("case" *> (enumCaseName `sepBy` ",") <* many ";")
+
+enumCaseName :: Text
+enumCaseName = ident <* optAssocParams
+
+optAssocParams :: [Text]
+optAssocParams = parens (typeRef `sepBy` ",") <|> pure []
+
+memberDecl :: SwiftDecl
+memberDecl
+  =  DeclField <$> fieldDecl
+  |  funcDecl
+  |  structDecl
+  |  classDecl
+  |  enumDecl
+
+fieldDecl :: SwiftField
+fieldDecl
+  =  letField
+  |  varField
+
+letField :: SwiftField
+letField = do
+  "let"
+  name <- ident
+  ty   <- optTypeAnn
+  init <- optInit
+  many ";"
+  pure (SwField False name ty init)
+
+varField :: SwiftField
+varField = do
+  "var"
+  name <- ident
+  ty   <- optTypeAnn
+  init <- optInit
+  many ";"
+  pure (SwField True name ty init)
+
+optInit :: [SwiftExpr]
+optInit = ("=" *> singleExprList) <|> pure []
+
+singleExprList :: [SwiftExpr]
+singleExprList = do
+  e <- expr
+  pure [e]
+
+funcDecl :: SwiftDecl
+funcDecl = do
+  "func"
+  name   <- ident
+  params <- parens (funcParam `sepBy` ",")
+  ret    <- optRetType
+  body   <- block
+  many ";"
+  pure (DeclFunc name params ret body)
+
+funcParam :: SwiftParam
+funcParam = do
+  name <- ("_" *> ident) <|> ident
+  ":"
+  ty   <- typeRef
+  pure (SwParam name ty)
+
+optTypeAnn :: Text
+optTypeAnn = (":" *> typeRef) <|> pure ""
+
+optRetType :: Text
+optRetType = ("->" *> typeRef) <|> pure ""
+
+typeRef :: Text
+typeRef
+  =  ("[" *> typeRef <* "]")
+  |  ident
+
+block :: [SwiftStmt]
+block = "{" *> many stmt <* "}"
+
+stmt :: SwiftStmt
+stmt
+  =  letStmt
+  |  varStmt
+  |  ifStmt
+  |  guardStmt
+  |  whileStmt
+  |  forStmt
+  |  returnStmt
+  |  StmtExpr <$> (expr <* many ";")
+
+letStmt :: SwiftStmt
+letStmt = do
+  "let"
+  name <- ident
+  ty   <- optTypeAnn
+  "="
+  val  <- expr
+  many ";"
+  pure (StmtLet name ty val)
+
+varStmt :: SwiftStmt
+varStmt = do
+  "var"
+  name <- ident
+  ty   <- optTypeAnn
+  "="
+  val  <- expr
+  many ";"
+  pure (StmtVar name ty val)
+
+ifStmt :: SwiftStmt
+ifStmt = do
+  "if"
+  cond     <- expr
+  thenBody <- block
+  elseBody <- elseClause <|> pure []
+  many ";"
+  pure (StmtIf cond thenBody elseBody)
+
+elseClause :: [SwiftStmt]
+elseClause = "else" *> (block <|> elseIfList)
+
+elseIfList :: [SwiftStmt]
+elseIfList = do
+  s <- ifStmt
+  pure [s]
+
+guardStmt :: SwiftStmt
+guardStmt = do
+  "guard"
+  cond     <- expr
+  "else"
+  elseBody <- block
+  many ";"
+  pure (StmtGuard cond elseBody)
+
+whileStmt :: SwiftStmt
+whileStmt = do
+  "while"
+  cond <- expr
+  body <- block
+  many ";"
+  pure (StmtWhile cond body)
+
+forStmt :: SwiftStmt
+forStmt = do
+  "for"
+  name <- ident
+  "in"
+  iter <- expr
+  body <- block
+  many ";"
+  pure (StmtFor name iter body)
+
+returnStmt :: SwiftStmt
+returnStmt = do
+  "return"
+  val <- singleExprList <|> pure []
+  many ";"
+  pure (StmtReturn val)
+
+expr :: SwiftExpr
+expr = operators atom
+  [ infixr 1 ["="  => SwBin SwAssign]
+  , infixl 2 ["||" => SwBin SwOr]
+  , infixl 3 ["&&" => SwBin SwAnd]
+  , infixl 4 ["==" => SwBin SwEq, "!=" => SwBin SwNeq, "<=" => SwBin SwLe, ">=" => SwBin SwGe, "<" => SwBin SwLt, ">" => SwBin SwGt]
+  , infixl 6 ["+"  => SwBin SwAdd, "-" => SwBin SwSub]
+  , infixl 7 ["*"  => SwBin SwMul, "/" => SwBin SwDiv, "%" => SwBin SwMod]
+  , prefix 9 ["-"  => SwUnary SwNeg, "!" => SwUnary SwNot]
+  ]
+
+atom :: SwiftExpr
+atom
+  =  SwNum  <$> number
+  |  SwStr  <$> stringLit
+  |  ("true"  *> pure (SwBool True))
+  |  ("false" *> pure (SwBool False))
+  |  ("nil"   *> pure SwNil)
+  |  SwArray <$> ("[" *> (expr `sepBy` ",") <* "]")
+  |  parens expr
+  |  identAtom
+
+identAtom :: SwiftExpr
+identAtom
+  =  SwCall   <$> (SwVar <$> ident) <*> parens (expr `sepBy` ",")
+  |  SwMember <$> (SwVar <$> ident) <*> ("." *> ident)
+  |  SwVar    <$> ident
+
+parens :: Rule a -> Rule a
+parens p = "(" *> p <* ")"
+
+-- Примеры и тесты --------------------------------------
+example "func_add" : "func add(a: Int, b: Int) -> Int { return a + b }" parses-to SwFile [DeclFunc "add" [SwParam "a" "Int", SwParam "b" "Int"] "Int" [StmtReturn [SwBin SwAdd (SwVar "a") (SwVar "b")]]]
+example "let_var" : "let x: Int = 10\nvar y = x * 2" parses-to SwFile [DeclStmt (StmtLet "x" "Int" (SwNum 10)), DeclStmt (StmtVar "y" "" (SwBin SwMul (SwVar "x") (SwNum 2)))]
+example "guard_if" : "guard x > 0 else { return 0 }" parses-to SwFile [DeclStmt (StmtGuard (SwBin SwGt (SwVar "x") (SwNum 0)) [StmtReturn [SwNum 0]])]
+example "struct_enum" : "struct Point { let x: Double\n var y: Double }" parses-to SwFile [DeclStruct "Point" [DeclField (SwField False "x" "Double" []), DeclField (SwField True "y" "Double" [])]]
+example "syntax_err" : "func f( {" fails-at (1, 9) expecting "ident"

@@ -1,0 +1,311 @@
+{-# MODE PEG #-}
+module Python (moduleFile) where
+
+import Parsley.Prelude (sepBy, many, some, optional, eof)
+
+-- Лексика Python 3 (на базе PythonLexer.g4) -------------------------
+skip ws      = /[[:space:]]+/
+skip comment = /#[^\n]*/
+
+token numberLit = /[0-9]+([.][0-9]+)?/                   :: Double
+token stringLit = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'/      :: Text
+token ident     = /[a-zA-Z_][a-zA-Z0-9_]*/               :: Text
+
+keywords =
+  [ "import", "from", "as", "def", "class", "if", "elif", "else"
+  , "while", "for", "in", "return", "pass", "break", "continue"
+  , "and", "or", "not", "True", "False", "None"
+  ]
+
+-- AST (транслируется в ISO C17 структуры) ---------------------------
+data PyOp
+  = PyAdd | PySub | PyMul | PyDiv | PyFloorDiv | PyMod | PyPow
+  | PyEq | PyNe | PyLt | PyLe | PyGt | PyGe
+  | PyAnd | PyOr
+
+data PyUnaryOp
+  = PyNeg | PyPos | PyNot
+
+data PyParam
+  = PyParam Text Text
+
+data PyExpr
+  = PyNum Double
+  | PyStr Text
+  | PyBool Bool
+  | PyNone
+  | PyVar Text
+  | PyList [PyExpr]
+  | PyBin PyOp PyExpr PyExpr
+  | PyUnary PyUnaryOp PyExpr
+  | PyCall PyExpr [PyExpr]
+  | PyIndex PyExpr PyExpr
+  | PyAttr PyExpr Text
+
+data PyStmt
+  = PyImport [Text] Text
+  | PyFromImport [Text] [Text]
+  | PyDef Text [PyParam] Text [PyStmt]
+  | PyClass Text [Text] [PyStmt]
+  | PyIf PyExpr [PyStmt] [PyStmt]
+  | PyWhile PyExpr [PyStmt]
+  | PyFor Text PyExpr [PyStmt]
+  | PyReturn PyExpr
+  | PyPass
+  | PyBreak
+  | PyContinue
+  | PyAssign PyExpr Text PyExpr
+  | PyAugAssign PyExpr Text PyExpr
+  | PyExprStmt PyExpr
+
+data PyModule
+  = PyModule [PyStmt]
+
+-- Точка входа -------------------------------------------------------
+moduleFile :: PyModule
+moduleFile = PyModule <$> (many topStmt <* eof)
+
+topStmt :: PyStmt
+topStmt
+  =  importStmt
+  |  fromImportStmt
+  |  defStmt
+  |  classStmt
+  |  innerStmt
+
+-- Импорты -----------------------------------------------------------
+dottedName :: [Text]
+dottedName = ident `sepBy` "."
+
+optAlias :: Text
+optAlias
+  =  "as" *> ident
+  |  pure ""
+
+importStmt :: PyStmt
+importStmt = do
+  "import"
+  modPath <- dottedName
+  alias   <- optAlias
+  pure (PyImport modPath alias)
+
+fromTargets :: [Text]
+fromTargets
+  =  "*" *> pure ["*"]
+  |  "(" *> (ident `sepBy` ",") <* ")"
+  |  ident `sepBy` ","
+
+fromImportStmt :: PyStmt
+fromImportStmt = do
+  "from"
+  modPath <- dottedName
+  "import"
+  names   <- fromTargets
+  pure (PyFromImport modPath names)
+
+-- Определения функций и классов -------------------------------------
+typeName :: Text
+typeName = do
+  base <- ("None" *> pure "None") <|> ident
+  optional ("[" *> (typeName `sepBy` ",") <* "]")
+  pure base
+
+optAnnot :: Text
+optAnnot
+  =  ":" *> typeName
+  |  pure ""
+
+optReturnType :: Text
+optReturnType
+  =  "->" *> typeName
+  |  pure ""
+
+param :: PyParam
+param = do
+  name <- ident
+  ann  <- optAnnot
+  optional ("=" *> expr)
+  pure (PyParam name ann)
+
+defStmt :: PyStmt
+defStmt = do
+  "def"
+  name   <- ident
+  "("
+  params <- param `sepBy` ","
+  ")"
+  ret    <- optReturnType
+  ":"
+  body   <- suite
+  pure (PyDef name params ret body)
+
+optBases :: [Text]
+optBases
+  =  "(" *> (ident `sepBy` ",") <* ")"
+  |  pure []
+
+classStmt :: PyStmt
+classStmt = do
+  "class"
+  name  <- ident
+  bases <- optBases
+  ":"
+  body  <- classSuite
+  pure (PyClass name bases body)
+
+classSuite :: [PyStmt]
+classSuite = some classMember
+
+classMember :: PyStmt
+classMember
+  =  defStmt
+  |  innerStmt
+
+-- Операторы и блоки -------------------------------------------------
+suite :: [PyStmt]
+suite = some innerStmt
+
+innerStmt :: PyStmt
+innerStmt
+  =  ifStmt
+  |  whileStmt
+  |  forStmt
+  |  returnStmt
+  |  passStmt
+  |  breakStmt
+  |  continueStmt
+  |  annAssignStmt
+  |  augAssignStmt
+  |  plainAssignStmt
+  |  exprStmt
+
+ifStmt :: PyStmt
+ifStmt = do
+  "if"
+  cond <- expr
+  ":"
+  body <- suite
+  rest <- elifOrElse
+  pure (PyIf cond body rest)
+
+elifOrElse :: [PyStmt]
+elifOrElse
+  =  elifBranch
+  |  "else" *> ":" *> suite
+  |  pure []
+
+elifBranch :: [PyStmt]
+elifBranch = do
+  "elif"
+  cond <- expr
+  ":"
+  body <- suite
+  rest <- elifOrElse
+  pure [PyIf cond body rest]
+
+whileStmt :: PyStmt
+whileStmt = do
+  "while"
+  cond <- expr
+  ":"
+  body <- suite
+  pure (PyWhile cond body)
+
+forStmt :: PyStmt
+forStmt = do
+  "for"
+  var  <- ident
+  "in"
+  iter <- expr
+  ":"
+  body <- suite
+  pure (PyFor var iter body)
+
+returnStmt :: PyStmt
+returnStmt
+  =  "return" *> (PyReturn <$> expr)
+  |  "return" *> pure (PyReturn PyNone)
+
+passStmt :: PyStmt
+passStmt = "pass" *> pure PyPass
+
+breakStmt :: PyStmt
+breakStmt = "break" *> pure PyBreak
+
+continueStmt :: PyStmt
+continueStmt = "continue" *> pure PyContinue
+
+annAssignStmt :: PyStmt
+annAssignStmt = do
+  name <- ident
+  ":"
+  ann  <- typeName
+  "="
+  val  <- expr
+  pure (PyAssign (PyVar name) ann val)
+
+augOp :: Text
+augOp
+  =  "+="  *> pure "+="
+  |  "-="  *> pure "-="
+  |  "*="  *> pure "*="
+  |  "/="  *> pure "/="
+  |  "//=" *> pure "//="
+  |  "%="  *> pure "%="
+
+augAssignStmt :: PyStmt
+augAssignStmt = do
+  target <- postfixExpr
+  op     <- augOp
+  val    <- expr
+  pure (PyAugAssign target op val)
+
+plainAssignStmt :: PyStmt
+plainAssignStmt = do
+  target <- postfixExpr
+  "="
+  val    <- expr
+  pure (PyAssign target "" val)
+
+exprStmt :: PyStmt
+exprStmt = PyExprStmt <$> expr
+
+-- Выражения (приоритеты операторов Python 3) ------------------------
+expr :: PyExpr
+expr = operators postfixExpr
+  [ infixl 1 ["or"  => PyBin PyOr]
+  , infixl 2 ["and" => PyBin PyAnd]
+  , prefix 3 ["not" => PyUnary PyNot]
+  , infixl 4 ["==" => PyBin PyEq, "!=" => PyBin PyNe, "<=" => PyBin PyLe, "<" => PyBin PyLt, ">=" => PyBin PyGe, ">" => PyBin PyGt]
+  , infixl 5 ["+" => PyBin PyAdd, "-" => PyBin PySub]
+  , infixl 6 ["*" => PyBin PyMul, "//" => PyBin PyFloorDiv, "/" => PyBin PyDiv, "%" => PyBin PyMod]
+  , prefix 7 ["-" => PyUnary PyNeg, "+" => PyUnary PyPos]
+  , infixr 8 ["**" => PyBin PyPow]
+  ]
+
+postfixExpr :: PyExpr
+postfixExpr
+  =  PyCall  <$> postfixExpr <*> ("(" *> (expr `sepBy` ",") <* ")")
+  |  PyIndex <$> postfixExpr <*> ("[" *> expr <* "]")
+  |  PyAttr  <$> postfixExpr <*> ("." *> ident)
+  |  atom
+
+atom :: PyExpr
+atom
+  =  PyNum  <$> numberLit
+  |  PyStr  <$> stringLit
+  |  "True"  *> pure (PyBool True)
+  |  "False" *> pure (PyBool False)
+  |  "None"  *> pure PyNone
+  |  PyList <$> ("[" *> (expr `sepBy` ",") <* "]")
+  |  PyVar  <$> ident
+  |  "(" *> expr <* ")"
+
+-- Примеры и тесты ---------------------------------------------------
+example "arithmetic" : "x = 1 + 2 * 3" parses-to PyModule [PyAssign (PyVar "x") "" (PyBin PyAdd (PyNum 1) (PyBin PyMul (PyNum 2) (PyNum 3)))]
+example "import" : "from typing import List, Optional" parses-to PyModule [PyFromImport ["typing"] ["List", "Optional"]]
+example "function" : "def add(x: int, y: int) -> int: return x + y" parses-to PyModule [PyDef "add" [PyParam "x" "int", PyParam "y" "int"] "int" [PyReturn (PyBin PyAdd (PyVar "x") (PyVar "y"))]]
+example "if-elif-else" : "if x > 0: pass elif x == 0: break else: continue" parses-to PyModule [PyIf (PyBin PyGt (PyVar "x") (PyNum 0)) [PyPass] [PyIf (PyBin PyEq (PyVar "x") (PyNum 0)) [PyBreak] [PyContinue]]]
+example "unary-and-pow" : "y = -2 ** 3" parses-to PyModule [PyAssign (PyVar "y") "" (PyUnary PyNeg (PyBin PyPow (PyNum 2) (PyNum 3)))]
+example "error-missing-colon" : "def broken(x)" fails-at (1, 14) expecting ":"
+example "error-bad-expr" : "x = 1 +" fails-at (1, 8) expecting "expression"
