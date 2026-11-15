@@ -120,5 +120,107 @@
       "{-# ${1|START,MODE,BACKEND,PREC,NOFACTOR|} ${2:program} #-}$0"
     ],
     "description": "Insert a Parsley compiler pragma ({-# ... #-})"
+  },
+  "PSL Semantics Module": {
+    "prefix": "semantics",
+    "body": [
+      "{-# LANGUAGE Sem1 #-}",
+      "semantics ${1:MyLang} where",
+      "",
+      "import ${1:MyLang}",
+      "import Parsley.Sem.Prelude",
+      "",
+      "source ref = manual \"${2:Language Reference}\" rev \"${3:1.0}\"",
+      "",
+      "-- Diagnostics",
+      "diag E_UNDECLARED :: Error \"Undeclared identifier `{name}`\"",
+      "",
+      "-- AST Node Semantics",
+      "node ${4:Var} ${5:x} where",
+      "  sym <- lookup Variable ${5:x} `orFail` E_UNDECLARED { name = ${5:x} }",
+      "  type = typeOf sym",
+      "",
+      "-- Lint Rules",
+      "{-# SOURCE ref \"1.1\"; STATUS verified; CONFIDENCE 0.95 #-}",
+      "lint ${6:myLint} :: Warning, Correctness",
+      "  match (${7:BinOp} _ l r)",
+      "  when  ${8:constFold r == Just 0}",
+      "  say   \"${9:Suspicious operation}\"",
+      "",
+      "example ${6:myLint}",
+      "  fires  \"${10:1 / 0}\"",
+      "  silent \"${11:1 / 2}\"",
+      "",
+      "profile default = [${6:myLint}]",
+      "$0"
+    ],
+    "description": "Create a Parsley Semantic Layer (.psem) module"
+  },
+  "PSL Diagnostic Declaration": {
+    "prefix": "diag",
+    "body": [
+      "diag ${1:E_CODE} :: ${2|Error,Warning,Note|} \"${3:Message with {arg}}\"$0"
+    ],
+    "description": "Declare a PSL diagnostic code and template"
+  },
+  "PSL Node Semantic Rule": {
+    "prefix": "node",
+    "body": [
+      "node ${1:Ctor} ${2:x} where",
+      "  ${3:sym <- lookup Variable ${2:x} `orFail` E_UNDECLARED { name = ${2:x} }}",
+      "  type = ${4:typeOf sym}$0"
+    ],
+    "description": "Declare semantic equations for an AST constructor node"
+  },
+  "PSL Control-Flow Edge": {
+    "prefix": "flow",
+    "body": [
+      "flow ${1:If} ${2:cond} ${3:thenBranch} ${4:elseBranch} = ${5|branch,chain,loop,jump,jumpOut,jumpTo|} ${2:cond} [${3:thenBranch}, ${4:elseBranch}]$0"
+    ],
+    "description": "Declare a CFG edge equation in PSL"
+  },
+  "PSL Dataflow Analysis": {
+    "prefix": "analysis",
+    "body": [
+      "analysis ${1:Initialized} :: ${2|Forward,Backward|}, ${3|Must,May|} ${4:Symbol}",
+      "  gen  (${5:Assign x _}) = [${6:x}]",
+      "  kill (${7:Decl x Nothing}) = [${6:x}]$0"
+    ],
+    "description": "Declare a gen/kill dataflow analysis over the CFG"
+  },
+  "PSL Lint Rule": {
+    "prefix": "lint",
+    "body": [
+      "{-# SOURCE ref \"${1:1.0}\"; STATUS ${2|verified,reviewed,draft|}; CONFIDENCE ${3:0.95} #-}",
+      "lint ${4:ruleName} :: ${5|Warning,Error,Note|}, ${6|Correctness,Style,Performance,Security|}",
+      "  match (${7:Pattern})",
+      "  when  ${8:True}",
+      "  say   \"${9:Diagnostic message}\"",
+      "  fix   \"${10:Suggested fix}\" Safe (${11:replace (nameSpan x) x})$0"
+    ],
+    "description": "Declare a PSL lint rule with provenance pragma, match, when, say, and fix"
+  },
+  "PSL Lint Example Block": {
+    "prefix": "psem-example",
+    "body": [
+      "example ${1:lintName}",
+      "  fires  \"${2:bad input}\"",
+      "  silent \"${3:good input}\"$0"
+    ],
+    "description": "Declare positive (fires) and negative (silent) examples for a PSL lint rule"
+  },
+  "PSL Profile Declaration": {
+    "prefix": "profile",
+    "body": [
+      "profile ${1|default,ci,recommended,strict|} = [${2:lintRule1, lintRule2}]$0"
+    ],
+    "description": "Declare a named lint profile set"
+  },
+  "PSL Provenance & Status Pragma": {
+    "prefix": "status",
+    "body": [
+      "{-# SOURCE ${1:ref} \"${2:section}\"; STATUS ${3|verified,reviewed,draft|}; CONFIDENCE ${4:0.95} #-}$0"
+    ],
+    "description": "Insert a PSL provenance and verification status pragma"
   }
 }

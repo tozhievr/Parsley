@@ -29,6 +29,7 @@ target_sources(parsley_core
       src/desugar.cppm
       src/analysis.cppm
       src/eval.cppm
+      src/psl.cppm
       src/codegen.cppm
       src/tooling.cppm
       src/compiler.cppm
@@ -74,6 +75,8 @@ if(PARSLEY_BUILD_TESTS)
   add_test(NAME parsley_cli_test_kotlin COMMAND parsley test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Kotlin.parsley" --fuzz 30)
   add_test(NAME parsley_cli_check_haskell COMMAND parsley check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Haskell.parsley")
   add_test(NAME parsley_cli_test_haskell COMMAND parsley test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Haskell.parsley" --fuzz 30)
+  add_test(NAME parsley_cli_check_mini COMMAND parsley check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Mini.parsley")
+  add_test(NAME parsley_cli_test_mini COMMAND parsley test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Mini.parsley" --fuzz 30)
 endif()
 
 install(TARGETS parsley
@@ -83,11 +86,18 @@ install(TARGETS parsley
 install(FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/VERSION"
   "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+  "${CMAKE_CURRENT_SOURCE_DIR}/AGENTS.md"
   DESTINATION share/doc/parsley
+)
+
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/skills"
+  DESTINATION share/parsley
 )
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/editors/vscode"
   DESTINATION share/parsley/editors
+  PATTERN "*.vsix" EXCLUDE
+  PATTERN "node_modules" EXCLUDE
 )
 
 set(CPACK_PACKAGE_NAME "parsley")

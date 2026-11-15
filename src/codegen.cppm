@@ -25,6 +25,7 @@ import parsley.ast;
 import parsley.diagnostic;
 import parsley.ir;
 import parsley.analysis;
+import parsley.psl;
 
 export namespace parsley::codegen {
 
@@ -36,6 +37,9 @@ struct CodegenOptions {
   TargetLang target = TargetLang::C17;
   bool emit_tests = true;
   std::string module_override;
+  psl::PslStatus min_status = psl::PslStatus::Draft;
+  std::string psl_profile;
+  const psl::PslModule* psl_module = nullptr;
 };
 
 struct GeneratedFile {
@@ -3278,18 +3282,29 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
 // Build system & integration file generators
 // ---------------------------------------------------------------------------
 
-inline std::string generate_test_parser_c(const ir::Grammar& g) {
+inline std::string generate_test_parser_c(const ir::Grammar& g,
+                                          const std::string& mod_low = "",
+                                          bool has_psl_selftest = false) {
   std::ostringstream out;
   out << "/* Standalone ISO C17 conformance test runner for " << safe_comment(g.module_name)
       << " */\n";
-  out << "#include \"parser.h\"\n\n";
-  out << "#include <stdio.h>\n";
+  out << "#include \"parser.h\"\n";
+  if (has_psl_selftest && !mod_low.empty()) {
+    out << "#include \"" << mod_low << "_sem.h\"\n";
+  }
+  out << "\n#include <stdio.h>\n";
   out << "#include <string.h>\n\n";
   out << "int main(void) {\n";
   out << "  if (parsley_run_examples() != 0) {\n";
   out << "    fprintf(stderr, \"Parsley conformance examples failed.\\n\");\n";
   out << "    return 1;\n";
   out << "  }\n";
+  if (has_psl_selftest && !mod_low.empty()) {
+    out << "  if (" << mod_low << "_psl_selftest() != 0) {\n";
+    out << "    fprintf(stderr, \"Parsley PSL semantic selftest failed.\\n\");\n";
+    out << "    return 1;\n";
+    out << "  }\n";
+  }
   for (const auto& ex : g.gExamples) {
     if (ex.expect_success) {
       out << "  {\n";
@@ -3311,8 +3326,15 @@ inline std::string generate_test_parser_c(const ir::Grammar& g) {
   return out.str();
 }
 
-inline std::string generate_cmake(const std::string& mod_cap, const std::string& mod_low) {
+inline std::string generate_cmake(const std::string& mod_cap,
+                                  const std::string& mod_low,
+                                  const std::vector<std::string>& extra_c_files = {},
+                                  const std::vector<std::string>& extra_h_files = {}) {
   const std::string tgt = mod_low + "_parser";
+  std::string c_srcs = "parser.c";
+  for (const auto& cf : extra_c_files) {
+    c_srcs += " " + cf;
+  }
   std::ostringstream out;
   out << "cmake_minimum_required(VERSION 3.16)\n";
   out << "project(" << tgt << " VERSION 0.1.0 LANGUAGES C)\n\n";
@@ -3320,7 +3342,7 @@ inline std::string generate_cmake(const std::string& mod_cap, const std::string&
   out << "set(CMAKE_C_STANDARD_REQUIRED ON)\n";
   out << "set(CMAKE_C_EXTENSIONS OFF)\n\n";
   out << "include(GNUInstallDirs)\n\n";
-  out << "add_library(" << tgt << " SHARED parser.c)\n";
+  out << "add_library(" << tgt << " SHARED " << c_srcs << ")\n";
   out << "add_library(" << mod_cap << "::parser ALIAS " << tgt << ")\n";
   out << "target_compile_definitions(" << tgt << " PRIVATE PARSLEY_BUILDING_DLL)\n";
   out << "target_include_directories(" << tgt << "\n";
@@ -3332,7 +3354,7 @@ inline std::string generate_cmake(const std::string& mod_cap, const std::string&
   out << "if(UNIX AND NOT APPLE)\n";
   out << "  target_link_libraries(" << tgt << " PRIVATE m)\n";
   out << "endif()\n\n";
-  out << "add_library(" << tgt << "_static STATIC parser.c)\n";
+  out << "add_library(" << tgt << "_static STATIC " << c_srcs << ")\n";
   out << "add_library(" << mod_cap << "::parser_static ALIAS " << tgt << "_static)\n";
   out << "target_compile_definitions(" << tgt << "_static PUBLIC PARSLEY_STATIC)\n";
   out << "target_include_directories(" << tgt << "_static\n";
@@ -3350,7 +3372,11 @@ inline std::string generate_cmake(const std::string& mod_cap, const std::string&
   out << "  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}\n";
   out << "  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}\n";
   out << ")\n";
-  out << "install(FILES include/" << tgt << ".h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})\n";
+  out << "install(FILES include/" << tgt << ".h";
+  for (const auto& hf : extra_h_files) {
+    out << " " << hf;
+  }
+  out << " DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})\n";
   out << "install(FILES " << tgt << ".pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)\n\n";
   out << "enable_testing()\n";
   out << "add_executable(test_" << tgt << " test_parser.c)\n";
@@ -3359,8 +3385,15 @@ inline std::string generate_cmake(const std::string& mod_cap, const std::string&
   return out.str();
 }
 
-inline std::string generate_meson(const std::string& mod_cap, const std::string& mod_low) {
+inline std::string generate_meson(const std::string& mod_cap,
+                                  const std::string& mod_low,
+                                  const std::vector<std::string>& extra_c_files = {},
+                                  const std::vector<std::string>& extra_h_files = {}) {
   const std::string tgt = mod_low + "_parser";
+  std::string meson_srcs = "  'parser.c',\n";
+  for (const auto& cf : extra_c_files) {
+    meson_srcs += "  '" + cf + "',\n";
+  }
   std::ostringstream out;
   out << "project('" << tgt << "', 'c',\n";
   out << "  version: '0.1.0',\n";
@@ -3370,20 +3403,24 @@ inline std::string generate_meson(const std::string& mod_cap, const std::string&
   out << "m_dep = cc.find_library('m', required: false)\n";
   out << "inc = include_directories('include', '.')\n\n";
   out << tgt << "_shared = shared_library('" << tgt << "',\n";
-  out << "  'parser.c',\n";
+  out << meson_srcs;
   out << "  include_directories: inc,\n";
   out << "  c_args: ['-DPARSLEY_BUILDING_DLL'],\n";
   out << "  dependencies: [m_dep],\n";
   out << "  install: true\n";
   out << ")\n\n";
   out << tgt << "_static = static_library('" << tgt << "',\n";
-  out << "  'parser.c',\n";
+  out << meson_srcs;
   out << "  include_directories: inc,\n";
   out << "  c_args: ['-DPARSLEY_STATIC'],\n";
   out << "  dependencies: [m_dep],\n";
   out << "  install: true\n";
   out << ")\n\n";
-  out << "install_headers('include/" << tgt << ".h')\n\n";
+  out << "install_headers('include/" << tgt << ".h'";
+  for (const auto& hf : extra_h_files) {
+    out << ", '" << hf << "'";
+  }
+  out << ")\n\n";
   out << tgt << "_dep = declare_dependency(\n";
   out << "  include_directories: inc,\n";
   out << "  link_with: " << tgt << "_shared\n";
@@ -3401,8 +3438,13 @@ inline std::string generate_meson(const std::string& mod_cap, const std::string&
   return out.str();
 }
 
-inline std::string generate_makefile(const std::string& mod_low) {
+inline std::string generate_makefile(const std::string& mod_low,
+                                     const std::vector<std::string>& extra_c_files = {}) {
   const std::string tgt = mod_low + "_parser";
+  std::string c_srcs = "parser.c";
+  for (const auto& cf : extra_c_files) {
+    c_srcs += " " + cf;
+  }
   std::ostringstream out;
   out << "CC ?= cc\n";
   out << "CFLAGS ?= -std=c17 -O2 -Wall -Wextra -Wpedantic\n";
@@ -3431,12 +3473,21 @@ inline std::string generate_makefile(const std::string& mod_low) {
   out << "all: shared static\n\n";
   out << "shared: $(SHARED_LIB)\n\n";
   out << "static: $(STATIC_LIB)\n\n";
-  out << "$(SHARED_LIB): parser.c parser.h\n";
-  out << "\t$(CC) $(CFLAGS) $(SHARED_FLAGS) -DPARSLEY_BUILDING_DLL -Iinclude -I. parser.c -o $@ $(LDFLAGS_MATH)\n\n";
+  out << "$(SHARED_LIB): " << c_srcs << " parser.h\n";
+  out << "\t$(CC) $(CFLAGS) $(SHARED_FLAGS) -DPARSLEY_BUILDING_DLL -Iinclude -I. " << c_srcs
+      << " -o $@ $(LDFLAGS_MATH)\n\n";
   out << "parser_static.o: parser.c parser.h\n";
   out << "\t$(CC) $(CFLAGS) -DPARSLEY_STATIC -Iinclude -I. -c parser.c -o $@\n\n";
-  out << "$(STATIC_LIB): parser_static.o\n";
-  out << "\t$(AR) rcs $@ $<\n\n";
+  std::string static_objs = "parser_static.o";
+  for (std::size_t i = 0; i < extra_c_files.size(); ++i) {
+    std::string obj = "psl_extra_" + std::to_string(i) + ".o";
+    static_objs += " " + obj;
+    out << obj << ": " << extra_c_files[i] << "\n";
+    out << "\t$(CC) $(CFLAGS) -DPARSLEY_STATIC -Iinclude -I. -c " << extra_c_files[i]
+        << " -o $@\n\n";
+  }
+  out << "$(STATIC_LIB): " << static_objs << "\n";
+  out << "\t$(AR) rcs $@ " << static_objs << "\n\n";
   out << "$(TEST_BIN): test_parser.c $(SHARED_LIB)\n";
   out << "\t$(CC) $(CFLAGS) -Iinclude -I. test_parser.c -L. -l" << tgt << " -Wl,-rpath,. -o $@ $(LDFLAGS_MATH)\n\n";
   out << "test: $(TEST_BIN)\n";
@@ -3447,12 +3498,17 @@ inline std::string generate_makefile(const std::string& mod_low) {
   out << "\tcp $(SHARED_LIB) $(STATIC_LIB) $(DESTDIR)$(PREFIX)/lib/\n";
   out << "\tcp " << tgt << ".pc $(DESTDIR)$(PREFIX)/lib/pkgconfig/\n\n";
   out << "clean:\n";
-  out << "\trm -f $(SHARED_LIB) $(STATIC_LIB) parser_static.o $(TEST_BIN)\n";
+  out << "\trm -f $(SHARED_LIB) $(STATIC_LIB) " << static_objs << " $(TEST_BIN)\n";
   return out.str();
 }
 
-inline std::string generate_xmake(const std::string& mod_low) {
+inline std::string generate_xmake(const std::string& mod_low,
+                                  const std::vector<std::string>& extra_c_files = {}) {
   const std::string tgt = mod_low + "_parser";
+  std::string x_srcs = "\"parser.c\"";
+  for (const auto& cf : extra_c_files) {
+    x_srcs += ", \"" + cf + "\"";
+  }
   std::ostringstream out;
   out << "set_project(\"" << tgt << "\")\n";
   out << "set_version(\"0.1.0\")\n";
@@ -3460,7 +3516,7 @@ inline std::string generate_xmake(const std::string& mod_low) {
   out << "add_rules(\"mode.debug\", \"mode.release\")\n\n";
   out << "target(\"" << tgt << "\")\n";
   out << "    set_kind(\"shared\")\n";
-  out << "    add_files(\"parser.c\")\n";
+  out << "    add_files(" << x_srcs << ")\n";
   out << "    add_includedirs(\"include\", \".\", {public = true})\n";
   out << "    add_headerfiles(\"include/" << tgt << ".h\")\n";
   out << "    add_defines(\"PARSLEY_BUILDING_DLL\")\n";
@@ -3469,7 +3525,7 @@ inline std::string generate_xmake(const std::string& mod_low) {
   out << "    end\n\n";
   out << "target(\"" << tgt << "_static\")\n";
   out << "    set_kind(\"static\")\n";
-  out << "    add_files(\"parser.c\")\n";
+  out << "    add_files(" << x_srcs << ")\n";
   out << "    add_includedirs(\"include\", \".\", {public = true})\n";
   out << "    add_headerfiles(\"include/" << tgt << ".h\")\n";
   out << "    add_defines(\"PARSLEY_STATIC\", {public = true})\n";
@@ -3484,14 +3540,24 @@ inline std::string generate_xmake(const std::string& mod_low) {
   return out.str();
 }
 
-inline std::string generate_bazel_build(const std::string& mod_low) {
+inline std::string generate_bazel_build(const std::string& mod_low,
+                                        const std::vector<std::string>& extra_c_files = {},
+                                        const std::vector<std::string>& extra_h_files = {}) {
   const std::string tgt = mod_low + "_parser";
+  std::string b_srcs = "\"parser.c\"";
+  for (const auto& cf : extra_c_files) {
+    b_srcs += ", \"" + cf + "\"";
+  }
+  std::string b_hdrs = "\"parser.h\", \"include/" + tgt + ".h\"";
+  for (const auto& hf : extra_h_files) {
+    b_hdrs += ", \"" + hf + "\"";
+  }
   std::ostringstream out;
   out << "load(\"@rules_cc//cc:defs.bzl\", \"cc_binary\", \"cc_library\", \"cc_test\")\n\n";
   out << "cc_library(\n";
   out << "    name = \"" << tgt << "\",\n";
-  out << "    srcs = [\"parser.c\"],\n";
-  out << "    hdrs = [\"parser.h\", \"include/" << tgt << ".h\"],\n";
+  out << "    srcs = [" << b_srcs << "],\n";
+  out << "    hdrs = [" << b_hdrs << "],\n";
   out << "    includes = [\"include\", \".\"],\n";
   out << "    defines = [\"PARSLEY_STATIC\"],\n";
   out << "    copts = select({\n";
@@ -3506,7 +3572,7 @@ inline std::string generate_bazel_build(const std::string& mod_low) {
   out << ")\n\n";
   out << "cc_binary(\n";
   out << "    name = \"" << tgt << "_shared\",\n";
-  out << "    srcs = [\"parser.c\", \"parser.h\", \"include/" << tgt << ".h\"],\n";
+  out << "    srcs = [" << b_srcs << ", " << b_hdrs << "],\n";
   out << "    includes = [\"include\", \".\"],\n";
   out << "    local_defines = [\"PARSLEY_BUILDING_DLL\"],\n";
   out << "    linkshared = True,\n";
@@ -3630,20 +3696,70 @@ inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
   detail::C17Emitter emitter(grammar, analysis, type_info, opts.emit_tests);
   const std::string source_content = emitter.emit();
 
+  std::vector<GeneratedFile> psl_files;
+  std::vector<std::string> extra_c_files;
+  std::vector<std::string> extra_h_files;
+  bool has_psl_selftest = false;
+
+  if (opts.psl_module != nullptr) {
+    psl::PslCodegenOptions psl_opts;
+    psl_opts.emit_tests = opts.emit_tests;
+    psl_opts.min_status = opts.min_status;
+    psl_opts.profile = opts.psl_profile;
+    psl_opts.module_override = opts.module_override;
+    const auto emitted_psl = psl::emit_psl_c17_files(*opts.psl_module, grammar, psl_opts);
+    for (const auto& pf : emitted_psl) {
+      psl_files.push_back(GeneratedFile{pf.relative_path, pf.content});
+      if (pf.relative_path.ends_with(".c") && pf.relative_path != "parser.c") {
+        extra_c_files.push_back(pf.relative_path);
+        if (pf.relative_path == mod_low + "_sem.c") {
+          has_psl_selftest = true;
+        }
+      } else if (pf.relative_path.ends_with(".h") &&
+                 pf.relative_path.find('/') == std::string::npos) {
+        extra_h_files.push_back(pf.relative_path);
+        psl_files.push_back(GeneratedFile{"include/" + pf.relative_path, pf.content});
+      }
+    }
+    const auto lock_data =
+        psl::compute_psl_lock_data(grammar, opts.psl_module->language_version);
+    psl_files.push_back(
+        GeneratedFile{raw_mod + ".psem.lock", psl::serialize_psl_lock(lock_data)});
+  }
+
   std::vector<GeneratedFile> files;
   files.push_back(GeneratedFile{"parser.h", header_content});
   files.push_back(GeneratedFile{"include/" + mod_low + "_parser.h", header_content});
   files.push_back(GeneratedFile{"parser.c", source_content});
-  files.push_back(GeneratedFile{"test_parser.c", detail::generate_test_parser_c(grammar)});
-  files.push_back(GeneratedFile{"CMakeLists.txt", detail::generate_cmake(mod_cap, mod_low)});
-  files.push_back(GeneratedFile{"meson.build", detail::generate_meson(mod_cap, mod_low)});
-  files.push_back(GeneratedFile{"Makefile", detail::generate_makefile(mod_low)});
-  files.push_back(GeneratedFile{"xmake.lua", detail::generate_xmake(mod_low)});
-  files.push_back(GeneratedFile{"BUILD.bazel", detail::generate_bazel_build(mod_low)});
+  for (auto& pf : psl_files) {
+    files.push_back(std::move(pf));
+  }
+  files.push_back(GeneratedFile{
+      "test_parser.c",
+      detail::generate_test_parser_c(grammar, mod_low, has_psl_selftest && opts.emit_tests)});
+  files.push_back(GeneratedFile{
+      "CMakeLists.txt", detail::generate_cmake(mod_cap, mod_low, extra_c_files, extra_h_files)});
+  files.push_back(GeneratedFile{
+      "meson.build", detail::generate_meson(mod_cap, mod_low, extra_c_files, extra_h_files)});
+  files.push_back(
+      GeneratedFile{"Makefile", detail::generate_makefile(mod_low, extra_c_files)});
+  files.push_back(GeneratedFile{"xmake.lua", detail::generate_xmake(mod_low, extra_c_files)});
+  files.push_back(GeneratedFile{
+      "BUILD.bazel", detail::generate_bazel_build(mod_low, extra_c_files, extra_h_files)});
   files.push_back(GeneratedFile{"MODULE.bazel", detail::generate_bazel_module(mod_low)});
-  files.push_back(GeneratedFile{mod_low + "_parser.pc", detail::generate_pkgconfig(mod_cap, mod_low)});
-  files.push_back(GeneratedFile{"README.md", detail::generate_project_readme(mod_cap, mod_low, analysis)});
+  files.push_back(
+      GeneratedFile{mod_low + "_parser.pc", detail::generate_pkgconfig(mod_cap, mod_low)});
+  files.push_back(
+      GeneratedFile{"README.md", detail::generate_project_readme(mod_cap, mod_low, analysis)});
   return files;
+}
+
+inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
+                                                   const analysis::AnalysisResult& analysis,
+                                                   const psl::PslModule& psl_mod,
+                                                   CodegenOptions opts) {
+  opts.psl_module = &psl_mod;
+  return generate_backend(grammar, analysis, opts);
 }
 
 } // namespace parsley::codegen

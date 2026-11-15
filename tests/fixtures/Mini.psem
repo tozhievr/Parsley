@@ -1,0 +1,117 @@
+{-# LANGUAGE Sem1 #-}
+semantics Mini where
+
+import Mini
+import Parsley.Sem.Prelude
+
+source ref = manual "Mini Imperative Spec" rev "1.0"
+
+-- Типы и символы -------------------------------------------------
+type Ty = Int | Bool | Unit | Err
+
+kind Variable where shadowing = Warn
+
+-- Диагностики ----------------------------------------------------
+diag E_UNDECLARED :: Error "Undeclared variable `{name}`"
+diag E_REDECLARED :: Error "Variable `{name}` is already declared in this scope"
+diag E_TYPE       :: Error "Type mismatch: expected `{expected}`, got `{actual}`"
+diag E_UNINIT     :: Error "Variable `{name}` may be used before initialization"
+
+-- Правила для узлов AST ------------------------------------------
+node IntLit _ where
+  type = Int
+
+node ReadVar x where
+  sym  <- lookup Variable x `orFail` E_UNDECLARED { name = x }
+  type =  typeOf sym
+
+node Neg e where
+  unify (typeOf e) Int `orFail` E_TYPE { expected = Int, actual = typeOf e }
+  type = Int
+
+node Bin op l r where
+  unify (typeOf l) Int `orFail` E_TYPE { expected = Int, actual = typeOf l }
+  unify (typeOf r) Int `orFail` E_TYPE { expected = Int, actual = typeOf r }
+  type = if op == Eq || op == Neq || op == Lt || op == Gt then Bool else Int
+
+node DeclVar x init where
+  declare Variable x Int
+  type = Unit
+
+node Assign x rhs where
+  sym <- lookup Variable x `orFail` E_UNDECLARED { name = x }
+  unify (typeOf sym) (typeOf rhs) `orFail` E_TYPE { expected = typeOf sym, actual = typeOf rhs }
+  type = Unit
+
+node Seq ss where
+  scope ss $ pure ()
+  type = Unit
+
+node If c t e where
+  unify (typeOf c) Bool `orFail` E_TYPE { expected = Bool, actual = typeOf c }
+  type = Unit
+
+node While c body where
+  unify (typeOf c) Bool `orFail` E_TYPE { expected = Bool, actual = typeOf c }
+  type = Unit
+
+node Return e where
+  type = typeOf e
+
+-- Поток управления (CFG) -----------------------------------------
+flow Seq ss       = chain ss
+flow If c t e     = branch c [t, e]
+flow While c body = loop c body
+flow Return e     = jump e Exit
+flow Break        = jumpOut (enclosing While)
+flow Continue     = jumpTo (enclosing While)
+
+-- Анализ потока данных (gen/kill) --------------------------------
+analysis Initialized :: Forward, Must (Set Var)
+  gen  (DeclVar x [_]) = [x]
+  gen  (Assign x _)    = [x]
+
+analysis Live :: Backward, May (Set Var)
+  gen  (ReadVar x)     = [x]
+  kill (Assign x _)    = [x]
+
+-- Линты и обязательные примеры -----------------------------------
+{-# SOURCE ref "7.1" "2026-01-01" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.98 #-}
+lint useBeforeInit :: Error, Correctness
+  match (ReadVar x)
+  when  not (x in Initialized.before node)
+  say   "Variable `{x}` may be used before initialization"
+
+example useBeforeInit
+  fires  "let x; return x;"
+  silent "let x; x = 1; return x;"
+  silent "let x = 1; return x;"
+
+{-# SOURCE ref "7.2" "2026-01-01" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.95 #-}
+lint unreachableCode :: Warning, Correctness
+  match (s :: MiniStmt)
+  when  not (reachable s)
+  say   "Unreachable statement"
+
+example unreachableCode
+  fires  "let x = 1; return x; x = 2;"
+  silent "let x = 1; x = 2; return x;"
+
+{-# SOURCE ref "7.3" "2026-01-01" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.92 #-}
+lint deadStore :: Warning, Style
+  match (Assign x _)
+  when  not (x in Live.after node)
+  say   "Value assigned to `{x}` is never read"
+
+example deadStore
+  fires  "let x = 0; x = 1; return 0;"
+  silent "let x = 0; x = 1; return x;"
+
+profile default = [useBeforeInit, unreachableCode]
+profile ci      = [useBeforeInit, unreachableCode, deadStore]

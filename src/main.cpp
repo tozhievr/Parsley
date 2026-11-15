@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -16,6 +17,7 @@ import parsley.parser;
 import parsley.ir;
 import parsley.analysis;
 import parsley.eval;
+import parsley.psl;
 import parsley.codegen;
 import parsley.tooling;
 import parsley.compiler;
@@ -66,23 +68,31 @@ bool write_text_file(const fs::path& path, std::string_view content) {
 void print_help() {
   std::cout
       << "Parsley " << parsley::VERSION_STRING
-      << " — Haskell-style Grammar DSL & ISO C17 Parser Generator\n\n"
+      << " — Haskell-style Grammar DSL, PSL Static Semantics & ISO C17 Generator\n\n"
       << "Usage:\n"
-      << "  parsley build <file.parsley> [-o <dir>] [--no-compile-shared] [--emit-ir-json] [--emit-ir-sexpr]\n"
-      << "  parsley check <file.parsley>\n"
-      << "  parsley test <file.parsley> [--fuzz <N>]\n"
+      << "  parsley build <file.parsley|file.psem> [-o <dir>] [--no-compile-shared] [--min-status draft|reviewed|verified] [--emit-agent-docs] [--emit-ir-json] [--emit-ir-sexpr]\n"
+      << "  parsley check <file.parsley|file.psem> [--min-status draft|reviewed|verified]\n"
+      << "  parsley test <file.parsley|file.psem> [--fuzz <N>] [--min-status draft|reviewed|verified]\n"
       << "  parsley explain <CODE>\n"
-      << "  parsley fmt <file.parsley> [--write|--check]\n"
+      << "  parsley fmt <file.parsley|file.psem> [--write|--check]\n"
       << "  parsley graph <file.parsley> [--format dot|svg] [-o <file>]\n"
+      << "  parsley agent-docs [--format markdown|json] [-o <dir_or_file>] [<file.parsley>]\n"
       << "  parsley lsp\n"
       << "  parsley pkg <list|show|init> [name]\n"
       << "  parsley --version | --help\n";
 }
 
-void print_diagnostics(const parsley::DiagnosticBag& diags, std::string_view source) {
-  if (!diags.items().empty()) {
-    std::cerr << parsley::render_diagnostics(diags.items(), source);
+void print_diagnostics(const parsley::DiagnosticBag& diags, std::string_view source,
+                       std::string_view psl_source = "") {
+  for (const auto& d : diags.items()) {
+    const std::string_view src =
+        (d.span.file.ends_with(".psem") && !psl_source.empty()) ? psl_source : source;
+    std::cerr << parsley::render_diagnostics(std::vector<parsley::Diagnostic>{d}, src);
   }
+}
+
+void print_diagnostics(const parsley::compiler::CompileResult& res) {
+  print_diagnostics(res.diagnostics, res.is_psl_only ? res.psl_source : res.source, res.psl_source);
 }
 
 int run_system_cmd(const std::string& cmd) {
@@ -96,9 +106,16 @@ int run_system_cmd(const std::string& cmd) {
 
 std::vector<std::string> candidate_c_compilers() {
   std::vector<std::string> list;
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
   if (const char* env_cc = std::getenv("PARSLEY_CC"); env_cc && env_cc[0] != '\0') {
     list.emplace_back(env_cc);
   }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
   list.emplace_back("clang");
 #ifdef _WIN32
   if (fs::exists("D:/clang-23.1.3/bin/clang.exe")) {
@@ -114,6 +131,7 @@ std::vector<std::string> candidate_c_compilers() {
 
 bool compile_shared_library(const fs::path& out_dir,
                             const std::string& mod_low,
+                            const std::vector<std::string>& extra_c_files,
                             fs::path& out_lib_path) {
   const std::string tgt = mod_low + "_parser";
 #ifdef _WIN32
@@ -140,14 +158,30 @@ bool compile_shared_library(const fs::path& out_dir,
         << " -DPARSLEY_BUILDING_DLL"
         << " -I\"" << inc1.string() << "\""
         << " -I\"" << inc2.string() << "\""
-        << " \"" << src.string() << "\""
-        << math_flag
-        << " -o \"" << out_lib_path.string() << "\"";
+        << " \"" << src.string() << "\"";
+    for (const auto& cf : extra_c_files) {
+      fs::path ep = out_dir / cf;
+      if (fs::exists(ep)) {
+        cmd << " \"" << ep.string() << "\"";
+      }
+    }
+    cmd << math_flag << " -o \"" << out_lib_path.string() << "\"";
     if (run_system_cmd(cmd.str()) == 0 && fs::exists(out_lib_path)) {
       return true;
     }
   }
   return false;
+}
+
+bool parse_min_status_arg(std::string_view val, parsley::psl::PslStatus& out_status) {
+  auto parsed = parsley::psl::parse_status_name(val);
+  if (!parsed) {
+    std::cerr << "error: invalid `--min-status " << val
+              << "` (expected `draft`, `reviewed`, or `verified`)\n";
+    return false;
+  }
+  out_status = *parsed;
+  return true;
 }
 
 int cmd_build(const std::vector<std::string>& args) {
@@ -162,6 +196,8 @@ int cmd_build(const std::vector<std::string>& args) {
   bool compile_shared = true;
   bool emit_ir_json = false;
   bool emit_ir_sexpr = false;
+  bool emit_agent_docs = false;
+  parsley::psl::PslStatus min_status = parsley::psl::PslStatus::Draft;
 
   for (std::size_t i = 0; i < args.size(); ++i) {
     const std::string& a = args[i];
@@ -177,8 +213,18 @@ int cmd_build(const std::vector<std::string>& args) {
         return 1;
       }
       backend = args[++i];
+    } else if (a == "--min-status") {
+      if (i + 1 >= args.size()) {
+        std::cerr << "error: missing status after `--min-status`\n";
+        return 1;
+      }
+      if (!parse_min_status_arg(args[++i], min_status)) {
+        return 1;
+      }
     } else if (a == "--no-compile-shared") {
       compile_shared = false;
+    } else if (a == "--emit-agent-docs") {
+      emit_agent_docs = true;
     } else if (a == "--emit-ir-json") {
       emit_ir_json = true;
     } else if (a == "--emit-ir-sexpr") {
@@ -196,13 +242,19 @@ int cmd_build(const std::vector<std::string>& args) {
     return 1;
   }
 
-  auto res = parsley::compiler::compile_file(input_file, false);
-  print_diagnostics(res.diagnostics, res.source);
+  parsley::compiler::CompileOptions copts;
+  copts.run_examples = false;
+  copts.min_status = min_status;
+  auto res = parsley::compiler::compile_file_with_options(input_file, copts);
+  print_diagnostics(res);
   if (!res.ok) {
     return 1;
   }
 
-  const std::string mod_low = to_lower(res.grammar.module_name);
+  const std::string mod_name = res.grammar.module_name.empty() && res.psl_module
+                                   ? res.psl_module->module_name
+                                   : res.grammar.module_name;
+  const std::string mod_low = to_lower(mod_name);
   fs::path out_dir = out_dir_str.empty() ? fs::path(mod_low + "_parser") : fs::path(out_dir_str);
 
   if (backend == "ir-json") {
@@ -219,20 +271,36 @@ int cmd_build(const std::vector<std::string>& args) {
     parsley::codegen::CodegenOptions opts;
     opts.target = parsley::codegen::TargetLang::C17;
     opts.emit_tests = true;
+    opts.min_status = min_status;
+    opts.psl_module = res.psl_module ? &*res.psl_module : nullptr;
     const auto files = parsley::codegen::generate_backend(res.grammar, res.analysis, opts);
+
+    std::vector<std::string> extra_c_files;
     for (const auto& f : files) {
       fs::path target = out_dir / f.relative_path;
       if (!write_text_file(target, f.content)) {
         std::cerr << "error: failed to write `" << target.string() << "`\n";
         return 1;
       }
+      if (f.relative_path.ends_with(".c") && f.relative_path != "parser.c" &&
+          !f.relative_path.starts_with("test_")) {
+        extra_c_files.push_back(f.relative_path);
+      }
     }
+
+    if (emit_agent_docs) {
+      auto bundle = parsley::tooling::generate_agent_docs(
+          &res.grammar, res.psl_module ? &*res.psl_module : nullptr);
+      write_text_file(out_dir / "AGENTS.md", bundle.agents_md);
+      write_text_file(out_dir / "skills" / "parsley" / "SKILL.md", bundle.skill_md);
+    }
+
     std::cout << "Generated ISO C17 parser project in `" << out_dir.string() << "` ("
               << files.size() << " files)\n";
 
     if (compile_shared) {
       fs::path lib_path;
-      if (!compile_shared_library(out_dir, mod_low, lib_path)) {
+      if (!compile_shared_library(out_dir, mod_low, extra_c_files, lib_path)) {
         std::cerr << "error: failed to compile C17 shared library in `" << out_dir.string()
                   << "`\n";
         return 1;
@@ -264,27 +332,64 @@ int cmd_build(const std::vector<std::string>& args) {
 
 int cmd_check(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::cerr << "error: `parsley check` requires an input <file.parsley>\n";
+    std::cerr << "error: `parsley check` requires an input <file.parsley|file.psem>\n";
     return 1;
   }
-  auto res = parsley::compiler::compile_file(args[0], false);
-  print_diagnostics(res.diagnostics, res.source);
+
+  std::string input_file;
+  parsley::psl::PslStatus min_status = parsley::psl::PslStatus::Draft;
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (args[i] == "--min-status") {
+      if (i + 1 >= args.size()) {
+        std::cerr << "error: missing status after `--min-status`\n";
+        return 1;
+      }
+      if (!parse_min_status_arg(args[++i], min_status)) {
+        return 1;
+      }
+    } else if (!args[i].empty() && args[i][0] == '-') {
+      std::cerr << "error: unknown option `" << args[i] << "` for `check`\n";
+      return 1;
+    } else {
+      input_file = args[i];
+    }
+  }
+  if (input_file.empty()) {
+    std::cerr << "error: missing input file\n";
+    return 1;
+  }
+
+  parsley::compiler::CompileOptions copts;
+  copts.run_examples = false;
+  copts.min_status = min_status;
+  auto res = parsley::compiler::compile_file_with_options(input_file, copts);
+  print_diagnostics(res);
   if (!res.ok) {
     return 1;
   }
-  std::cout << "OK: module `" << res.grammar.module_name << "` checked ("
-            << res.grammar.gRules.size() << " rules, strategy: "
-            << parsley::analysis::strategy_name(res.analysis.selected_strategy) << ")\n";
+
+  if (!res.is_psl_only && !res.grammar.module_name.empty()) {
+    std::cout << "OK: module `" << res.grammar.module_name << "` checked ("
+              << res.grammar.gRules.size() << " rules, strategy: "
+              << parsley::analysis::strategy_name(res.analysis.selected_strategy) << ")\n";
+  }
+  if (res.psl_module) {
+    std::cout << "OK: PSL semantics `" << res.psl_module->module_name << "` checked ("
+              << res.psl_module->node_rules.size() << " node rules, "
+              << res.psl_module->lints.size() << " lints, 5-pass plan: "
+              << (res.psl_module->pass_plan.verified_acyclic ? "acyclic" : "cyclic") << ")\n";
+  }
   return 0;
 }
 
 int cmd_test(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::cerr << "error: `parsley test` requires an input <file.parsley>\n";
+    std::cerr << "error: `parsley test` requires an input <file.parsley|file.psem>\n";
     return 1;
   }
   std::string input_file;
   std::size_t fuzz_count = 0;
+  parsley::psl::PslStatus min_status = parsley::psl::PslStatus::Draft;
 
   for (std::size_t i = 0; i < args.size(); ++i) {
     if (args[i] == "--fuzz") {
@@ -293,6 +398,14 @@ int cmd_test(const std::vector<std::string>& args) {
         return 1;
       }
       fuzz_count = static_cast<std::size_t>(std::stoull(args[++i]));
+    } else if (args[i] == "--min-status") {
+      if (i + 1 >= args.size()) {
+        std::cerr << "error: missing status after `--min-status`\n";
+        return 1;
+      }
+      if (!parse_min_status_arg(args[++i], min_status)) {
+        return 1;
+      }
     } else if (!args[i].empty() && args[i][0] == '-') {
       std::cerr << "error: unknown option `" << args[i] << "` for `test`\n";
       return 1;
@@ -302,12 +415,15 @@ int cmd_test(const std::vector<std::string>& args) {
   }
 
   if (input_file.empty()) {
-    std::cerr << "error: missing input `.parsley` file\n";
+    std::cerr << "error: missing input `.parsley` or `.psem` file\n";
     return 1;
   }
 
-  auto res = parsley::compiler::compile_file(input_file, true);
-  print_diagnostics(res.diagnostics, res.source);
+  parsley::compiler::CompileOptions copts;
+  copts.run_examples = true;
+  copts.min_status = min_status;
+  auto res = parsley::compiler::compile_file_with_options(input_file, copts);
+  print_diagnostics(res);
 
   if (res.example_summary) {
     for (const auto& c : res.example_summary->cases) {
@@ -319,6 +435,16 @@ int cmd_test(const std::vector<std::string>& args) {
     }
     std::cout << "Examples: " << res.example_summary->passed << "/"
               << res.example_summary->total << " passed\n";
+  }
+
+  if (res.psl_example_summary && res.psl_example_summary->total > 0) {
+    for (const auto& pc : res.psl_example_summary->cases) {
+      std::cout << (pc.passed ? "[PASS] " : "[FAIL] ") << pc.lint_name << " ("
+                << (pc.expect_fire ? "fires" : "silent") << " `" << pc.input << "`): "
+                << pc.message << "\n";
+    }
+    std::cout << "PSL Examples: " << res.psl_example_summary->passed << "/"
+              << res.psl_example_summary->total << " passed\n";
   }
 
   bool fuzz_ok = true;
@@ -335,10 +461,52 @@ int cmd_test(const std::vector<std::string>& args) {
   return (res.ok && fuzz_ok) ? 0 : 1;
 }
 
+std::optional<std::string> explain_psl_code(std::string_view code) {
+  if (code == "PSL-STATUS") {
+    return "PSL-STATUS — Rule maturity status below --min-status threshold\n\n"
+           "A PSL rule has `STATUS draft` (or `reviewed`) while the build requires a higher\n"
+           "maturity level via `--min-status reviewed` or `--min-status verified`.\n"
+           "Fix: Review and verify the rule against examples and update `{-\x23 STATUS verified \x23-}`.";
+  }
+  if (code == "PSL-AST-MISMATCH") {
+    return "PSL-AST-MISMATCH — Constructor pattern does not match imported grammar AST\n\n"
+           "A constructor name or arity in a `node`, `flow`, `analysis`, or `lint` pattern\n"
+           "does not match any `data` constructor in the imported `.parsley` grammar.\n"
+           "Fix: Ensure constructor names and field counts match the `.parsley` `data` declaration.";
+  }
+  if (code == "PSL-EXAMPLE-MISSING") {
+    return "PSL-EXAMPLE-MISSING — Lint rule missing mandatory fires/silent examples\n\n"
+           "Every `lint <name>` declaration in `.psem` must have a matching `example <name>`\n"
+           "block with at least one `fires` case and at least one `silent` case.";
+  }
+  if (code == "PSL-EXAMPLE-FAIL") {
+    return "PSL-EXAMPLE-FAIL — PSL self-attestation example did not match expectation\n\n"
+           "A `fires` example stayed silent or a `silent` example triggered the lint.";
+  }
+  if (code == "PSL-CYCLE") {
+    return "PSL-CYCLE — Cyclic dependency detected among PSL node attributes\n\n"
+           "Node attribute equations must form a directed acyclic graph so the 5-pass\n"
+           "evaluator terminates in linear time.";
+  }
+  if (code == "PSL-LOCK-MISMATCH") {
+    return "PSL-LOCK-MISMATCH — Grammar AST types changed since `.psem.lock` was generated\n\n"
+           "Update `.psem` patterns to match the new grammar AST and re-run `parsley build`.";
+  }
+  if (code == "PSL-PROFILE") {
+    return "PSL-PROFILE — Profile references an undeclared lint rule\n\n"
+           "Ensure every lint listed in `profile <name> = [...]` is declared via `lint`.";
+  }
+  return std::nullopt;
+}
+
 int cmd_explain(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::cerr << "error: `parsley explain` requires a diagnostic code (e.g. E0214)\n";
+    std::cerr << "error: `parsley explain` requires a diagnostic code (e.g. E0214 or PSL-STATUS)\n";
     return 1;
+  }
+  if (auto psl_exp = explain_psl_code(args[0])) {
+    std::cout << *psl_exp << "\n";
+    return 0;
   }
   auto found = parsley::find_error_explanation(args[0]);
   if (!found) {
@@ -346,7 +514,7 @@ int cmd_explain(const std::vector<std::string>& args) {
     for (const auto& code : parsley::known_error_codes()) {
       std::cerr << " " << code;
     }
-    std::cerr << "\n";
+    std::cerr << " PSL-STATUS PSL-AST-MISMATCH PSL-EXAMPLE-MISSING PSL-EXAMPLE-FAIL PSL-CYCLE PSL-LOCK-MISMATCH PSL-PROFILE\n";
     return 1;
   }
   std::cout << parsley::format_error_explanation(args[0]) << "\n";
@@ -355,7 +523,7 @@ int cmd_explain(const std::vector<std::string>& args) {
 
 int cmd_fmt(const std::vector<std::string>& args) {
   if (args.empty()) {
-    std::cerr << "error: `parsley fmt` requires an input <file.parsley>\n";
+    std::cerr << "error: `parsley fmt` requires an input <file.parsley|file.psem>\n";
     return 1;
   }
   std::string input_file;
@@ -375,7 +543,7 @@ int cmd_fmt(const std::vector<std::string>& args) {
     }
   }
   if (input_file.empty()) {
-    std::cerr << "error: missing input `.parsley` file\n";
+    std::cerr << "error: missing input `.parsley` or `.psem` file\n";
     return 1;
   }
 
@@ -385,14 +553,25 @@ int cmd_fmt(const std::vector<std::string>& args) {
     return 1;
   }
 
-  parsley::DiagnosticBag diags;
-  auto mod = parsley::parser::parse_module(*src, input_file, diags);
-  if (diags.has_errors()) {
-    print_diagnostics(diags, *src);
-    return 1;
+  std::string formatted;
+  if (input_file.ends_with(".psem")) {
+    parsley::DiagnosticBag diags;
+    (void)parsley::psl::parse_psl_module(*src, input_file, diags);
+    if (diags.has_errors()) {
+      print_diagnostics(diags, *src);
+      return 1;
+    }
+    formatted = parsley::tooling::format_psl_module(*src);
+  } else {
+    parsley::DiagnosticBag diags;
+    auto mod = parsley::parser::parse_module(*src, input_file, diags);
+    if (diags.has_errors()) {
+      print_diagnostics(diags, *src);
+      return 1;
+    }
+    formatted = parsley::tooling::format_module(mod, *src);
   }
 
-  std::string formatted = parsley::tooling::format_module(mod, *src);
   if (mode_check) {
     if (*src == formatted) {
       return 0;
@@ -448,7 +627,7 @@ int cmd_graph(const std::vector<std::string>& args) {
   }
 
   auto res = parsley::compiler::compile_file(input_file, false);
-  print_diagnostics(res.diagnostics, res.source);
+  print_diagnostics(res);
   if (!res.ok) {
     return 1;
   }
@@ -470,6 +649,90 @@ int cmd_graph(const std::vector<std::string>& args) {
     }
   } else {
     std::cout << graph_out;
+  }
+  return 0;
+}
+
+int cmd_agent_docs(const std::vector<std::string>& args) {
+  std::string input_file;
+  std::string format = "markdown";
+  std::string out_target;
+
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    const std::string& a = args[i];
+    if (a == "--format" || a == "-f") {
+      if (i + 1 >= args.size()) {
+        std::cerr << "error: missing format after `" << a << "`\n";
+        return 1;
+      }
+      format = args[++i];
+    } else if (a == "-o" || a == "--output") {
+      if (i + 1 >= args.size()) {
+        std::cerr << "error: missing output path after `" << a << "`\n";
+        return 1;
+      }
+      out_target = args[++i];
+    } else if (!a.empty() && a[0] == '-') {
+      std::cerr << "error: unknown option `" << a << "` for `agent-docs`\n";
+      return 1;
+    } else {
+      input_file = a;
+    }
+  }
+
+  std::optional<parsley::compiler::CompileResult> compiled;
+  const parsley::ir::Grammar* g_ptr = nullptr;
+  const parsley::psl::PslModule* p_ptr = nullptr;
+  if (!input_file.empty()) {
+    compiled = parsley::compiler::compile_file(input_file, false);
+    if (!compiled->ok) {
+      print_diagnostics(*compiled);
+      return 1;
+    }
+    if (!compiled->grammar.module_name.empty()) {
+      g_ptr = &compiled->grammar;
+    }
+    if (compiled->psl_module) {
+      p_ptr = &*compiled->psl_module;
+    }
+  }
+
+  auto bundle = parsley::tooling::generate_agent_docs(g_ptr, p_ptr);
+  if (format == "json") {
+    if (!out_target.empty()) {
+      if (!write_text_file(out_target, bundle.schema_json + "\n")) {
+        std::cerr << "error: failed to write `" << out_target << "`\n";
+        return 1;
+      }
+    } else {
+      std::cout << bundle.schema_json << "\n";
+    }
+    return 0;
+  }
+
+  if (format != "markdown" && format != "md") {
+    std::cerr << "error: unknown format `" << format << "` (expected markdown or json)\n";
+    return 1;
+  }
+
+  if (!out_target.empty()) {
+    fs::path p(out_target);
+    if (p.extension() == ".md") {
+      if (!write_text_file(p, bundle.agents_md)) {
+        std::cerr << "error: failed to write `" << p.string() << "`\n";
+        return 1;
+      }
+    } else {
+      if (!write_text_file(p / "AGENTS.md", bundle.agents_md) ||
+          !write_text_file(p / "skills" / "parsley" / "SKILL.md", bundle.skill_md)) {
+        std::cerr << "error: failed to write agent docs into `" << p.string() << "`\n";
+        return 1;
+      }
+      std::cout << "Generated `AGENTS.md` and `skills/parsley/SKILL.md` in `" << p.string()
+                << "`\n";
+    }
+  } else {
+    std::cout << bundle.agents_md;
   }
   return 0;
 }
@@ -554,6 +817,9 @@ int main(int argc, char** argv) {
   }
   if (cmd == "graph") {
     return cmd_graph(args);
+  }
+  if (cmd == "agent-docs") {
+    return cmd_agent_docs(args);
   }
   if (cmd == "lsp") {
     return parsley::tooling::run_lsp_server();

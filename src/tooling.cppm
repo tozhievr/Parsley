@@ -37,6 +37,7 @@ import parsley.resolve;
 import parsley.typecheck;
 import parsley.desugar;
 import parsley.eval;
+import parsley.psl;
 
 namespace parsley::tooling::detail {
 
@@ -1102,6 +1103,8 @@ inline std::string generate_railroad_svg(const ir::Grammar& g) {
       return {24, 28, s.str()};
     }
     switch (p->kind) {
+      case ir::Prod::Kind::Eps:
+        return self(self, nullptr, x, y);
       case ir::Prod::Kind::Tok: {
         std::string lbl = p->token_id;
         if (const auto* td = ir::find_token(g, p->token_id)) {
@@ -1455,12 +1458,14 @@ private:
   struct DocState {
     std::string uri;
     std::string source;
+    bool is_psl = false;
     DiagnosticBag diags;
     ast::Module ast_mod;
     resolve::ResolvedModule resolved;
     typecheck::TypedModule typed;
     ir::Grammar grammar;
     analysis::AnalysisResult analysis;
+    psl::PslModule psl_mod;
   };
 
   std::unordered_map<std::string, DocState> docs_;
@@ -1468,15 +1473,51 @@ private:
   bool should_exit_ = false;
   int exit_code_ = 0;
 
+  static bool is_psem_doc(std::string_view uri, std::string_view src) {
+    if (uri.ends_with(".psem")) return true;
+    std::size_t i = 0;
+    while (i < src.size()) {
+      while (i < src.size() && std::isspace(static_cast<unsigned char>(src[i]))) ++i;
+      if (i + 1 < src.size() && src[i] == '-' && src[i + 1] == '-') {
+        while (i < src.size() && src[i] != '\n') ++i;
+        continue;
+      }
+      if (i + 1 < src.size() && src[i] == '{' && src[i + 1] == '-') {
+        auto end = src.find("-}", i + 2);
+        if (end == std::string_view::npos) break;
+        i = end + 2;
+        continue;
+      }
+      break;
+    }
+    return src.substr(i).starts_with("semantics ");
+  }
+
   void update_document(const std::string& uri, std::string text) {
     DocState st;
     st.uri = uri;
     st.source = std::move(text);
-    st.ast_mod = parser::parse_module(st.source, uri, st.diags);
-    st.resolved = resolve::resolve_module(st.ast_mod, st.diags);
-    st.typed = typecheck::check_module(st.ast_mod, st.resolved, st.diags);
-    st.grammar = desugar::desugar_module(st.ast_mod, st.resolved, st.typed, st.diags);
-    st.analysis = analysis::analyze_grammar(st.grammar, st.diags);
+    if (is_psem_doc(uri, st.source)) {
+      st.is_psl = true;
+      st.psl_mod = psl::parse_psl_module(st.source, uri, st.diags);
+      const ir::Grammar* g_ptr = nullptr;
+      if (uri.ends_with(".psem")) {
+        std::string g_uri = uri.substr(0, uri.size() - 5) + ".parsley";
+        if (auto git = docs_.find(g_uri); git != docs_.end() && !git->second.is_psl) {
+          st.grammar = git->second.grammar;
+          g_ptr = &st.grammar;
+        }
+      }
+      psl::PslCheckOptions chk;
+      chk.cross_check_grammar = (g_ptr != nullptr);
+      psl::check_psl_module(st.psl_mod, g_ptr, st.diags, chk);
+    } else {
+      st.ast_mod = parser::parse_module(st.source, uri, st.diags);
+      st.resolved = resolve::resolve_module(st.ast_mod, st.diags);
+      st.typed = typecheck::check_module(st.ast_mod, st.resolved, st.diags);
+      st.grammar = desugar::desugar_module(st.ast_mod, st.resolved, st.typed, st.diags);
+      st.analysis = analysis::analyze_grammar(st.grammar, st.diags);
+    }
     docs_[uri] = std::move(st);
   }
 
@@ -1533,6 +1574,37 @@ private:
 
     std::ostringstream md;
     bool found = false;
+
+    if (doc.is_psl) {
+      for (const auto& lr : doc.psl_mod.lints) {
+        if (lr.name == sym) {
+          found = true;
+          md << "```parsley\nlint " << lr.name << " :: "
+             << psl::psl_severity_to_string(lr.severity) << ", "
+             << psl::lint_category_to_string(lr.category) << "\n```\n"
+             << "- **Message**: " << lr.say_template << "\n"
+             << "- **Status**: `" << psl::status_to_string(lr.provenance.status) << "`\n";
+          break;
+        }
+      }
+      for (const auto& dg : doc.psl_mod.diags) {
+        if (dg.code == sym) {
+          found = true;
+          md << "```parsley\ndiag " << dg.code << " :: "
+             << psl::psl_severity_to_string(dg.severity) << " \"" << dg.template_text << "\"\n```\n";
+          break;
+        }
+      }
+      for (const auto& an : doc.psl_mod.analyses) {
+        if (an.name == sym) {
+          found = true;
+          md << "```parsley\nanalysis " << an.name << " :: "
+             << (an.direction == psl::AnalysisDir::Forward ? "Forward" : "Backward") << ", "
+             << (an.meet == psl::AnalysisMeet::Must ? "Must" : "May") << "\n```\n";
+          break;
+        }
+      }
+    }
 
     if (auto ts = doc.typed.lookup_rule_type_string(sym)) {
       found = true;
@@ -2012,6 +2084,72 @@ private:
 
     detail::Json children = detail::Json::make_array();
 
+    if (doc.is_psl) {
+      for (const auto& d : doc.psl_mod.diags) {
+        detail::Json r = valid_span_or_default(d.span);
+        children.arr_val.push_back(detail::Json::make_object({
+            {"name", detail::Json::make_string(d.code)},
+            {"detail", detail::Json::make_string(std::string(psl::psl_severity_to_string(d.severity)) + ": " + d.template_text)},
+            {"kind", detail::Json::make_int(14)},
+            {"range", r},
+            {"selectionRange", r},
+        }));
+      }
+      for (const auto& nr : doc.psl_mod.node_rules) {
+        detail::Json r = valid_span_or_default(nr.span);
+        std::string nname = nr.pattern ? nr.pattern->name : "node";
+        children.arr_val.push_back(detail::Json::make_object({
+            {"name", detail::Json::make_string("node " + nname)},
+            {"detail", detail::Json::make_string("PSL node rule")},
+            {"kind", detail::Json::make_int(12)},
+            {"range", r},
+            {"selectionRange", r},
+        }));
+      }
+      for (const auto& an : doc.psl_mod.analyses) {
+        detail::Json r = valid_span_or_default(an.span);
+        children.arr_val.push_back(detail::Json::make_object({
+            {"name", detail::Json::make_string(an.name)},
+            {"detail", detail::Json::make_string("dataflow analysis")},
+            {"kind", detail::Json::make_int(5)},
+            {"range", r},
+            {"selectionRange", r},
+        }));
+      }
+      for (const auto& lr : doc.psl_mod.lints) {
+        detail::Json r = valid_span_or_default(lr.span);
+        children.arr_val.push_back(detail::Json::make_object({
+            {"name", detail::Json::make_string(lr.name)},
+            {"detail", detail::Json::make_string("lint [" + std::string(psl::status_to_string(lr.provenance.status)) + "]")},
+            {"kind", detail::Json::make_int(12)},
+            {"range", r},
+            {"selectionRange", r},
+        }));
+      }
+      for (const auto& ex : doc.psl_mod.examples) {
+        detail::Json r = valid_span_or_default(ex.span);
+        children.arr_val.push_back(detail::Json::make_object({
+            {"name", detail::Json::make_string("example " + ex.target_name)},
+            {"detail", detail::Json::make_string(std::to_string(ex.cases.size()) + " cases")},
+            {"kind", detail::Json::make_int(24)},
+            {"range", r},
+            {"selectionRange", r},
+        }));
+      }
+      auto [end_l, end_c] = source_end_position(doc.source);
+      detail::Json full_range = make_lsp_range(0, 0, end_l, end_c);
+      detail::Json result = detail::Json::make_array();
+      result.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(doc.psl_mod.module_name.empty() ? "Semantics" : doc.psl_mod.module_name)},
+          {"detail", detail::Json::make_string("semantics (" + doc.psl_mod.language_version + ")")},
+          {"kind", detail::Json::make_int(2)},
+          {"range", full_range},
+          {"selectionRange", make_lsp_range(0, 0, 0, std::max(1, end_c))},
+          {"children", std::move(children)},
+      }));
+      return result;
+    }
+
     for (const auto& t : doc.ast_mod.tokens) {
       detail::Json r = valid_span_or_default(t.span);
       children.arr_val.push_back(detail::Json::make_object({
@@ -2472,8 +2610,207 @@ inline int run_lsp_server() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Package Manager Helpers
+// 4. Package Manager & Agent Documentation Helpers
 // ---------------------------------------------------------------------------
+
+inline std::string format_psl_module(std::string_view source) {
+  std::ostringstream out;
+  std::size_t pos = 0;
+  bool last_blank = false;
+  while (pos <= source.size()) {
+    std::size_t nl = source.find('\n', pos);
+    std::string_view line =
+        (nl == std::string_view::npos) ? source.substr(pos) : source.substr(pos, nl - pos);
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) {
+      line.remove_suffix(1);
+    }
+    if (line.empty()) {
+      if (!last_blank) {
+        out << "\n";
+        last_blank = true;
+      }
+    } else {
+      out << line << "\n";
+      last_blank = false;
+    }
+    if (nl == std::string_view::npos) break;
+    pos = nl + 1;
+  }
+  std::string res = out.str();
+  while (res.size() >= 2 && res[res.size() - 1] == '\n' && res[res.size() - 2] == '\n') {
+    res.pop_back();
+  }
+  return res;
+}
+
+struct AgentDocsBundle {
+  std::string agents_md;
+  std::string skill_md;
+  std::string schema_json;
+};
+
+inline std::string generate_agent_docs_markdown(const ir::Grammar* grammar = nullptr,
+                                                const psl::PslModule* psl_mod = nullptr) {
+  std::ostringstream out;
+  out << "# AGENTS.md — Parsley & PSL Guide for AI Coding Agents\n\n";
+  out << "Parsley is a Haskell-inspired grammar DSL (`.parsley`) and static semantic layer (`.psem`) "
+      << "that compiles to zero-dependency ISO C17 parsers and static analyzers.\n\n";
+  if (grammar != nullptr) {
+    out << "## Module `" << grammar->module_name << "` Schema\n\n";
+    out << "### Tokens (" << grammar->gTokens.size() << ")\n";
+    for (const auto& td : grammar->gTokens) {
+      if (td.is_anonymous) continue;
+      out << "- `" << td.id << "` (" << (td.is_skip ? "skip" : "token") << "): `"
+          << td.pattern << "` :: `" << ir::type_to_string(td.type) << "`\n";
+    }
+    out << "\n### AST Algebraic Data Types (" << grammar->gTypes.size() << ")\n";
+    for (const auto& dt : grammar->gTypes) {
+      out << "- `data " << dt.name << "`:\n";
+      for (const auto& c : dt.constructors) {
+        out << "  - `" << c.name << "`";
+        for (const auto& f : c.positional_fields) {
+          out << " `" << ir::type_to_string(f) << "`";
+        }
+        out << "\n";
+      }
+    }
+    out << "\n### Grammar Rules (" << grammar->gRules.size() << ")\n";
+    for (const auto& [rid, r] : grammar->gRules) {
+      out << "- `" << rid << " :: " << ir::type_to_string(r.rType) << "`\n";
+    }
+    out << "\n";
+  }
+  if (psl_mod != nullptr && !psl_mod->module_name.empty()) {
+    out << "## PSL Semantics `" << psl_mod->module_name << "` (" << psl_mod->language_version
+        << ")\n\n";
+    out << "- **Diagnostics**: " << psl_mod->diags.size() << "\n";
+    out << "- **Node Rules**: " << psl_mod->node_rules.size() << "\n";
+    out << "- **Flow Rules**: " << psl_mod->flow_rules.size() << "\n";
+    out << "- **Dataflow Analyses**: " << psl_mod->analyses.size() << "\n";
+    out << "- **Lint Rules**: " << psl_mod->lints.size() << "\n";
+    for (const auto& lr : psl_mod->lints) {
+      out << "  - `" << lr.name << "` (`" << psl::status_to_string(lr.provenance.status)
+          << "`): " << lr.say_template << "\n";
+    }
+    out << "\n";
+  }
+  out << "## Core Combinators (`Parsley.Prelude`)\n\n"
+      << "- `f <$> p <*> q`, `p *> q`, `p <* q`, `p <|> q`\n"
+      << "- `many p`, `some p`, `optional p`, `sepBy p sep`, `sepEndBy p sep`, `between open close p`\n"
+      << "- `eof`, `lookAhead p`, `notFollowedBy p`, `p <?> \"label\"`, `recover p sync`\n\n"
+      << "## CLI Workflow\n\n"
+      << "1. `parsley check <file.parsley|file.psem> [--min-status draft|reviewed|verified]`\n"
+      << "2. `parsley test <file.parsley|file.psem> [--fuzz 30]`\n"
+      << "3. `parsley build <file.parsley> -o <dir> [--min-status reviewed] [--emit-agent-docs]`\n"
+      << "4. `parsley fmt <file> --write`\n"
+      << "5. `parsley agent-docs [--format markdown|json] [-o <dir>] [<file.parsley>]`\n";
+  return out.str();
+}
+
+inline std::string generate_agent_skill_markdown(std::string_view mod_name = "MyGrammar") {
+  std::ostringstream out;
+  out << "---\n"
+      << "name: parsley\n"
+      << "description: Author, check, test, and compile Parsley grammars (.parsley) and PSL static semantics (.psem) into ISO C17 parsers and analyzers.\n"
+      << "---\n\n"
+      << "# Parsley & PSL Authoring Skill\n\n"
+      << "## Step-by-Step Workflow\n\n"
+      << "1. Define lexical tokens (`skip`, `token`, `keywords`, `mode`) and AST ADTs (`data`) in `<Mod>.parsley`.\n"
+      << "2. Write grammar rules using Applicative combinators (`<$>`, `<*>`, `<|>`, `many`, `sepBy`, `operators`) and add `example` assertions.\n"
+      << "3. Define static semantics in `<Mod>.psem` (`semantics " << mod_name << " where`, `import " << mod_name << "`, provenance pragmas `{-# SOURCE ...; STATUS verified; CONFIDENCE 0.95 #-}`, `diag`, `node`, `flow`, `analysis`, `lint`, and mandatory `example` blocks with `fires` and `silent`).\n"
+      << "4. Run `parsley check` and `parsley test --fuzz 30` before `parsley build`.\n";
+  return out.str();
+}
+
+inline std::string generate_agent_docs_json(const ir::Grammar* grammar = nullptr,
+                                            const psl::PslModule* psl_mod = nullptr) {
+  detail::Json root = detail::Json::make_object();
+  root.set("dsl", detail::Json::make_string("Parsley"));
+  root.set("pslVersion", detail::Json::make_string("Sem1"));
+
+  detail::Json combs = detail::Json::make_array({
+      detail::Json::make_object({{"name", detail::Json::make_string("many")},
+                                 {"type", detail::Json::make_string("Rule a -> Rule [a]")}}),
+      detail::Json::make_object({{"name", detail::Json::make_string("some")},
+                                 {"type", detail::Json::make_string("Rule a -> Rule [a]")}}),
+      detail::Json::make_object({{"name", detail::Json::make_string("optional")},
+                                 {"type", detail::Json::make_string("Rule a -> Rule [a]")}}),
+      detail::Json::make_object({{"name", detail::Json::make_string("sepBy")},
+                                 {"type", detail::Json::make_string("Rule a -> Rule s -> Rule [a]")}}),
+      detail::Json::make_object({{"name", detail::Json::make_string("sepEndBy")},
+                                 {"type", detail::Json::make_string("Rule a -> Rule s -> Rule [a]")}}),
+      detail::Json::make_object({{"name", detail::Json::make_string("between")},
+                                 {"type", detail::Json::make_string("Rule o -> Rule c -> Rule a -> Rule a")}}),
+      detail::Json::make_object({{"name", detail::Json::make_string("eof")},
+                                 {"type", detail::Json::make_string("Rule Unit")}}),
+  });
+  root.set("combinators", std::move(combs));
+
+  if (grammar != nullptr) {
+    detail::Json g_obj = detail::Json::make_object();
+    g_obj.set("module", detail::Json::make_string(grammar->module_name));
+    detail::Json types_arr = detail::Json::make_array();
+    for (const auto& dt : grammar->gTypes) {
+      detail::Json ctors_arr = detail::Json::make_array();
+      for (const auto& c : dt.constructors) {
+        detail::Json fields_arr = detail::Json::make_array();
+        for (const auto& f : c.positional_fields) {
+          fields_arr.arr_val.push_back(detail::Json::make_string(ir::type_to_string(f)));
+        }
+        ctors_arr.arr_val.push_back(detail::Json::make_object({
+            {"name", detail::Json::make_string(c.name)},
+            {"fields", std::move(fields_arr)},
+        }));
+      }
+      types_arr.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(dt.name)},
+          {"constructors", std::move(ctors_arr)},
+      }));
+    }
+    g_obj.set("types", std::move(types_arr));
+
+    detail::Json rules_arr = detail::Json::make_array();
+    for (const auto& [rid, r] : grammar->gRules) {
+      rules_arr.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(rid)},
+          {"type", detail::Json::make_string(ir::type_to_string(r.rType))},
+      }));
+    }
+    g_obj.set("rules", std::move(rules_arr));
+    root.set("grammar", std::move(g_obj));
+  }
+
+  if (psl_mod != nullptr && !psl_mod->module_name.empty()) {
+    detail::Json p_obj = detail::Json::make_object();
+    p_obj.set("module", detail::Json::make_string(psl_mod->module_name));
+    p_obj.set("languageVersion", detail::Json::make_string(psl_mod->language_version));
+    detail::Json lints_arr = detail::Json::make_array();
+    for (const auto& lr : psl_mod->lints) {
+      lints_arr.arr_val.push_back(detail::Json::make_object({
+          {"name", detail::Json::make_string(lr.name)},
+          {"status", detail::Json::make_string(std::string(psl::status_to_string(lr.provenance.status)))},
+          {"severity", detail::Json::make_string(std::string(psl::psl_severity_to_string(lr.severity)))},
+          {"message", detail::Json::make_string(lr.say_template)},
+      }));
+    }
+    p_obj.set("lints", std::move(lints_arr));
+    root.set("semantics", std::move(p_obj));
+  }
+
+  return detail::json_stringify(root);
+}
+
+inline AgentDocsBundle generate_agent_docs(const ir::Grammar* grammar = nullptr,
+                                           const psl::PslModule* psl_mod = nullptr) {
+  AgentDocsBundle b;
+  b.agents_md = generate_agent_docs_markdown(grammar, psl_mod);
+  b.skill_md = generate_agent_skill_markdown(grammar ? grammar->module_name : "MyGrammar");
+  b.schema_json = generate_agent_docs_json(grammar, psl_mod);
+  return b;
+}
 
 inline std::string list_packages() {
   std::ostringstream out;
@@ -2566,6 +2903,46 @@ inline InitPackageResult init_package(std::string_view name, std::string_view ta
     gf << "program = (Word <$> ident) <* eof\n\n";
     gf << "example \"basic\" : \"hello\" parses-to Word \"hello\"\n";
     res.created_files.push_back(grammar_file.string());
+  }
+
+  fs::path psem_file = dir / "src" / (mod_name + ".psem");
+  if (!fs::exists(psem_file, ec)) {
+    std::ofstream pf(psem_file);
+    if (pf) {
+      pf << "{-# LANGUAGE Sem1 #-}\n";
+      pf << "semantics " << mod_name << " where\n\n";
+      pf << "import " << mod_name << "\n\n";
+      pf << "source ref = manual \"" << mod_name << " Specification\" rev \"1.0\"\n\n";
+      pf << "{-# SOURCE ref \"1.0\"; STATUS reviewed; CONFIDENCE 0.95 #-}\n";
+      pf << "lint reservedWord :: Warning, Style\n";
+      pf << "  match (Word x)\n";
+      pf << "  when  x == \"todo\"\n";
+      pf << "  say   \"Avoid placeholder word `{x}`\"\n\n";
+      pf << "example reservedWord\n";
+      pf << "  fires  \"todo\"\n";
+      pf << "  silent \"hello\"\n";
+      res.created_files.push_back(psem_file.string());
+    }
+  }
+
+  fs::path agents_file = dir / "AGENTS.md";
+  if (!fs::exists(agents_file, ec)) {
+    std::ofstream af(agents_file);
+    if (af) {
+      af << generate_agent_docs_markdown();
+      res.created_files.push_back(agents_file.string());
+    }
+  }
+
+  fs::path skill_dir = dir / "skills" / "parsley";
+  fs::create_directories(skill_dir, ec);
+  fs::path skill_file = skill_dir / "SKILL.md";
+  if (!fs::exists(skill_file, ec)) {
+    std::ofstream sf(skill_file);
+    if (sf) {
+      sf << generate_agent_skill_markdown(mod_name);
+      res.created_files.push_back(skill_file.string());
+    }
   }
 
   res.ok = true;

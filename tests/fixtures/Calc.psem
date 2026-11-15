@@ -1,0 +1,110 @@
+{-# LANGUAGE Sem1 #-}
+semantics Calc where
+
+import Calc
+import Parsley.Sem.Prelude
+
+source ref = manual "Calc Language Reference" rev "2.1"
+
+-- Типы и символы -------------------------------------------------
+type Ty = Num | Bool | Err
+type Number = Num
+
+kind Variable where shadowing = Warn
+kind Function
+
+{-# SOURCE ref "4.2" "2026-01-01" #-}
+builtin sin :: Function (Num -> Num)
+{-# SOURCE ref "4.3" "2026-01-01" #-}
+builtin max :: Function (Num -> Num -> Num)
+{-# SOURCE ref "4.1" "2026-01-01" #-}
+builtin pi  :: Variable Num
+
+-- Диагностики ----------------------------------------------------
+diag E_UNDECLARED :: Error "Undefined identifier `{name}`"
+diag E_REDECLARED :: Error "Identifier `{name}` is already declared in this scope"
+diag E_TYPE       :: Error "Type mismatch: expected `{expected}`, got `{actual}`"
+diag W_DIV_ZERO   :: Warning "Division by constant zero"
+
+-- Правила для узлов AST ------------------------------------------
+node Num _ where
+  type = Num
+
+node Var x where
+  sym  <- lookup Variable x `orFail` E_UNDECLARED { name = x }
+  type =  typeOf sym
+
+node Neg e where
+  unify (typeOf e) Num `orFail` E_TYPE { expected = Num, actual = typeOf e }
+  type = Num
+
+node Bin op l r where
+  unify (typeOf l) Num `orFail` E_TYPE { expected = Num, actual = typeOf l }
+  unify (typeOf r) Num `orFail` E_TYPE { expected = Num, actual = typeOf r }
+  require (op /= Div || constFold r /= Just 0) `orFail` W_DIV_ZERO
+  type = Num
+
+node Call f args where
+  fn <- lookup Function f `orFail` E_UNDECLARED { name = f }
+  require (and [typeOf a == Num | a <- args]) `orFail` E_TYPE { expected = Num, actual = Err }
+  type = Num
+
+node Let x e body where
+  scope body $ declare Variable x (generalize (typeOf e))
+  type = typeOf body
+
+-- Линты и обязательные примеры -----------------------------------
+{-# SOURCE ref "3.1" "2026-01-01" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.99 #-}
+lint divByConstZero :: Warning, Correctness
+  match (Bin Div _ r)
+  when  constFold r == Just 0
+  say   "Division by constant zero"
+
+example divByConstZero
+  fires  "1 / 0"
+  fires  "1 / (2 - 2)"
+  silent "1 / 2"
+
+{-# SOURCE ref "3.2" "2026-01-01" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.95 #-}
+lint selfSub :: Warning, Style
+  match (Bin Sub l r)
+  when  l == r
+  say   "Subtracting an expression from itself always yields 0"
+  fix   "Replace with 0" Safe (replace (nodeSpan node) "0")
+
+example selfSub
+  fires  "let x = 5 in x - x"
+  silent "let x = 5 in x - 1"
+
+{-# SOURCE ref "3.3" "2026-01-01" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.96 #-}
+lint addZero :: Warning, Style
+  match (Bin Add l r)
+  when  constFold l == Just 0 || constFold r == Just 0
+  say   "Adding zero has no effect"
+  fix   "Simplify redundant + 0" Safe (replace (nodeSpan node) "0")
+
+example addZero
+  fires  "let x = 3 in x + 0"
+  silent "let x = 3 in x + 1"
+
+{-# SOURCE ref "3.4" "2026-01-01" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.97 #-}
+lint doubleNeg :: Warning, Style
+  match (Neg (Neg inner))
+  when  True
+  say   "Redundant double negation"
+  fix   "Remove double negation" Safe (replace (nodeSpan node) (textOf inner))
+
+example doubleNeg
+  fires  "-(-5)"
+  silent "-5"
+
+profile default = [divByConstZero, selfSub]
+profile ci      = [selfSub, addZero, doubleNeg, divByConstZero]

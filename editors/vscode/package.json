@@ -1,10 +1,11 @@
 {
   "name": "parsley-lang",
   "displayName": "Parsley Grammar DSL",
-  "description": "Full IDE support for the Parsley Grammar DSL: LSP diagnostics, semantic highlighting, type & FIRST/FOLLOW hover, Ormolu formatting, railroad diagrams, live playground, inline grammar debugger, and ISO C17 parser generation.",
-  "version": "1.3.0",
+  "description": "Full IDE support for the Parsley Grammar DSL (.parsley) and Parsley Semantic Layer (.psem): LSP diagnostics, semantic highlighting, type & FIRST/FOLLOW hover, Ormolu formatting, railroad diagrams, live playground, inline grammar debugger, and ISO C17 parser + semantic analyzer codegen.",
+  "version": "1.6.0",
   "publisher": "parsley-lang",
   "license": "MIT",
+  "icon": "media/parsley-icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -18,6 +19,8 @@
   "keywords": [
     "parsley",
     "grammar",
+    "psl",
+    "semantics",
     "dsl",
     "parser",
     "haskell",
@@ -27,6 +30,7 @@
   ],
   "activationEvents": [
     "onLanguage:parsley",
+    "onLanguage:parsley-psem",
     "onCommand:parsley.openPlayground",
     "onCommand:parsley.explainError",
     "onCommand:parsley.showRailroad",
@@ -46,6 +50,18 @@
           "parsley"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "parsley-psem",
+        "extensions": [
+          ".psem"
+        ],
+        "aliases": [
+          "Parsley Semantic Layer (PSL)",
+          "parsley-psem",
+          "psem"
+        ],
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
@@ -53,11 +69,20 @@
         "language": "parsley",
         "scopeName": "source.parsley",
         "path": "./syntaxes/parsley.tmLanguage.json"
+      },
+      {
+        "language": "parsley-psem",
+        "scopeName": "source.parsley.psem",
+        "path": "./syntaxes/psem.tmLanguage.json"
       }
     ],
     "snippets": [
       {
         "language": "parsley",
+        "path": "./snippets/parsley.code-snippets"
+      },
+      {
+        "language": "parsley-psem",
         "path": "./snippets/parsley.code-snippets"
       }
     ],
@@ -124,10 +149,48 @@
             "variable.other.constant.parsley"
           ]
         }
+      },
+      {
+        "language": "parsley-psem",
+        "scopes": {
+          "namespace": [
+            "entity.name.namespace.psem"
+          ],
+          "keyword": [
+            "keyword.control.psem"
+          ],
+          "type": [
+            "entity.name.type.psem"
+          ],
+          "enumMember": [
+            "entity.name.type.constructor.psem"
+          ],
+          "function": [
+            "entity.name.function.lint.psem"
+          ],
+          "variable": [
+            "variable.other.psem"
+          ],
+          "operator": [
+            "keyword.operator.psem"
+          ],
+          "string": [
+            "string.quoted.double.psem"
+          ],
+          "number": [
+            "constant.numeric.psem"
+          ],
+          "comment": [
+            "comment.line.double-dash.psem"
+          ],
+          "macro": [
+            "meta.preprocessor.pragma.psem"
+          ]
+        }
       }
     ],
     "configuration": {
-      "title": "Parsley Grammar DSL",
+      "title": "Parsley Grammar & Semantic DSL",
       "properties": {
         "parsley.executablePath": {
           "type": "string",
@@ -137,7 +200,7 @@
         "parsley.autoFormatOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically format .parsley files in Ormolu style when saving."
+          "description": "Automatically format .parsley and .psem files in Ormolu style when saving."
         },
         "parsley.trace.server": {
           "type": "string",
@@ -152,7 +215,7 @@
         "parsley.c17.outputDir": {
           "type": "string",
           "default": "./generated_parser",
-          "description": "Default output directory for `parsley build` ISO C17 parser projects."
+          "description": "Default output directory for `parsley build` ISO C17 parser and semantic analyzer projects."
         },
         "parsley.fuzzCount": {
           "type": "number",
@@ -165,7 +228,7 @@
     "commands": [
       {
         "command": "parsley.check",
-        "title": "Parsley: Check Grammar",
+        "title": "Parsley: Check Grammar & Semantics",
         "icon": "$(check)"
       },
       {
@@ -180,7 +243,7 @@
       },
       {
         "command": "parsley.format",
-        "title": "Parsley: Format Grammar (Ormolu Style)",
+        "title": "Parsley: Format Grammar / PSL (Ormolu Style)",
         "icon": "$(wand)"
       },
       {
@@ -210,7 +273,7 @@
       },
       {
         "command": "parsley.refreshViews",
-        "title": "Parsley: Refresh Grammar Views",
+        "title": "Parsley: Refresh Grammar & PSL Views",
         "icon": "$(refresh)"
       },
       {
@@ -237,34 +300,34 @@
         },
         {
           "command": "parsley.test",
-          "when": "editorLangId == parsley",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "navigation@3"
         },
         {
           "command": "parsley.check",
-          "when": "editorLangId == parsley",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "navigation@4"
         },
         {
           "command": "parsley.buildC17",
-          "when": "editorLangId == parsley",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "navigation@5"
         }
       ],
       "editor/context": [
         {
           "command": "parsley.check",
-          "when": "editorLangId == parsley",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "parsley@1"
         },
         {
           "command": "parsley.test",
-          "when": "editorLangId == parsley",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "parsley@2"
         },
         {
           "command": "parsley.format",
-          "when": "editorLangId == parsley",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "parsley@3"
         },
         {
@@ -284,24 +347,24 @@
         },
         {
           "command": "parsley.buildC17",
-          "when": "editorLangId == parsley",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "parsley@7"
         }
       ],
       "explorer/context": [
         {
           "command": "parsley.check",
-          "when": "resourceExtname == .parsley",
+          "when": "resourceExtname == .parsley || resourceExtname == .psem",
           "group": "parsley@1"
         },
         {
           "command": "parsley.test",
-          "when": "resourceExtname == .parsley",
+          "when": "resourceExtname == .parsley || resourceExtname == .psem",
           "group": "parsley@2"
         },
         {
           "command": "parsley.buildC17",
-          "when": "resourceExtname == .parsley",
+          "when": "resourceExtname == .parsley || resourceExtname == .psem",
           "group": "parsley@3"
         },
         {
@@ -318,19 +381,19 @@
       "commandPalette": [
         {
           "command": "parsley.check",
-          "when": "editorLangId == parsley"
+          "when": "editorLangId == parsley || editorLangId == parsley-psem"
         },
         {
           "command": "parsley.test",
-          "when": "editorLangId == parsley"
+          "when": "editorLangId == parsley || editorLangId == parsley-psem"
         },
         {
           "command": "parsley.buildC17",
-          "when": "editorLangId == parsley"
+          "when": "editorLangId == parsley || editorLangId == parsley-psem"
         },
         {
           "command": "parsley.format",
-          "when": "editorLangId == parsley"
+          "when": "editorLangId == parsley || editorLangId == parsley-psem"
         },
         {
           "command": "parsley.showRailroad",
@@ -380,25 +443,25 @@
         "command": "parsley.check",
         "key": "ctrl+alt+p c",
         "mac": "cmd+alt+p c",
-        "when": "editorLangId == parsley"
+        "when": "editorLangId == parsley || editorLangId == parsley-psem"
       },
       {
         "command": "parsley.test",
         "key": "ctrl+alt+p t",
         "mac": "cmd+alt+p t",
-        "when": "editorLangId == parsley"
+        "when": "editorLangId == parsley || editorLangId == parsley-psem"
       },
       {
         "command": "parsley.buildC17",
         "key": "ctrl+alt+p b",
         "mac": "cmd+alt+p b",
-        "when": "editorLangId == parsley"
+        "when": "editorLangId == parsley || editorLangId == parsley-psem"
       },
       {
         "command": "parsley.format",
         "key": "ctrl+alt+p f",
         "mac": "cmd+alt+p f",
-        "when": "editorLangId == parsley"
+        "when": "editorLangId == parsley || editorLangId == parsley-psem"
       },
       {
         "command": "parsley.showRailroad",
@@ -432,13 +495,13 @@
       "parsley-explorer": [
         {
           "id": "parsleyGrammarExplorer",
-          "name": "Grammar Structure",
-          "when": "workspaceHasParsleyFiles || editorLangId == parsley"
+          "name": "Grammar & PSL Structure",
+          "when": "workspaceHasParsleyFiles || editorLangId == parsley || editorLangId == parsley-psem"
         },
         {
           "id": "parsleyExamplesView",
           "name": "Examples & Tests",
-          "when": "workspaceHasParsleyFiles || editorLangId == parsley"
+          "when": "workspaceHasParsleyFiles || editorLangId == parsley || editorLangId == parsley-psem"
         }
       ]
     },

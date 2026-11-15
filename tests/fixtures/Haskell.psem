@@ -1,0 +1,166 @@
+{-# LANGUAGE Sem1 #-}
+semantics Haskell where
+
+import Haskell
+import Parsley.Sem.Prelude
+
+source haskellReport = manual "Haskell 2010 Language Report" rev "2010"
+
+-- Типы и символы -------------------------------------------------
+type HsTy = HsInt | HsDouble | HsString | HsCharTy | HsBool | HsUnitTy | HsListTy | HsFnTy | HsErr
+
+kind Variable where shadowing = Warn
+kind Constructor
+kind TypeCon
+
+{-# SOURCE haskellReport "6.3" "2026-01-15" #-}
+builtin map    :: forall a b. Variable ((a -> b) -> [a] -> [b])
+{-# SOURCE haskellReport "6.3" "2026-01-15" #-}
+builtin filter :: forall a. Variable ((a -> HsBool) -> [a] -> [a])
+{-# SOURCE haskellReport "6.3" "2026-01-15" #-}
+builtin length :: forall a. Variable ([a] -> HsInt)
+{-# SOURCE haskellReport "6.1" "2026-01-15" #-}
+builtin True   :: Constructor HsBool
+{-# SOURCE haskellReport "6.1" "2026-01-15" #-}
+builtin False  :: Constructor HsBool
+
+-- Диагностики ----------------------------------------------------
+diag E_UNDECLARED :: Error "Variable not in scope: `{name}`"
+diag E_REDECLARED :: Error "Multiple declarations of `{name}`"
+diag E_TYPE       :: Error "Couldn't match expected type `{expected}` with actual type `{actual}`"
+diag W_SHADOW     :: Warning "Name `{name}` shadows an outer binding"
+diag W_DIV_ZERO   :: Warning "Division by constant zero"
+
+-- Правила для узлов AST (HM вывод типов) -------------------------
+node HsNum _ where
+  type = HsDouble
+
+node HsStr _ where
+  type = HsString
+
+node HsChar _ where
+  type = HsCharTy
+
+node HsVar x where
+  sym  <- lookup Variable x `orFail` E_UNDECLARED { name = x }
+  type =  typeOf sym
+
+node HsCon c where
+  sym  <- lookup Constructor c `orFail` E_UNDECLARED { name = c }
+  type =  typeOf sym
+
+node HsNeg e where
+  unify (typeOf e) HsDouble `orFail` E_TYPE { expected = HsDouble, actual = typeOf e }
+  type = HsDouble
+
+node HsBin op l r where
+  require (op /= Div || constFold r /= Just 0) `orFail` W_DIV_ZERO
+  r_ty <- fresh
+  type = if op == Eq || op == Neq || op == Lt || op == Le || op == Gt || op == Ge || op == And || op == Or
+         then HsBool
+         else r_ty
+
+node HsApp f args where
+  res <- fresh
+  type = res
+
+node HsIf c t e where
+  unify (typeOf c) HsBool `orFail` E_TYPE { expected = HsBool, actual = typeOf c }
+  unify (typeOf t) (typeOf e) `orFail` E_TYPE { expected = typeOf t, actual = typeOf e }
+  type = typeOf t
+
+node HsLet binds body where
+  scope body $ pure ()
+  type = typeOf body
+
+node HsBind x e where
+  declare Variable x (generalize (typeOf e))
+  type = typeOf e
+
+node HsCase scrut alts where
+  res <- fresh
+  type = res
+
+node HsData name params ctors where
+  declare TypeCon name HsUnitTy
+  type = HsUnitTy
+
+node HsTypeSig name ty where
+  declare Variable name HsUnitTy
+  type = HsUnitTy
+
+node HsFunBind name params body where
+  declare Variable name HsFnTy
+  scope body $ pure ()
+  type = typeOf body
+
+node HsModule name imps decls where
+  scope decls $ pure ()
+  type = HsUnitTy
+
+-- Поток управления и поток данных --------------------------------
+flow HsIf c t e          = branch c [t, e]
+flow HsCase scrut alts   = branch scrut alts
+flow HsLet binds body    = chain binds
+flow HsFunBind _ _ body  = chain [body]
+
+analysis Bound :: Forward, May (Set Var)
+  gen (HsBind x _)        = [x]
+  gen (HsFunBind f _ _)   = [f]
+
+analysis Live :: Backward, May (Set Var)
+  gen (HsVar x)           = [x]
+
+-- Линты и обязательные примеры -----------------------------------
+{-# SOURCE haskellReport "3.12" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.97 #-}
+lint unusedLetBind :: Warning, Style
+  match (HsBind x _)
+  when  useCount x == 0 && not ("_" `isPrefixOf` x)
+  say   "Defined but not used: `{x}`"
+  fix   "Prefix with underscore" Safe (replace (nodeSpan node) ("_" <> x))
+
+example unusedLetBind
+  fires  "main = let unused = 1 in 2"
+  silent "main = let x = 1 in x + 1"
+  silent "main = let _unused = 1 in 2"
+
+{-# SOURCE haskellReport "6.4" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.99 #-}
+lint divByConstZero :: Warning, Correctness
+  match (HsBin Div _ r)
+  when  constFold r == Just 0
+  say   "Division by constant zero"
+
+example divByConstZero
+  fires  "bad x = x / 0"
+  silent "good x = x / 2"
+
+{-# SOURCE haskellReport "3.6" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.95 #-}
+lint redundantIf :: Warning, Style
+  match (HsIf _ (HsCon "True") (HsCon "False"))
+  when  True
+  say   "Redundant `if c then True else False`; use `c` directly"
+
+example redundantIf
+  fires  "flag c = if c then True else False"
+  silent "flag c = if c then 1 else 0"
+
+{-# SOURCE haskellReport "3.12" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.93 #-}
+lint undefinedVar :: Error, Correctness
+  match (HsVar x)
+  when  not (x in Bound.before node)
+  say   "Variable `{x}` may not be bound in scope"
+
+example undefinedVar
+  fires  "main = unknownVar + 1"
+  silent "main = let x = 1 in x + 1"
+
+profile default = [unusedLetBind, divByConstZero, redundantIf]
+profile ci      = [unusedLetBind, divByConstZero, redundantIf, undefinedVar]

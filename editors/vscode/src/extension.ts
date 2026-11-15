@@ -103,6 +103,34 @@ interface ParsedGrammarStructure {
   examples: ParsedExampleItem[];
 }
 
+interface ParsedPsemStructure {
+  moduleName: string;
+  imports: string[];
+  pragmas: { text: string; line: number }[];
+  types: { kind: string; name: string; detail: string; line: number }[];
+  diags: { code: string; severity: string; message: string; line: number }[];
+  nodes: { pattern: string; line: number }[];
+  flows: { ctor: string; line: number }[];
+  analyses: { name: string; signature: string; line: number }[];
+  lints: { name: string; severity: string; status?: string; line: number }[];
+  examples: { lintName: string; fires: string[]; silent: string[]; line: number }[];
+  profiles: { name: string; rules: string; line: number }[];
+}
+
+function isParsleyDoc(doc?: vscode.TextDocument): boolean {
+  return Boolean(doc && (doc.languageId === "parsley" || doc.languageId === "parsley-psem"));
+}
+
+function resolveSiblingGrammarUri(uri: vscode.Uri): vscode.Uri {
+  if (uri.scheme === "file" && uri.fsPath.endsWith(".psem")) {
+    const candidate = uri.fsPath.slice(0, -5) + ".parsley";
+    if (fs.existsSync(candidate)) {
+      return vscode.Uri.file(candidate);
+    }
+  }
+  return uri;
+}
+
 // ---------------------------------------------------------------------------
 // Output Channels & Configuration Helpers
 // ---------------------------------------------------------------------------
@@ -362,6 +390,139 @@ function parseLocalGrammarStructure(text: string): ParsedGrammarStructure {
   return result;
 }
 
+function parseLocalPsemStructure(text: string): ParsedPsemStructure {
+  const lines = text.split(/\r?\n/);
+  const result: ParsedPsemStructure = {
+    moduleName: "(anonymous)",
+    imports: [],
+    pragmas: [],
+    types: [],
+    diags: [],
+    nodes: [],
+    flows: [],
+    analyses: [],
+    lints: [],
+    examples: [],
+    profiles: [],
+  };
+
+  let pendingStatus: string | undefined;
+  let currentExample: { lintName: string; fires: string[]; silent: string[]; line: number } | undefined;
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("--")) {
+      continue;
+    }
+
+    const indent = raw.length - raw.trimStart().length;
+    if (indent === 0) {
+      currentExample = undefined;
+    }
+
+    const pragmaMatch = trimmed.match(/^\{-#\s*(.+?)\s*#-\}/);
+    if (pragmaMatch) {
+      result.pragmas.push({ text: pragmaMatch[1], line: i });
+      const statusM = pragmaMatch[1].match(/\bSTATUS\s+(draft|reviewed|verified)\b/);
+      if (statusM) {
+        pendingStatus = statusM[1];
+      }
+      continue;
+    }
+
+    const semMatch = trimmed.match(/^semantics\s+([A-Z][A-Za-z0-9_'.]*)\s+where\b/);
+    if (semMatch) {
+      result.moduleName = semMatch[1];
+      pendingStatus = undefined;
+      continue;
+    }
+
+    const impMatch = trimmed.match(/^import\s+(?:qualified\s+)?([A-Z][A-Za-z0-9_'.]*)/);
+    if (impMatch) {
+      result.imports.push(impMatch[1]);
+      continue;
+    }
+
+    const typeMatch = trimmed.match(/^(type|tycon|kind|builtin|coerce|overload)\s+([A-Za-z_][A-Za-z0-9_']*)(.*)$/);
+    if (typeMatch) {
+      result.types.push({ kind: typeMatch[1], name: typeMatch[2], detail: typeMatch[3].trim(), line: i });
+      pendingStatus = undefined;
+      continue;
+    }
+
+    const diagMatch = trimmed.match(/^diag\s+([A-Z][A-Za-z0-9_']*)\s*::\s*(Error|Warning|Note)\s+"((?:[^"\\]|\\.)*)"/);
+    if (diagMatch) {
+      result.diags.push({ code: diagMatch[1], severity: diagMatch[2], message: diagMatch[3], line: i });
+      pendingStatus = undefined;
+      continue;
+    }
+
+    const nodeMatch = trimmed.match(/^node\s+(.+?)\s+where\b/);
+    if (nodeMatch) {
+      result.nodes.push({ pattern: nodeMatch[1].trim(), line: i });
+      pendingStatus = undefined;
+      continue;
+    }
+
+    const flowMatch = trimmed.match(/^flow\s+([A-Z_][A-Za-z0-9_']*)\b/);
+    if (flowMatch) {
+      result.flows.push({ ctor: flowMatch[1], line: i });
+      pendingStatus = undefined;
+      continue;
+    }
+
+    const analysisMatch = trimmed.match(/^analysis\s+([A-Za-z_][A-Za-z0-9_']*)\s*::\s*(.+)$/);
+    if (analysisMatch) {
+      result.analyses.push({ name: analysisMatch[1], signature: analysisMatch[2].trim(), line: i });
+      pendingStatus = undefined;
+      continue;
+    }
+
+    const lintMatch = trimmed.match(/^lint\s+([a-z_][A-Za-z0-9_']*)\s*::\s*(.+)$/);
+    if (lintMatch) {
+      result.lints.push({
+        name: lintMatch[1],
+        severity: lintMatch[2].trim(),
+        status: pendingStatus,
+        line: i,
+      });
+      pendingStatus = undefined;
+      continue;
+    }
+
+    const exMatch = trimmed.match(/^example\s+([a-z_][A-Za-z0-9_']*)\b/);
+    if (exMatch) {
+      currentExample = { lintName: exMatch[1], fires: [], silent: [], line: i };
+      result.examples.push(currentExample);
+      pendingStatus = undefined;
+      continue;
+    }
+
+    if (currentExample && indent > 0) {
+      const firesM = trimmed.match(/^fires\s+"((?:[^"\\]|\\.)*)"/);
+      if (firesM) {
+        currentExample.fires.push(unescapeParsleyString(firesM[1]));
+        continue;
+      }
+      const silentM = trimmed.match(/^silent\s+"((?:[^"\\]|\\.)*)"/);
+      if (silentM) {
+        currentExample.silent.push(unescapeParsleyString(silentM[1]));
+        continue;
+      }
+    }
+
+    const profMatch = trimmed.match(/^profile\s+([a-z_][A-Za-z0-9_']*)\s*=\s*(.+)$/);
+    if (profMatch) {
+      result.profiles.push({ name: profMatch[1], rules: profMatch[2].trim(), line: i });
+      pendingStatus = undefined;
+      continue;
+    }
+  }
+
+  return result;
+}
+
 function unescapeParsleyString(s: string): string {
   return s
     .replace(/\\n/g, "\n")
@@ -526,7 +687,7 @@ class ParsleyLspClient implements vscode.Disposable {
     const rootUri = vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? null;
     const initResult = (await this.sendRequestRaw("initialize", {
       processId: process.pid,
-      clientInfo: { name: "parsley-vscode", version: "1.3.0" },
+      clientInfo: { name: "parsley-vscode", version: "1.6.0" },
       rootUri,
       capabilities: {
         textDocument: {
@@ -563,7 +724,7 @@ class ParsleyLspClient implements vscode.Disposable {
     this.statusBar.show();
 
     for (const doc of vscode.workspace.textDocuments) {
-      if (doc.languageId === "parsley") {
+      if (isParsleyDoc(doc)) {
         this.didOpen(doc);
       }
     }
@@ -690,7 +851,7 @@ class ParsleyLspClient implements vscode.Disposable {
   }
 
   public didOpen(doc: vscode.TextDocument): void {
-    if (doc.languageId !== "parsley") {
+    if (!isParsleyDoc(doc)) {
       return;
     }
     const uri = doc.uri.toString();
@@ -700,7 +861,7 @@ class ParsleyLspClient implements vscode.Disposable {
         this.sendNotificationRaw("textDocument/didOpen", {
           textDocument: {
             uri,
-            languageId: "parsley",
+            languageId: doc.languageId,
             version: doc.version,
             text: doc.getText(),
           },
@@ -710,7 +871,7 @@ class ParsleyLspClient implements vscode.Disposable {
   }
 
   public didChange(doc: vscode.TextDocument): void {
-    if (doc.languageId !== "parsley") {
+    if (!isParsleyDoc(doc)) {
       return;
     }
     const uri = doc.uri.toString();
@@ -728,7 +889,7 @@ class ParsleyLspClient implements vscode.Disposable {
   }
 
   public didClose(doc: vscode.TextDocument): void {
-    if (doc.languageId !== "parsley") {
+    if (!isParsleyDoc(doc)) {
       return;
     }
     const uri = doc.uri.toString();
@@ -892,7 +1053,11 @@ class GrammarExplorerProvider implements vscode.TreeDataProvider<GrammarTreeItem
 
     const doc = getActiveParsleyDocument();
     if (!doc) {
-      return [new GrammarTreeItem("Open a .parsley file to inspect grammar", vscode.TreeItemCollapsibleState.None, { icon: "info" })];
+      return [new GrammarTreeItem("Open a .parsley or .psem file to inspect", vscode.TreeItemCollapsibleState.None, { icon: "info" })];
+    }
+
+    if (doc.languageId === "parsley-psem") {
+      return buildPsemExplorerItems(doc);
     }
 
     const parsed = parseLocalGrammarStructure(doc.getText());
@@ -1038,6 +1203,141 @@ class GrammarExplorerProvider implements vscode.TreeDataProvider<GrammarTreeItem
   }
 }
 
+function buildPsemExplorerItems(doc: vscode.TextDocument): GrammarTreeItem[] {
+  const psem = parseLocalPsemStructure(doc.getText());
+  const rootItems: GrammarTreeItem[] = [];
+
+  const pragmaChildren = psem.pragmas.map(
+    (p) =>
+      new GrammarTreeItem(`{-# ${p.text} #-}`, vscode.TreeItemCollapsibleState.None, {
+        icon: "symbol-property",
+        line: p.line,
+        uri: doc.uri,
+      })
+  );
+  rootItems.push(
+    new GrammarTreeItem(
+      `Semantics: ${psem.moduleName}`,
+      pragmaChildren.length ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
+      {
+        description: psem.imports.length ? `imports: ${psem.imports.join(", ")}` : "",
+        icon: "symbol-namespace",
+        children: pragmaChildren,
+      }
+    )
+  );
+
+  if (psem.types.length > 0) {
+    rootItems.push(
+      new GrammarTreeItem(`Types & Builtins (${psem.types.length})`, vscode.TreeItemCollapsibleState.Collapsed, {
+        icon: "symbol-struct",
+        children: psem.types.map(
+          (t) =>
+            new GrammarTreeItem(`${t.kind} ${t.name}`, vscode.TreeItemCollapsibleState.None, {
+              description: t.detail,
+              icon: "symbol-type-parameter",
+              line: t.line,
+              uri: doc.uri,
+            })
+        ),
+      })
+    );
+  }
+
+  if (psem.diags.length > 0) {
+    rootItems.push(
+      new GrammarTreeItem(`Diagnostics (${psem.diags.length})`, vscode.TreeItemCollapsibleState.Collapsed, {
+        icon: "warning",
+        children: psem.diags.map(
+          (d) =>
+            new GrammarTreeItem(d.code, vscode.TreeItemCollapsibleState.None, {
+              description: `${d.severity}: ${d.message}`,
+              icon: d.severity === "Error" ? "error" : "warning",
+              line: d.line,
+              uri: doc.uri,
+            })
+        ),
+      })
+    );
+  }
+
+  rootItems.push(
+    new GrammarTreeItem(`Node Rules (${psem.nodes.length})`, vscode.TreeItemCollapsibleState.Expanded, {
+      icon: "symbol-method",
+      children: psem.nodes.map(
+        (n) =>
+          new GrammarTreeItem(n.pattern, vscode.TreeItemCollapsibleState.None, {
+            icon: "symbol-function",
+            line: n.line,
+            uri: doc.uri,
+          })
+      ),
+    })
+  );
+
+  if (psem.flows.length > 0 || psem.analyses.length > 0) {
+    const flowItems: GrammarTreeItem[] = [
+      ...psem.flows.map(
+        (f) =>
+          new GrammarTreeItem(`flow ${f.ctor}`, vscode.TreeItemCollapsibleState.None, {
+            icon: "git-branch",
+            line: f.line,
+            uri: doc.uri,
+          })
+      ),
+      ...psem.analyses.map(
+        (a) =>
+          new GrammarTreeItem(`analysis ${a.name}`, vscode.TreeItemCollapsibleState.None, {
+            description: `:: ${a.signature}`,
+            icon: "pulse",
+            line: a.line,
+            uri: doc.uri,
+          })
+      ),
+    ];
+    rootItems.push(
+      new GrammarTreeItem(`Flow & Analysis (${flowItems.length})`, vscode.TreeItemCollapsibleState.Expanded, {
+        icon: "graph",
+        children: flowItems,
+      })
+    );
+  }
+
+  rootItems.push(
+    new GrammarTreeItem(`Lint Rules (${psem.lints.length})`, vscode.TreeItemCollapsibleState.Expanded, {
+      icon: "shield",
+      children: psem.lints.map(
+        (l) =>
+          new GrammarTreeItem(l.name, vscode.TreeItemCollapsibleState.None, {
+            description: `${l.severity}${l.status ? ` [${l.status}]` : ""}`,
+            icon: "checklist",
+            line: l.line,
+            uri: doc.uri,
+          })
+      ),
+    })
+  );
+
+  if (psem.profiles.length > 0) {
+    rootItems.push(
+      new GrammarTreeItem(`Profiles (${psem.profiles.length})`, vscode.TreeItemCollapsibleState.Collapsed, {
+        icon: "layers",
+        children: psem.profiles.map(
+          (p) =>
+            new GrammarTreeItem(p.name, vscode.TreeItemCollapsibleState.None, {
+              description: p.rules,
+              icon: "list-selection",
+              line: p.line,
+              uri: doc.uri,
+            })
+        ),
+      })
+    );
+  }
+
+  return rootItems;
+}
+
 class ExampleTreeItem extends vscode.TreeItem {
   public readonly example: ParsedExampleItem;
   public readonly uri: vscode.Uri;
@@ -1074,6 +1374,29 @@ class ExamplesViewProvider implements vscode.TreeDataProvider<ExampleTreeItem> {
     const doc = getActiveParsleyDocument();
     if (!doc) {
       return [];
+    }
+    if (doc.languageId === "parsley-psem") {
+      const psem = parseLocalPsemStructure(doc.getText());
+      const items: ExampleTreeItem[] = [];
+      for (const ex of psem.examples) {
+        for (const f of ex.fires) {
+          items.push(
+            new ExampleTreeItem(
+              { name: `${ex.lintName} (fires)`, input: f, kind: "fails-at", expected: ex.lintName, line: ex.line },
+              doc.uri
+            )
+          );
+        }
+        for (const s of ex.silent) {
+          items.push(
+            new ExampleTreeItem(
+              { name: `${ex.lintName} (silent)`, input: s, kind: "parses-to", expected: "clean", line: ex.line },
+              doc.uri
+            )
+          );
+        }
+      }
+      return items;
     }
     const parsed = parseLocalGrammarStructure(doc.getText());
     return parsed.examples.map((ex) => new ExampleTreeItem(ex, doc.uri));
@@ -1124,10 +1447,10 @@ function coerceUriArg(uriArg?: unknown): vscode.Uri | undefined {
 
 function getActiveParsleyDocument(): vscode.TextDocument | undefined {
   const active = vscode.window.activeTextEditor?.document;
-  if (active && active.languageId === "parsley") {
+  if (isParsleyDoc(active)) {
     return active;
   }
-  return vscode.workspace.textDocuments.find((d) => d.languageId === "parsley");
+  return vscode.workspace.textDocuments.find((d) => isParsleyDoc(d));
 }
 
 // ---------------------------------------------------------------------------
@@ -2199,10 +2522,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const playground = new PlaygroundPanelManager(client);
   const railroad = new RailroadPanelManager(client);
 
-  const selector: vscode.DocumentSelector = { language: "parsley", scheme: "file" };
+  const selector: vscode.DocumentSelector = [
+    { language: "parsley", scheme: "file" },
+    { language: "parsley-psem", scheme: "file" },
+  ];
   const legend = client.getSemanticLegend();
 
-  void vscode.workspace.findFiles("**/*.parsley", "**/build/**", 1).then((found) => {
+  void vscode.workspace.findFiles("**/*.{parsley,psem}", "**/build/**", 1).then((found) => {
     void vscode.commands.executeCommand("setContext", "workspaceHasParsleyFiles", found.length > 0);
   });
 
@@ -2217,7 +2543,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Document Sync
     vscode.workspace.onDidOpenTextDocument((doc) => {
-      if (doc.languageId === "parsley") {
+      if (isParsleyDoc(doc)) {
         client.didOpen(doc);
         explorerProvider.refresh();
         examplesProvider.refresh();
@@ -2225,7 +2551,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.workspace.onDidChangeTextDocument((e) => {
-      if (e.document.languageId === "parsley") {
+      if (isParsleyDoc(e.document)) {
         client.didChange(e.document);
         playground.notifyDocumentChanged(e.document);
         explorerProvider.refresh();
@@ -2233,23 +2559,23 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.workspace.onDidSaveTextDocument((doc) => {
-      if (doc.languageId === "parsley") {
+      if (isParsleyDoc(doc)) {
         void railroad.refreshIfOpen(doc.uri);
       }
     }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
-      if (doc.languageId === "parsley") {
+      if (isParsleyDoc(doc)) {
         client.didClose(doc);
       }
     }),
     vscode.window.onDidChangeActiveTextEditor((ed) => {
-      if (ed?.document.languageId === "parsley") {
+      if (isParsleyDoc(ed?.document)) {
         explorerProvider.refresh();
         examplesProvider.refresh();
       }
     }),
     vscode.workspace.onWillSaveTextDocument((e) => {
-      if (e.document.languageId === "parsley" && getConfig().get<boolean>("autoFormatOnSave")) {
+      if (isParsleyDoc(e.document) && getConfig().get<boolean>("autoFormatOnSave")) {
         e.waitUntil(
           vscode.commands.executeCommand<vscode.TextEdit[]>(
             "vscode.executeFormatDocumentProvider",
@@ -2634,11 +2960,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand("parsley.buildC17", async (uriArg?: unknown) => {
-      const uri = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri;
-      if (!uri) {
-        vscode.window.showWarningMessage("Open a .parsley file to build C17 parser.");
+      const rawUri = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri;
+      if (!rawUri) {
+        vscode.window.showWarningMessage("Open a .parsley or .psem file to build C17 parser.");
         return;
       }
+      await saveIfDirty(rawUri);
+      const uri = resolveSiblingGrammarUri(rawUri);
       await saveIfDirty(uri);
       const configuredOut = getConfig().get<string>("c17.outputDir") || "./generated_parser";
       const root = getWorkspaceRoot(uri);
@@ -2663,8 +2991,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand("parsley.format", async () => {
       const ed = vscode.window.activeTextEditor;
-      if (!ed || ed.document.languageId !== "parsley") {
-        vscode.window.showWarningMessage("Open a .parsley file to format.");
+      if (!ed || !isParsleyDoc(ed.document)) {
+        vscode.window.showWarningMessage("Open a .parsley or .psem file to format.");
         return;
       }
       const edits = await vscode.commands.executeCommand<vscode.TextEdit[]>(
@@ -2855,6 +3183,36 @@ function escapeHtml(s: string): string {
 }
 
 function buildLocalDocumentSymbols(doc: vscode.TextDocument): vscode.DocumentSymbol[] {
+  if (doc.languageId === "parsley-psem") {
+    const psem = parseLocalPsemStructure(doc.getText());
+    const symbols: vscode.DocumentSymbol[] = [];
+    for (const d of psem.diags) {
+      const r = doc.lineAt(d.line).range;
+      symbols.push(new vscode.DocumentSymbol(d.code, `${d.severity}: ${d.message}`, vscode.SymbolKind.Constant, r, r));
+    }
+    for (const n of psem.nodes) {
+      const r = doc.lineAt(n.line).range;
+      symbols.push(new vscode.DocumentSymbol(`node ${n.pattern}`, "PSL Node Rule", vscode.SymbolKind.Function, r, r));
+    }
+    for (const f of psem.flows) {
+      const r = doc.lineAt(f.line).range;
+      symbols.push(new vscode.DocumentSymbol(`flow ${f.ctor}`, "CFG Edge", vscode.SymbolKind.Event, r, r));
+    }
+    for (const a of psem.analyses) {
+      const r = doc.lineAt(a.line).range;
+      symbols.push(new vscode.DocumentSymbol(a.name, a.signature, vscode.SymbolKind.Property, r, r));
+    }
+    for (const l of psem.lints) {
+      const r = doc.lineAt(l.line).range;
+      symbols.push(new vscode.DocumentSymbol(l.name, l.severity, vscode.SymbolKind.Method, r, r));
+    }
+    for (const p of psem.profiles) {
+      const r = doc.lineAt(p.line).range;
+      symbols.push(new vscode.DocumentSymbol(`profile ${p.name}`, p.rules, vscode.SymbolKind.Array, r, r));
+    }
+    return symbols;
+  }
+
   const parsed = parseLocalGrammarStructure(doc.getText());
   const symbols: vscode.DocumentSymbol[] = [];
 
@@ -2888,6 +3246,35 @@ function buildLocalDocumentSymbols(doc: vscode.TextDocument): vscode.DocumentSym
 }
 
 function buildFallbackCompletions(doc: vscode.TextDocument): vscode.CompletionItem[] {
+  if (doc.languageId === "parsley-psem") {
+    const psem = parseLocalPsemStructure(doc.getText());
+    const items: vscode.CompletionItem[] = [];
+    for (const l of psem.lints) {
+      const it = new vscode.CompletionItem(l.name, vscode.CompletionItemKind.Method);
+      it.detail = `lint :: ${l.severity}`;
+      items.push(it);
+    }
+    for (const d of psem.diags) {
+      const it = new vscode.CompletionItem(d.code, vscode.CompletionItemKind.Constant);
+      it.detail = `${d.severity}: ${d.message}`;
+      items.push(it);
+    }
+    for (const kw of [
+      "semantics", "where", "import", "source", "manual", "rev",
+      "type", "tycon", "kind", "builtin", "coerce", "overload",
+      "diag", "node", "flow", "analysis", "lint", "example", "profile", "project",
+      "match", "when", "say", "fix", "fires", "silent", "gen", "kill",
+      "declare", "lookup", "scope", "require", "unify", "fresh", "mono", "generalize", "orFail",
+      "typeOf", "arity", "useCount", "constFold", "nameSpan", "reachable", "dominates",
+      "before", "after", "notMember", "isPrefixOf", "replace",
+      "Forward", "Backward", "Must", "May", "Error", "Warning", "Note",
+      "Safe", "chain", "branch", "loop", "jump", "jumpOut", "jumpTo",
+    ]) {
+      items.push(new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword));
+    }
+    return items;
+  }
+
   const parsed = parseLocalGrammarStructure(doc.getText());
   const items: vscode.CompletionItem[] = [];
 

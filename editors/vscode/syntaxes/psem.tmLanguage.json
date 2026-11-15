@@ -1,0 +1,355 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Parsley Semantic Layer (PSL)",
+  "scopeName": "source.parsley.psem",
+  "patterns": [
+    {
+      "include": "#pragma"
+    },
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#char"
+    },
+    {
+      "include": "#semantics_decl"
+    },
+    {
+      "include": "#import_decl"
+    },
+    {
+      "include": "#source_decl"
+    },
+    {
+      "include": "#diag_decl"
+    },
+    {
+      "include": "#node_decl"
+    },
+    {
+      "include": "#flow_decl"
+    },
+    {
+      "include": "#analysis_decl"
+    },
+    {
+      "include": "#lint_decl"
+    },
+    {
+      "include": "#example_decl"
+    },
+    {
+      "include": "#profile_decl"
+    },
+    {
+      "include": "#type_decl"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#backtick_infix"
+    },
+    {
+      "include": "#number"
+    },
+    {
+      "include": "#type_or_ctor"
+    },
+    {
+      "include": "#identifier"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "pragma": {
+      "name": "meta.preprocessor.pragma.psem",
+      "begin": "\\{-#",
+      "end": "#-\\}",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.pragma.begin.psem"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.pragma.end.psem"
+        }
+      },
+      "patterns": [
+        {
+          "match": "\\b(SOURCE|STATUS|CONFIDENCE|LOCKED|SUPERSEDES|LANGUAGE|draft|reviewed|verified|Sem1|Sem2)\\b",
+          "name": "keyword.other.pragma.psem"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "match": "[A-Za-z_][A-Za-z0-9_']*",
+          "name": "entity.name.tag.pragma.psem"
+        }
+      ]
+    },
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.double-dash.psem",
+          "match": "--.*$"
+        },
+        {
+          "include": "#block_comment"
+        }
+      ]
+    },
+    "block_comment": {
+      "name": "comment.block.psem",
+      "begin": "\\{-",
+      "end": "-\\}",
+      "patterns": [
+        {
+          "include": "#block_comment"
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.psem",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.psem",
+          "match": "\\\\(?:[\"\\\\abfnrtv0]|x[0-9A-Fa-f]+|u\\{[0-9A-Fa-f]+\\}|u[0-9A-Fa-f]{4})"
+        },
+        {
+          "name": "variable.interpolation.psem",
+          "match": "\\{[A-Za-z_][A-Za-z0-9_']*\\}"
+        }
+      ]
+    },
+    "char": {
+      "name": "string.quoted.single.psem",
+      "match": "'(?:[^'\\\\]|\\\\.)'"
+    },
+    "semantics_decl": {
+      "match": "^\\s*(semantics)\\s+([A-Z][A-Za-z0-9_'.]*)\\s+(where)\\b",
+      "captures": {
+        "1": {
+          "name": "keyword.control.module.psem"
+        },
+        "2": {
+          "name": "entity.name.namespace.psem"
+        },
+        "3": {
+          "name": "keyword.control.where.psem"
+        }
+      }
+    },
+    "import_decl": {
+      "match": "^\\s*(import)\\s+(?:(qualified)\\s+)?([A-Z][A-Za-z0-9_'.]*)(?:\\s+(as)\\s+([A-Z][A-Za-z0-9_']*))?(?:\\s+(hiding))?",
+      "captures": {
+        "1": {
+          "name": "keyword.control.import.psem"
+        },
+        "2": {
+          "name": "keyword.control.import.qualified.psem"
+        },
+        "3": {
+          "name": "entity.name.namespace.psem"
+        },
+        "4": {
+          "name": "keyword.control.import.as.psem"
+        },
+        "5": {
+          "name": "entity.name.namespace.alias.psem"
+        },
+        "6": {
+          "name": "keyword.control.import.hiding.psem"
+        }
+      }
+    },
+    "source_decl": {
+      "match": "^\\s*(source)\\s+([a-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.source.psem"
+        },
+        "2": {
+          "name": "variable.other.source.psem"
+        }
+      }
+    },
+    "diag_decl": {
+      "match": "^\\s*(diag)\\s+([A-Z][A-Za-z0-9_']*)\\s*(::)\\s*(Error|Warning|Note)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.diag.psem"
+        },
+        "2": {
+          "name": "constant.other.diag-code.psem"
+        },
+        "3": {
+          "name": "keyword.operator.double-colon.psem"
+        },
+        "4": {
+          "name": "entity.name.type.severity.psem"
+        }
+      }
+    },
+    "node_decl": {
+      "match": "^\\s*(node)\\s+([A-Z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.node.psem"
+        },
+        "2": {
+          "name": "entity.name.type.constructor.psem"
+        }
+      }
+    },
+    "flow_decl": {
+      "match": "^\\s*(flow)\\s+([A-Z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.flow.psem"
+        },
+        "2": {
+          "name": "entity.name.type.constructor.psem"
+        }
+      }
+    },
+    "analysis_decl": {
+      "match": "^\\s*(analysis)\\s+([A-Za-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.analysis.psem"
+        },
+        "2": {
+          "name": "entity.name.function.analysis.psem"
+        }
+      }
+    },
+    "lint_decl": {
+      "match": "^\\s*(lint)\\s+([a-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.lint.psem"
+        },
+        "2": {
+          "name": "entity.name.function.lint.psem"
+        }
+      }
+    },
+    "example_decl": {
+      "match": "^\\s*(example)\\s+([a-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.other.example.psem"
+        },
+        "2": {
+          "name": "entity.name.function.lint.psem"
+        }
+      }
+    },
+    "profile_decl": {
+      "match": "^\\s*(profile)\\s+([a-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.profile.psem"
+        },
+        "2": {
+          "name": "entity.name.tag.profile.psem"
+        }
+      }
+    },
+    "type_decl": {
+      "match": "^\\s*(type|tycon|kind|builtin|coerce|overload)\\s+([A-Za-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.type.psem"
+        },
+        "2": {
+          "name": "entity.name.type.psem"
+        }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.psem",
+          "match": "\\b(semantics|where|import|qualified|as|hiding|if|then|else|case|of|forall|let|in)\\b"
+        },
+        {
+          "name": "keyword.declaration.psem",
+          "match": "\\b(source|manual|rev|type|tycon|kind|builtin|coerce|overload|diag|node|flow|analysis|lint|example|profile|project)\\b"
+        },
+        {
+          "name": "keyword.other.psl.psem",
+          "match": "\\b(match|when|say|fix|fires|silent|gen|kill|unit|imports|exports|prelude|search|cycles|shadowing|resolve|publish)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.effect.psem",
+          "match": "\\b(declare|lookup|scope|require|unify|fresh|mono|generalize|orFail)\\b"
+        },
+        {
+          "name": "support.function.query.psem",
+          "match": "\\b(typeOf|arity|useCount|constFold|nameSpan|parent|ancestors|enclosing|isSubtype|reachable|dominates|before|after|notMember|isPrefixOf|replace|length|and|any|all|count|chain|branch|loop|jump|jumpOut|jumpTo)\\b"
+        },
+        {
+          "name": "support.constant.psl.psem",
+          "match": "\\b(Forward|Backward|Must|May|Error|Warning|Note|Style|Correctness|Performance|Security|Safe|Unsafe|Warn|Allow|Forbid|Forbidden|Allowed|Exit|Just|Nothing|True|False)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "name": "keyword.operator.psem",
+      "match": "(<-|->|::|=>|<>|&&|\\|\\||==|/=|<=|>=|\\$|\\||=|\\+|-|\\*|<|>)"
+    },
+    "backtick_infix": {
+      "name": "entity.name.function.infix.psem",
+      "match": "`[a-zA-Z_][a-zA-Z0-9_.']*`"
+    },
+    "number": {
+      "name": "constant.numeric.psem",
+      "match": "\\b[0-9]+(?:\\.[0-9]+)?\\b"
+    },
+    "type_or_ctor": {
+      "patterns": [
+        {
+          "name": "support.type.builtin.psem",
+          "match": "\\b(Bool|Int|Double|Text|Maybe|List|Set|Node|Symbol|Type|Span|Function|Variable|Stmt|Expr)\\b"
+        },
+        {
+          "name": "entity.name.type.constructor.psem",
+          "match": "\\b[A-Z][A-Za-z0-9_']*\\b"
+        }
+      ]
+    },
+    "identifier": {
+      "name": "variable.other.psem",
+      "match": "\\b[a-z_][A-Za-z0-9_']*\\b"
+    },
+    "punctuation": {
+      "name": "punctuation.psem",
+      "match": "[(){}\\[\\],:.]"
+    }
+  }
+}
