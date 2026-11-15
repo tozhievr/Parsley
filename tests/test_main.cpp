@@ -49,8 +49,8 @@ std::string read_fixture(std::string_view name) {
 void test_version() {
   check(parsley::VERSION_MAJOR == 1, "VERSION_MAJOR == 1");
   check(parsley::VERSION_MINOR == 0, "VERSION_MINOR == 0");
-  check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "1.0.0", "VERSION_STRING == 1.0.0");
+  check(parsley::VERSION_PATCH == 1, "VERSION_PATCH == 1");
+  check(parsley::VERSION_STRING == "1.0.1", "VERSION_STRING == 1.0.1");
 }
 
 void test_diagnostics() {

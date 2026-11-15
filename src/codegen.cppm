@@ -1086,7 +1086,9 @@ private:
         << " */\n";
     out << "/* Selected strategy: " << analysis::strategy_name(analysis_.selected_strategy) << " ("
         << safe_comment(analysis_.strategy_reason) << ") */\n\n";
-    out << "#define PARSLEY_BUILDING_DLL\n";
+    out << "#if !defined(PARSLEY_STATIC) && !defined(PARSLEY_BUILDING_DLL)\n";
+    out << "#  define PARSLEY_BUILDING_DLL\n";
+    out << "#endif\n";
     out << "#include \"parser.h\"\n\n";
     out << "#include <ctype.h>\n";
     out << "#include <math.h>\n";

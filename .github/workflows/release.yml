@@ -83,10 +83,52 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Ninja & CMake 4.5
+      - name: Install Ninja
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ninja "cmake>=3.28"
+          python -m pip install ninja
+
+      - name: Install CMake 4.5.0-rc1 (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          curl -sSL -o cmake.tar.gz https://github.com/Kitware/CMake/releases/download/v4.5.0-rc1/cmake-4.5.0-rc1-linux-x86_64.tar.gz || true
+          if [ -s cmake.tar.gz ] && tar -tf cmake.tar.gz >/dev/null 2>&1; then
+            tar -xzf cmake.tar.gz
+            echo "$PWD/cmake-4.5.0-rc1-linux-x86_64/bin" >> $GITHUB_PATH
+          else
+            python -m pip install --pre "cmake>=4.5.0rc1" || true
+          fi
+
+      - name: Install CMake 4.5.0-rc1 (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          curl -sSL -o cmake.tar.gz https://github.com/Kitware/CMake/releases/download/v4.5.0-rc1/cmake-4.5.0-rc1-macos-universal.tar.gz || true
+          if [ -s cmake.tar.gz ] && tar -tf cmake.tar.gz >/dev/null 2>&1; then
+            tar -xzf cmake.tar.gz
+            if [ -d "$PWD/cmake-4.5.0-rc1-macos-universal/CMake.app/Contents/bin" ]; then
+              echo "$PWD/cmake-4.5.0-rc1-macos-universal/CMake.app/Contents/bin" >> $GITHUB_PATH
+            elif [ -d "$PWD/cmake-4.5.0-rc1-macos-universal/bin" ]; then
+              echo "$PWD/cmake-4.5.0-rc1-macos-universal/bin" >> $GITHUB_PATH
+            fi
+          else
+            python -m pip install --pre "cmake>=4.5.0rc1" || true
+          fi
+
+      - name: Install CMake 4.5.0-rc1 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          try {
+            $dest = "$env:RUNNER_TEMP/cmake45"
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Invoke-WebRequest -Uri "https://github.com/Kitware/CMake/releases/download/v4.5.0-rc1/cmake-4.5.0-rc1-windows-x86_64.zip" -OutFile "$dest/cmake.zip"
+            Expand-Archive -Path "$dest/cmake.zip" -DestinationPath $dest
+            "$dest/cmake-4.5.0-rc1-windows-x86_64/bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          } catch {
+            python -m pip install --pre "cmake>=4.5.0rc1"
+          }
 
       - name: Install LLVM / Clang 23 (Ubuntu)
         if: runner.os == 'Linux'
@@ -124,7 +166,14 @@ jobs:
             echo "CXX=clang++" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
 
-      - name: Configure CMake
+      - name: Display tools and compiler versions
+        shell: bash
+        run: |
+          cmake --version
+          ninja --version
+          ${CXX:-clang++} --version || true
+
+      - name: Configure CMake (CMake 4.5.0-rc1 + Ninja)
         shell: bash
         run: |
           cmake -B build -G Ninja \
@@ -194,7 +243,6 @@ jobs:
         shell: bash
         run: |
           mkdir -p release-final
-          # Flatten downloaded artifact subdirectories into release-final
           find release-assets/ -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.tgz" \) -exec cp {} release-final/ \;
           cd release-final
           sha256sum * > SHA256SUMS.txt
