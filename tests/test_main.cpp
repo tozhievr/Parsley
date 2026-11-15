@@ -9,6 +9,9 @@ import parsley.diagnostic;
 import parsley.lexer;
 import parsley.ast;
 import parsley.parser;
+import parsley.stdlib;
+import parsley.resolve;
+import parsley.typecheck;
 
 namespace {
 
@@ -36,9 +39,9 @@ std::string read_fixture(std::string_view name) {
 
 void test_version() {
   check(parsley::VERSION_MAJOR == 0, "VERSION_MAJOR == 0");
-  check(parsley::VERSION_MINOR == 2, "VERSION_MINOR == 2");
+  check(parsley::VERSION_MINOR == 3, "VERSION_MINOR == 3");
   check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "0.2.0", "VERSION_STRING == 0.2.0");
+  check(parsley::VERSION_STRING == "0.3.0", "VERSION_STRING == 0.3.0");
 }
 
 void test_diagnostics() {
@@ -144,17 +147,100 @@ void test_lexer_and_parser() {
   check(!bad_mod.rule_defs.empty(), "Parser recovered to parse subsequent rule `good`");
 }
 
+bool has_diag_code(const parsley::DiagnosticBag& diags, std::string_view code) {
+  for (const auto& d : diags.items()) {
+    if (d.code == code) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void test_stdlib_resolve_typecheck() {
+  using namespace parsley;
+
+  // Stdlib
+  check(stdlib::builtin_modules().size() >= 5, "builtin_modules has >= 5 modules");
+  check(stdlib::find_builtin_module("Parsley.Prelude").has_value(), "Parsley.Prelude found");
+  check(stdlib::find_builtin_module("Json").has_value(), "Json found");
+  check(stdlib::find_builtin_module("Sql").has_value(), "Sql found");
+
+  // Calc.parsley resolve + typecheck
+  {
+    const std::string calc_src = read_fixture("Calc.parsley");
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(calc_src, "Calc.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    check(!diags.has_errors(), "Calc.parsley resolves & typechecks without errors");
+    check(resolved.lookup_value("sepBy").has_value(), "Calc resolved sepBy from Prelude");
+    check(resolved.lookup_type("Expr").has_value(), "Calc resolved Expr type");
+    check(resolved.lookup_ctor("Bin").has_value(), "Calc resolved Bin ctor");
+    auto prog_ty = typed.lookup_rule_result_type_string("program");
+    check(prog_ty.has_value() && *prog_ty == "Expr", "Calc program result type is Expr");
+  }
+
+  // HtmlContext.parsley resolve + typecheck
+  {
+    const std::string html_src = read_fixture("HtmlContext.parsley");
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(html_src, "HtmlContext.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    check(!diags.has_errors(), "HtmlContext.parsley resolves & typechecks without errors");
+    check(typed.rule_is_context["htmlTag"], "htmlTag marked as context do");
+  }
+
+  // E0200: undefined symbol / bad export
+  {
+    const std::string src = "module BadExport (missingRule) where\ngood :: Text\ngood = \"a\"\n";
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(src, "BadExport.parsley", diags);
+    (void)resolve::resolve_module(mod, diags);
+    check(has_diag_code(diags, "E0200"), "E0200 emitted on missing exported symbol");
+  }
+
+  // E0301: exported rule without type signature
+  {
+    const std::string src = "module NoSig (entry) where\ntoken id = /[a-z]+/ :: Text\nentry = id\n";
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(src, "NoSig.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    (void)typecheck::check_module(mod, resolved, diags);
+    check(has_diag_code(diags, "E0301"), "E0301 emitted when exported rule lacks type signature");
+  }
+
+  // E0310: ApplicativeDo violation (dependent binding without context do)
+  {
+    const std::string src =
+        "module AppDo where\n"
+        "import Parsley.Prelude (exactly)\n"
+        "token id = /[a-z]+/ :: Text\n"
+        "tag :: Text\n"
+        "tag = do\n"
+        "  n <- id\n"
+        "  exactly n\n"
+        "  pure n\n";
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(src, "AppDo.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    (void)typecheck::check_module(mod, resolved, diags);
+    check(has_diag_code(diags, "E0310"), "E0310 emitted on non-context dependent do");
+  }
+}
+
 } // namespace
 
 int main() {
   test_version();
   test_diagnostics();
   test_lexer_and_parser();
+  test_stdlib_resolve_typecheck();
 
   if (g_failures > 0) {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v0.2.0 tests passed.\n";
+  std::cout << "All Phase v0.3.0 tests passed.\n";
   return 0;
 }
