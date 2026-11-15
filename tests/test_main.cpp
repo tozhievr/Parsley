@@ -15,6 +15,7 @@ import parsley.typecheck;
 import parsley.ir;
 import parsley.desugar;
 import parsley.analysis;
+import parsley.eval;
 
 namespace {
 
@@ -42,9 +43,9 @@ std::string read_fixture(std::string_view name) {
 
 void test_version() {
   check(parsley::VERSION_MAJOR == 0, "VERSION_MAJOR == 0");
-  check(parsley::VERSION_MINOR == 5, "VERSION_MINOR == 5");
+  check(parsley::VERSION_MINOR == 6, "VERSION_MINOR == 6");
   check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "0.5.0", "VERSION_STRING == 0.5.0");
+  check(parsley::VERSION_STRING == "0.6.0", "VERSION_STRING == 0.6.0");
 }
 
 void test_diagnostics() {
@@ -404,6 +405,86 @@ void test_analysis() {
   }
 }
 
+void test_eval() {
+  using namespace parsley;
+
+  auto run_fixture = [](std::string_view name) -> ir::Grammar {
+    const std::string src = read_fixture(name);
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(src, name, diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+    (void)analysis::analyze_grammar(grammar, diags);
+    check(!diags.has_errors(), std::string(name) + " compiled without errors for eval");
+    return grammar;
+  };
+
+  // 1. Calc.parsley examples + ad-hoc inputs + fuzzing
+  {
+    auto g = run_fixture("Calc.parsley");
+    DiagnosticBag ex_diags;
+    auto summary = eval::run_examples(g, ex_diags);
+    check(!ex_diags.has_errors(), "Calc.parsley examples pass without errors");
+    check(summary.total == 2 && summary.passed == 2 && summary.failed == 0,
+          "Calc.parsley 2/2 examples passed");
+
+    auto res_ok = eval::parse_input(g, "let x = 2^3^2 in -x + f(1, 2)");
+    check(res_ok.ok, "Calc.parsley parses let, right-assoc ^, unary -, and call");
+
+    auto res_err = eval::parse_input(g, "1 +");
+    check(!res_err.ok && res_err.error.has_value(), "Calc.parsley rejects '1 +'");
+    if (res_err.error) {
+      check(res_err.error->line == 1 && res_err.error->col == 4, "Calc error at (1, 4)");
+    }
+
+    auto fuzz = eval::fuzz_grammar(g, 25, 42);
+    check(fuzz.generated > 0 && fuzz.failed == 0, "Calc.parsley fuzzing (25 cases) 0 failures");
+  }
+
+  // 2. LexModes.parsley
+  {
+    auto g = run_fixture("LexModes.parsley");
+    DiagnosticBag ex_diags;
+    auto summary = eval::run_examples(g, ex_diags);
+    check(!ex_diags.has_errors(), "LexModes.parsley examples pass");
+    check(summary.passed == 1 && summary.failed == 0, "LexModes 1/1 example passed");
+  }
+
+  // 3. HtmlContext.parsley
+  {
+    auto g = run_fixture("HtmlContext.parsley");
+    DiagnosticBag ex_diags;
+    auto summary = eval::run_examples(g, ex_diags);
+    check(!ex_diags.has_errors(), "HtmlContext.parsley examples pass");
+    check(summary.passed == 1 && summary.failed == 0, "HtmlContext 1/1 example passed");
+
+    auto mismatch = eval::parse_input(g, "<div>hello</span>");
+    check(!mismatch.ok, "HtmlContext rejects mismatched closing tag <div>...</span>");
+  }
+
+  // 4. E0600 on failing example
+  {
+    const std::string bad_ex_src =
+        "module BadEx (program) where\n"
+        "token num = /[0-9]+/ :: Int\n"
+        "data Expr = Num Int\n"
+        "program :: Expr\n"
+        "program = Num <$> num\n"
+        "example \"wrong\" : \"123\" parses-to Num 999\n";
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(bad_ex_src, "BadEx.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+    (void)analysis::analyze_grammar(grammar, diags);
+    DiagnosticBag ex_diags;
+    auto summary = eval::run_examples(grammar, ex_diags);
+    check(summary.failed == 1, "BadEx fails 1 example");
+    check(has_diag_code(ex_diags, "E0600"), "BadEx emits E0600");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -413,11 +494,12 @@ int main() {
   test_stdlib_resolve_typecheck();
   test_ir_and_desugar();
   test_analysis();
+  test_eval();
 
   if (g_failures > 0) {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v0.5.0 tests passed.\n";
+  std::cout << "All Phase v0.6.0 tests passed.\n";
   return 0;
 }
