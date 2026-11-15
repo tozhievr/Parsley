@@ -48,9 +48,9 @@ std::string read_fixture(std::string_view name) {
 
 void test_version() {
   check(parsley::VERSION_MAJOR == 1, "VERSION_MAJOR == 1");
-  check(parsley::VERSION_MINOR == 1, "VERSION_MINOR == 1");
+  check(parsley::VERSION_MINOR == 2, "VERSION_MINOR == 2");
   check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "1.1.0", "VERSION_STRING == 1.1.0");
+  check(parsley::VERSION_STRING == "1.2.0", "VERSION_STRING == 1.2.0");
 }
 
 void test_diagnostics() {
@@ -785,6 +785,65 @@ void test_tooling_compiler_cli() {
   }
 }
 
+void test_e2e_analyzers() {
+  namespace fs = std::filesystem;
+  struct Case {
+    std::string lang_lower;
+    std::string fixture_name;
+    std::string analyzer_file;
+  };
+  const Case cases[] = {
+      {"python", "Python.parsley", "python_analyzer.c"},
+      {"swift", "Swift.parsley", "swift_analyzer.c"},
+      {"kotlin", "Kotlin.parsley", "kotlin_analyzer.c"},
+      {"haskell", "Haskell.parsley", "haskell_analyzer.c"},
+  };
+
+  const std::string cli = PARSLEY_CLI_EXE;
+  const std::string cc = PARSLEY_C_COMPILER;
+
+  for (const auto& c : cases) {
+    const fs::path out_dir = fs::temp_directory_path() / ("parsley_e2e_" + c.lang_lower);
+    std::error_code ec;
+    fs::remove_all(out_dir, ec);
+    fs::create_directories(out_dir, ec);
+
+    const std::string fixture_path = std::string(PARSLEY_FIXTURES_DIR) + "/" + c.fixture_name;
+    const std::string analyzer_path = std::string(PARSLEY_SOURCE_DIR) + "/tests/analyzers/" + c.analyzer_file;
+
+    const std::string build_cmd = "\"" + cli + "\" build \"" + fixture_path + "\" -o \"" + out_dir.string() + "\"";
+    check(run_shell(build_cmd) == 0, "parsley build succeeds for " + c.fixture_name);
+    check(fs::exists(out_dir / "parser.h"), c.lang_lower + " parser.h exists");
+    check(fs::exists(out_dir / "parser.c"), c.lang_lower + " parser.c exists");
+
+#if defined(_WIN32)
+    const fs::path dll_path = out_dir / (c.lang_lower + "_parser.dll");
+    const fs::path lib_path = out_dir / (c.lang_lower + "_parser.lib");
+    const fs::path exe_path = out_dir / (c.lang_lower + "_analyzer.exe");
+    check(fs::exists(dll_path), c.lang_lower + "_parser.dll exists");
+    check(fs::exists(lib_path), c.lang_lower + "_parser.lib exists");
+    const std::string compile_cmd = "\"" + cc + "\" -std=c17 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
+                                    analyzer_path + "\" \"" + lib_path.string() + "\" -o \"" +
+                                    exe_path.string() + "\"";
+#else
+#  if defined(__APPLE__)
+    const fs::path so_path = out_dir / ("lib" + c.lang_lower + "_parser.dylib");
+#  else
+    const fs::path so_path = out_dir / ("lib" + c.lang_lower + "_parser.so");
+#  endif
+    const fs::path exe_path = out_dir / (c.lang_lower + "_analyzer");
+    check(fs::exists(so_path), c.lang_lower + " shared library exists");
+    const std::string compile_cmd = "\"" + cc + "\" -std=c17 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
+                                    analyzer_path + "\" \"" + so_path.string() + "\" -Wl,-rpath,\"" +
+                                    out_dir.string() + "\" -lm -o \"" + exe_path.string() + "\"";
+#endif
+    check(run_shell(compile_cmd) == 0, c.analyzer_file + " compiles cleanly with -std=c17 -Wall -Wextra");
+    check(run_shell("\"" + exe_path.string() + "\"") == 0, c.analyzer_file + " E2E analyzer passes (exit 0)");
+
+    fs::remove_all(out_dir, ec);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -797,11 +856,12 @@ int main() {
   test_eval();
   test_codegen_c17();
   test_tooling_compiler_cli();
+  test_e2e_analyzers();
 
   if (g_failures > 0) {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v0.8.0 tests passed.\n";
+  std::cout << "All Phase v1.2.0 tests passed.\n";
   return 0;
 }
