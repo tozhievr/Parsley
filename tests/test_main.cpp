@@ -14,6 +14,7 @@ import parsley.resolve;
 import parsley.typecheck;
 import parsley.ir;
 import parsley.desugar;
+import parsley.analysis;
 
 namespace {
 
@@ -41,9 +42,9 @@ std::string read_fixture(std::string_view name) {
 
 void test_version() {
   check(parsley::VERSION_MAJOR == 0, "VERSION_MAJOR == 0");
-  check(parsley::VERSION_MINOR == 4, "VERSION_MINOR == 4");
+  check(parsley::VERSION_MINOR == 5, "VERSION_MINOR == 5");
   check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "0.4.0", "VERSION_STRING == 0.4.0");
+  check(parsley::VERSION_STRING == "0.5.0", "VERSION_STRING == 0.5.0");
 }
 
 void test_diagnostics() {
@@ -298,6 +299,111 @@ void test_ir_and_desugar() {
   }
 }
 
+void test_analysis() {
+  using namespace parsley;
+
+  // 1. Calc.parsley: FIRST/FOLLOW, auto left-factoring E0214 Note, LL(1) strategy
+  {
+    const std::string calc_src = read_fixture("Calc.parsley");
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(calc_src, "Calc.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+    auto res = analysis::analyze_grammar(grammar, diags);
+
+    check(!diags.has_errors(), "Calc.parsley analysis succeeds without errors");
+    check(has_diag_code(diags, "E0214"), "Calc.parsley emits E0214 note for auto left-factoring of atom");
+    check(!res.factored_rules.empty(), "Calc.parsley records left-factored rule");
+    check(res.rules.count("atom") == 1 && !res.rules["atom"].first.empty(), "atom has non-empty FIRST set");
+    check(res.rules.count("expr") == 1 && !res.rules["expr"].follow.empty(), "expr has non-empty FOLLOW set");
+    check(res.selected_strategy == analysis::Strategy::LL1, "Calc.parsley selects LL1 strategy");
+  }
+
+  // 2. NOFACTOR triggers E0214 error with counterexample
+  {
+    const std::string nofactor_src =
+        "{-# NOFACTOR #-}\n"
+        "module NoFactor (entry) where\n"
+        "token ident = /[a-z]+/ :: Text\n"
+        "data Node = Call Text Text | Var Text\n"
+        "entry :: Node\n"
+        "entry = Call <$> ident <*> (\"(\" *> ident <* \")\") | Var <$> ident\n";
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(nofactor_src, "NoFactor.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+    auto res = analysis::analyze_grammar(grammar, diags);
+
+    check(diags.has_errors(), "NOFACTOR emits error on unfactored conflict");
+    check(has_diag_code(diags, "E0214"), "NOFACTOR emits E0214");
+    check(!res.counterexamples.empty(), "NOFACTOR generates counterexample");
+    if (!res.counterexamples.empty()) {
+      const std::string formatted = analysis::format_counterexample(res.counterexamples[0]);
+      check(!formatted.empty(), "format_counterexample non-empty");
+    }
+  }
+
+  // 3. HtmlContext selects PEG/GLL due to `context do`
+  {
+    const std::string html_src = read_fixture("HtmlContext.parsley");
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(html_src, "HtmlContext.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+    auto res = analysis::analyze_grammar(grammar, diags);
+
+    check(!diags.has_errors(), "HtmlContext analysis succeeds");
+    check(res.has_context_rules, "HtmlContext detects context rules");
+    check(res.selected_strategy == analysis::Strategy::PEG ||
+          res.selected_strategy == analysis::Strategy::GLL,
+          "HtmlContext selects PEG or GLL strategy");
+  }
+
+  // 4. E0510: context rule under LL1 mode
+  {
+    const std::string bad_ctx_src =
+        "{-# MODE LL1 #-}\n"
+        "module BadCtx (tag) where\n"
+        "import Parsley.Prelude (exactly)\n"
+        "token id = /[a-z]+/ :: Text\n"
+        "tag :: Text\n"
+        "tag = context do\n"
+        "  n <- id\n"
+        "  exactly n\n"
+        "  pure n\n";
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(bad_ctx_src, "BadCtx.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+    (void)analysis::analyze_grammar(grammar, diags);
+    check(has_diag_code(diags, "E0510"), "E0510 emitted for context rule in LL1 mode");
+  }
+
+  // 5. E0500 (left recursion in LL1) & E0520 (dead rule)
+  {
+    const std::string lr_src =
+        "{-# MODE LL1 #-}\n"
+        "module LeftRec (expr) where\n"
+        "token n = /[0-9]+/ :: Text\n"
+        "expr :: Text\n"
+        "expr = expr | n\n"
+        "dead :: Text\n"
+        "dead = n\n";
+    DiagnosticBag diags;
+    auto mod = parser::parse_module(lr_src, "LeftRec.parsley", diags);
+    auto resolved = resolve::resolve_module(mod, diags);
+    auto typed = typecheck::check_module(mod, resolved, diags);
+    auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
+    (void)analysis::analyze_grammar(grammar, diags);
+    check(has_diag_code(diags, "E0500"), "E0500 emitted for left recursion in LL1 mode");
+    check(has_diag_code(diags, "E0520"), "E0520 emitted for unreachable dead rule");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -306,11 +412,12 @@ int main() {
   test_lexer_and_parser();
   test_stdlib_resolve_typecheck();
   test_ir_and_desugar();
+  test_analysis();
 
   if (g_failures > 0) {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v0.4.0 tests passed.\n";
+  std::cout << "All Phase v0.5.0 tests passed.\n";
   return 0;
 }
