@@ -3364,7 +3364,7 @@ inline std::string generate_cmake(const std::string& mod_cap,
   out << "    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>\n";
   out << ")\n";
   out << "if(UNIX AND NOT APPLE)\n";
-  out << "  target_link_libraries(" << tgt << "_static PRIVATE m)\n";
+  out << "  target_link_libraries(" << tgt << "_static PUBLIC m)\n";
   out << "endif()\n\n";
   out << "install(TARGETS " << tgt << " " << tgt << "_static\n";
   out << "  EXPORT " << tgt << "_targets\n";
