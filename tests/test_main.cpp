@@ -19,6 +19,8 @@ import parsley.desugar;
 import parsley.analysis;
 import parsley.eval;
 import parsley.codegen;
+import parsley.tooling;
+import parsley.compiler;
 
 namespace {
 
@@ -46,9 +48,9 @@ std::string read_fixture(std::string_view name) {
 
 void test_version() {
   check(parsley::VERSION_MAJOR == 0, "VERSION_MAJOR == 0");
-  check(parsley::VERSION_MINOR == 7, "VERSION_MINOR == 7");
+  check(parsley::VERSION_MINOR == 8, "VERSION_MINOR == 8");
   check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "0.7.0", "VERSION_STRING == 0.7.0");
+  check(parsley::VERSION_STRING == "0.8.0", "VERSION_STRING == 0.8.0");
 }
 
 void test_diagnostics() {
@@ -668,6 +670,117 @@ int main(void) {
   }
 }
 
+void test_tooling_compiler_cli() {
+  using namespace parsley;
+  namespace fs = std::filesystem;
+
+  // 1. compiler::compile_file on Calc.parsley
+  const std::string calc_path = std::string(PARSLEY_FIXTURES_DIR) + "/Calc.parsley";
+  auto compiled = compiler::compile_file(calc_path, true);
+  check(compiled.ok, "compiler::compile_file(Calc.parsley) ok");
+  check(compiled.example_summary.has_value() && compiled.example_summary->passed == 2,
+        "compiler::compile_file ran 2/2 Calc examples");
+
+  // 2. Formatter idempotency & round-trip parse
+  const std::string formatted = tooling::format_module(compiled.ast_module, compiled.source);
+  check(formatted.find("module Calc") != std::string::npos, "formatted module contains module Calc");
+  auto recompiled = compiler::compile_source(formatted, "Calc_fmt.parsley", true);
+  check(recompiled.ok, "re-formatted Calc.parsley compiles and passes examples");
+
+  // 3. Graph DOT & SVG
+  const std::string dot = tooling::generate_dot(compiled.grammar);
+  const std::string svg = tooling::generate_railroad_svg(compiled.grammar);
+  check(dot.find("digraph") != std::string::npos, "generate_dot produces digraph");
+  check(svg.find("<svg") != std::string::npos, "generate_railroad_svg produces <svg");
+
+  // 4. LSP server JSON-RPC 2.0 tests
+  {
+    tooling::LspServer lsp;
+    auto init_resp = lsp.process_message(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})");
+    check(init_resp.size() == 1 && init_resp[0].find("hoverProvider") != std::string::npos,
+          "LSP initialize returns capabilities");
+
+    // Escape calc_src as JSON string minimally by using a simple grammar
+    auto open_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///T.parsley","languageId":"parsley","version":1,"text":"module T (expr) where\ntoken n = /[0-9]+/ :: Text\nexpr :: Text\nexpr = n\n"}}})");
+    check(open_resp.size() == 1 && open_resp[0].find("publishDiagnostics") != std::string::npos,
+          "LSP didOpen publishes diagnostics");
+
+    auto hover_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///T.parsley"},"position":{"line":3,"character":1}}})");
+    check(hover_resp.size() == 1 && hover_resp[0].find("FIRST") != std::string::npos,
+          "LSP hover returns FIRST/FOLLOW info");
+
+    auto def_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///T.parsley"},"position":{"line":3,"character":7}}})");
+    check(def_resp.size() == 1 && def_resp[0].find("file:///T.parsley") != std::string::npos,
+          "LSP definition returns target location");
+
+    auto refs_resp = lsp.process_message(
+        R"({"jsonrpc":"2.0","id":4,"method":"textDocument/references","params":{"textDocument":{"uri":"file:///T.parsley"},"position":{"line":1,"character":6}}})");
+    check(refs_resp.size() == 1 && refs_resp[0].find("file:///T.parsley") != std::string::npos,
+          "LSP references returns locations");
+
+    auto shut_resp = lsp.process_message(R"({"jsonrpc":"2.0","id":5,"method":"shutdown"})");
+    check(shut_resp.size() == 1, "LSP shutdown responds");
+    (void)lsp.process_message(R"({"jsonrpc":"2.0","method":"exit"})");
+    check(lsp.should_exit() && lsp.exit_code() == 0, "LSP clean exit returns 0");
+  }
+
+  // 5. Package manager helpers
+  {
+    check(tooling::list_packages().find("Parsley.Prelude") != std::string::npos,
+          "list_packages includes Parsley.Prelude");
+    auto shown = tooling::show_package("Json");
+    check(shown.has_value() && shown->find("JsonValue") != std::string::npos,
+          "show_package Json includes JsonValue");
+
+    const fs::path pkg_dir = fs::temp_directory_path() / "parsley_pkg_init_test";
+    std::error_code ec;
+    fs::remove_all(pkg_dir, ec);
+    auto init_res = tooling::init_package("DemoGrammar", pkg_dir.string());
+    check(init_res.ok, "init_package succeeds");
+    check(fs::exists(pkg_dir / "parsley.toml"), "init_package creates parsley.toml");
+    check(fs::exists(pkg_dir / "src" / "DemoGrammar.parsley"), "init_package creates src/DemoGrammar.parsley");
+    fs::remove_all(pkg_dir, ec);
+  }
+
+  // 6. CLI `parsley build`, `parsley fmt`, `parsley graph` smoke checks
+  {
+    const std::string cli = PARSLEY_CLI_EXE;
+    const fs::path cli_dir = fs::temp_directory_path() / "parsley_cli_build_test";
+    std::error_code ec;
+    fs::remove_all(cli_dir, ec);
+    fs::create_directories(cli_dir, ec);
+
+    const std::string build_cmd = "\"" + cli + "\" build \"" + calc_path + "\" -o \"" +
+                                  cli_dir.string() + "\" --emit-ir-json --emit-ir-sexpr";
+    check(run_shell(build_cmd) == 0, "parsley build Calc.parsley succeeds");
+    check(fs::exists(cli_dir / "parser.h"), "parsley build emitted parser.h");
+    check(fs::exists(cli_dir / "parser.c"), "parsley build emitted parser.c");
+    check(fs::exists(cli_dir / "CMakeLists.txt"), "parsley build emitted CMakeLists.txt");
+    check(fs::exists(cli_dir / "calc.ir.json") || fs::exists(cli_dir / "Calc.ir.json") ||
+          fs::exists(cli_dir / "ir.json"), "parsley build emitted IR JSON");
+#if defined(_WIN32)
+    check(fs::exists(cli_dir / "calc_parser.dll"), "parsley build compiled calc_parser.dll");
+#elif defined(__APPLE__)
+    check(fs::exists(cli_dir / "libcalc_parser.dylib"), "parsley build compiled libcalc_parser.dylib");
+#else
+    check(fs::exists(cli_dir / "libcalc_parser.so"), "parsley build compiled libcalc_parser.so");
+#endif
+
+    const fs::path dot_out = cli_dir / "calc.dot";
+    const fs::path svg_out = cli_dir / "calc.svg";
+    check(run_shell("\"" + cli + "\" graph \"" + calc_path + "\" --format dot -o \"" + dot_out.string() + "\"") == 0 &&
+          fs::exists(dot_out), "parsley graph --format dot succeeds");
+    check(run_shell("\"" + cli + "\" graph \"" + calc_path + "\" --format svg -o \"" + svg_out.string() + "\"") == 0 &&
+          fs::exists(svg_out), "parsley graph --format svg succeeds");
+    check(run_shell("\"" + cli + "\" fmt \"" + calc_path + "\"") != 2, "parsley fmt runs cleanly");
+
+    fs::remove_all(cli_dir, ec);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -679,11 +792,12 @@ int main() {
   test_analysis();
   test_eval();
   test_codegen_c17();
+  test_tooling_compiler_cli();
 
   if (g_failures > 0) {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v0.7.0 tests passed.\n";
+  std::cout << "All Phase v0.8.0 tests passed.\n";
   return 0;
 }

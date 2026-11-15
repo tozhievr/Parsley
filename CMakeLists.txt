@@ -30,10 +30,19 @@ target_sources(parsley_core
       src/analysis.cppm
       src/eval.cppm
       src/codegen.cppm
+      src/tooling.cppm
+      src/compiler.cppm
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(parsley_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(parsley src/main.cpp)
+target_compile_features(parsley PRIVATE cxx_std_26)
+target_link_libraries(parsley PRIVATE parsley_core)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(parsley PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(PARSLEY_BUILD_TESTS)
@@ -41,16 +50,27 @@ if(PARSLEY_BUILD_TESTS)
   add_executable(parsley_tests tests/test_main.cpp)
   target_compile_features(parsley_tests PRIVATE cxx_std_26)
   target_link_libraries(parsley_tests PRIVATE parsley_core)
+  add_dependencies(parsley_tests parsley)
   target_compile_definitions(parsley_tests PRIVATE
     PARSLEY_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     PARSLEY_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
     PARSLEY_C_COMPILER="${CMAKE_C_COMPILER}"
+    PARSLEY_CLI_EXE="$<TARGET_FILE:parsley>"
   )
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(parsley_tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
   add_test(NAME parsley_unit_tests COMMAND parsley_tests)
+  add_test(NAME parsley_cli_version COMMAND parsley --version)
+  add_test(NAME parsley_cli_check_calc COMMAND parsley check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Calc.parsley")
+  add_test(NAME parsley_cli_test_calc COMMAND parsley test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Calc.parsley" --fuzz 50)
+  add_test(NAME parsley_cli_explain_e0214 COMMAND parsley explain E0214)
+  add_test(NAME parsley_cli_pkg_list COMMAND parsley pkg list)
 endif()
+
+install(TARGETS parsley
+  RUNTIME DESTINATION bin
+)
 
 install(FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/VERSION"
