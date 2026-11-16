@@ -3,6 +3,9 @@ module;
 #include <cctype>
 #include <charconv>
 #include <cstdlib>
+#include <cmath>
+#include <cstdint>
+#include <stdexcept>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -48,18 +51,36 @@ inline std::vector<std::string> split_pragma_args(std::string_view body) {
 }
 
 inline double parse_double(std::string_view text) {
-  std::string tmp(text);
-  char* end_ptr = nullptr;
-  const double val = std::strtod(tmp.c_str(), &end_ptr);
+  double val = 0;
+  auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), val);
+  if (ec != std::errc{} || end != text.data() + text.size() || !std::isfinite(val))
+    throw std::invalid_argument("numeric literal is outside the finite Double range");
   return val;
+}
+
+inline double parse_integer(std::string_view text) {
+  std::int64_t value=0;auto [end,ec]=std::from_chars(text.data(),text.data()+text.size(),value);
+  if(ec!=std::errc{}||end!=text.data()+text.size())throw std::invalid_argument("integer literal is outside Int64 range");
+  return static_cast<double>(value);
 }
 
 inline int parse_int(std::string_view text) {
   int val = 0;
-  std::from_chars(text.data(), text.data() + text.size(), val);
+  auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), val);
+  if (ec != std::errc{} || end != text.data() + text.size()) throw std::invalid_argument("integer literal is outside the supported range");
   return val;
 }
 
+inline RuleExprPtr bounded_expr(RuleExprPtr expression) {
+  auto visit=[&](auto& self,const RuleExprPtr& node,size_t depth)->void {
+    if(!node)return;if(depth>128)throw std::invalid_argument("grammar expression nesting exceeds 128");
+    self(self,node->lhs,depth+1);self(self,node->rhs,depth+1);
+    for(const auto& item:node->items)self(self,item,depth+1);
+    for(const auto& statement:node->do_stmts)self(self,statement.expr,depth+1);
+    for(const auto& level:node->op_levels)for(const auto& op:level.specs){for(const auto& part:op.pattern)self(self,part,depth+1);self(self,op.action,depth+1);}
+  };
+  visit(visit,expression,0);return expression;
+}
 class Parser {
 public:
   Parser(std::vector<Token> tokens,
@@ -266,7 +287,8 @@ private:
     if (check(TokenKind::LowerIdent) || check(TokenKind::UpperIdent)) {
       return advance().value;
     }
-    error_here(err_msg);
+    const bool keyword=peek().kind>=TokenKind::KwModule&&peek().kind<=TokenKind::KwPop;
+    error_here(err_msg+(keyword?"; this word is reserved, choose a different identifier":""));
     return "<error>";
   }
 
@@ -783,7 +805,7 @@ private:
       node->text = "<?>";
       node->lhs = std::move(lhs);
       node->rhs = std::move(rhs);
-      lhs = std::move(node);
+      lhs = bounded_expr(std::move(node));
     }
     return lhs;
   }
@@ -799,7 +821,7 @@ private:
       node->text = op_tok.value;
       node->lhs = std::move(lhs);
       node->rhs = std::move(rhs);
-      lhs = std::move(node);
+      lhs = bounded_expr(std::move(node));
     }
     return lhs;
   }
@@ -823,7 +845,7 @@ private:
       }
       node->lhs = std::move(lhs);
       node->rhs = std::move(rhs);
-      lhs = std::move(node);
+      lhs = bounded_expr(std::move(node));
     }
     return lhs;
   }
@@ -838,7 +860,7 @@ private:
       node->text = "<$>";
       node->lhs = std::move(lhs);
       node->rhs = std::move(rhs);
-      lhs = std::move(node);
+      lhs = bounded_expr(std::move(node));
     }
     return lhs;
   }
@@ -869,7 +891,7 @@ private:
       auto app = make_expr(RuleExpr::Kind::App, Span::merge(func->span, arg->span));
       app->lhs = std::move(func);
       app->rhs = std::move(arg);
-      func = std::move(app);
+      func = bounded_expr(std::move(app));
     }
     return func;
   }
@@ -934,7 +956,7 @@ private:
       const Token tok = advance();
       auto node = make_expr(RuleExpr::Kind::IntLit, tok.span);
       node->text = tok.lexeme;
-      node->number_value = parse_double(tok.lexeme);
+      node->number_value = parse_integer(tok.lexeme);
       return node;
     }
     if (check(TokenKind::FloatLit)) {
@@ -1224,7 +1246,7 @@ private:
       AstPattern pat;
       pat.kind = AstPattern::Kind::Number;
       pat.name = tok.lexeme;
-      pat.number_value = parse_double(tok.lexeme);
+      pat.number_value = tok.kind == TokenKind::IntLit ? parse_integer(tok.lexeme) : parse_double(tok.lexeme);
       pat.span = tok.span;
       return pat;
     }
@@ -1282,8 +1304,16 @@ export namespace parsley::parser {
 inline ast::Module parse_tokens(const lexer::LexResult& lexed,
                                 std::string_view filename,
                                 DiagnosticBag& diags) {
+  int nesting=0;
+  for(const auto& token:lexed.tokens) {
+    using K=lexer::TokenKind;
+    if(token.kind==K::LParen||token.kind==K::LBracket||token.kind==K::LBrace||token.kind==K::VBraceOpen) {
+      if(++nesting>128){diags.error("E0600","grammar nesting exceeds 128",token.span);return {};}
+    } else if(token.kind==K::RParen||token.kind==K::RBracket||token.kind==K::RBrace||token.kind==K::VBraceClose) {if(nesting>0)--nesting;}
+  }
   detail::Parser p(lexed.tokens, lexed.comments, filename, diags);
-  return p.parse_module();
+  try {auto module=p.parse_module();for(const auto& definition:module.rule_defs)detail::bounded_expr(definition.body);return module;}
+  catch(const std::exception& error){diags.error("E0600",error.what());return {};}
 }
 
 inline ast::Module parse_module(std::string_view source,

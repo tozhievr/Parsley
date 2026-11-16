@@ -5,6 +5,8 @@ description: Step-by-step instructions, reference patterns, common pitfalls, and
 
 # Authoring Parsley Grammars & PSL Semantics
 
+Use `docs/STATUS.md` and `docs/REGEX.md` for current implementation limits. Only C17 is generated. `MODE` controls analysis constraints; execution uses ordered recursive descent/Pratt parsing. Parser results own checked allocations; only PSL data uses the caller's arena. Fuzz samples do not prove universal parser safety.
+
 This skill guides AI agents through designing, developing, testing, and compiling domain-specific or general-purpose programming languages using the **Parsley** DSL ecosystem.
 
 ---
@@ -13,7 +15,7 @@ This skill guides AI agents through designing, developing, testing, and compilin
 
 When creating a new grammar `<Name>.parsley`:
 
-### Step 1: Define Module Header & Strategy
+### Step 1: Define Module Header & Analysis Profile
 ```haskell
 {-# START program #-}
 {-# MODE PEG #-}
@@ -21,7 +23,7 @@ module MyLang (program) where
 
 import Parsley.Prelude (sepBy, sepEndBy, many, some, optional, between, eof)
 ```
-- Use `{-# MODE PEG #-}` for deterministic top-down parsing.
+- Use `{-# MODE PEG #-}` to select PEG-oriented analysis checks; it does not change the C17 runtime algorithm.
 - Always import `eof` from `Parsley.Prelude` to ensure the top-level rule consumes the entire input.
 
 ### Step 2: Define Lexical Rules

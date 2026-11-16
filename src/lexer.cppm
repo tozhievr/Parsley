@@ -256,8 +256,10 @@ public:
 
   LexResult scan_raw() {
     LexResult result;
+    if (src_.starts_with("\xef\xbb\xbf")) pos_ = 3;
 
     while (!at_end()) {
+      if(result.tokens.size()>200000){diags_.error("E0600","grammar token budget exceeds 200000");break;}
       skip_whitespace();
       if (at_end()) {
         break;
@@ -401,6 +403,7 @@ public:
           result.tokens.push_back(make_token(TokenKind::Dot, start_off, start_line, start_col));
           break;
         default: {
+          while (!at_end() && (static_cast<unsigned char>(peek()) & 0xc0) == 0x80) advance_char();
           Token tok = make_token(TokenKind::Invalid, start_off, start_line, start_col);
           diags_.error("E0001",
                        std::string("unexpected character `") + tok.lexeme + "`",
@@ -464,9 +467,10 @@ private:
     }
   }
 
-  void skip_whitespace() noexcept {
+  void skip_whitespace() {
     while (!at_end()) {
       const char c = peek();
+      if (c == '\t') diags_.error("E0001", "tabs are not allowed in layout; use spaces", make_span(pos_, line_, col_));
       if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f') {
         advance_char();
       } else {
@@ -598,7 +602,19 @@ private:
           case '"': decoded.push_back('"'); break;
           case '\'': decoded.push_back('\''); break;
           case '0': decoded.push_back('\0'); break;
-          default: decoded.push_back(esc); break;
+          case 'f': decoded.push_back('\f'); break;
+          case 'v': decoded.push_back('\v'); break;
+          case 'b': decoded.push_back('\b'); break;
+          case 'x': {
+            unsigned value = 0;
+            for (int i = 0; i < 2; ++i) {
+              char h = peek(); int d = h >= '0' && h <= '9' ? h-'0' : h >= 'a' && h <= 'f' ? h-'a'+10 : h >= 'A' && h <= 'F' ? h-'A'+10 : -1;
+              if (d < 0) { diags_.error("E0001", "expected two hexadecimal digits after \\x", make_span(start_off,start_line,start_col)); break; }
+              value = value * 16 + static_cast<unsigned>(d); advance_char();
+            }
+            decoded.push_back(static_cast<char>(value)); break;
+          }
+          default: diags_.error("E0001", "unknown string escape", make_span(start_off,start_line,start_col)); break;
         }
       } else {
         decoded.push_back(c);
@@ -625,6 +641,7 @@ private:
     const std::size_t body_start = pos_;
     std::size_t body_end = pos_;
     bool in_class = false;
+    bool class_first = false;
     bool terminated = false;
 
     while (!at_end()) {
@@ -634,6 +651,7 @@ private:
         break;
       }
       if (c == '\\') {
+        if (in_class) class_first = false;
         advance_char();
         if (!at_end() && peek() != '\n') {
           advance_char();
@@ -642,9 +660,19 @@ private:
       }
       if (c == '[' && !in_class) {
         in_class = true;
+        class_first = true;
         advance_char();
         continue;
       }
+      if (in_class && starts_with("[:")) {
+        advance_n(2);
+        while (!at_end() && peek() != '\n' && !starts_with(":]")) advance_char();
+        if (starts_with(":]")) advance_n(2);
+        class_first = false;
+        continue;
+      }
+      if (in_class && class_first && c == '^') { advance_char(); continue; }
+      if (in_class && class_first) { class_first = false; advance_char(); continue; }
       if (c == ']' && in_class) {
         in_class = false;
         advance_char();
@@ -711,7 +739,9 @@ private:
       while (!at_end() && is_digit(static_cast<unsigned char>(peek()))) {
         advance_char();
       }
-      if ((peek() == 'e' || peek() == 'E')) {
+    }
+    if ((peek() == 'e' || peek() == 'E')) {
+      is_float = true;
         std::size_t exp_look = 1;
         if (peek(exp_look) == '+' || peek(exp_look) == '-') {
           ++exp_look;
@@ -723,7 +753,6 @@ private:
           }
         }
       }
-    }
     return make_token(is_float ? TokenKind::FloatLit : TokenKind::IntLit,
                       start_off,
                       start_line,

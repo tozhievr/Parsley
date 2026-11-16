@@ -12,7 +12,7 @@ on:
         default: ''
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify-version:
@@ -23,13 +23,15 @@ jobs:
       release_tag: ${{ steps.check.outputs.tag }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Compare Tag with VERSION File
         id: check
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         shell: bash
         run: |
-          RAW_TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          RAW_TAG="$RELEASE_TAG"
           TAG="${RAW_TAG#v}"
           
           if [ ! -f VERSION ]; then
@@ -59,120 +61,49 @@ jobs:
       matrix:
         include:
           - name: Linux x86_64
-            os: ubuntu-latest
+            os: ubuntu-24.04
             triplet: linux-x86_64
             cxx_compiler: clang++-23
             c_compiler: clang-23
           - name: Windows x86_64
-            os: windows-latest
+            os: windows-2025
             triplet: windows-x86_64
             cxx_compiler: clang++
             c_compiler: clang
           - name: macOS ARM64
-            os: macos-latest
+            os: macos-14
             triplet: macos-arm64
             cxx_compiler: clang++
             c_compiler: clang
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python for build tools
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
 
-      - name: Install Ninja
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install ninja
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
 
-      - name: Install CMake 4.5.0-rc1 (Linux)
-        if: runner.os == 'Linux'
+      - name: Build and test extension
         shell: bash
         run: |
-          curl -sSL -o cmake.tar.gz https://github.com/Kitware/CMake/releases/download/v4.5.0-rc1/cmake-4.5.0-rc1-linux-x86_64.tar.gz || true
-          if [ -s cmake.tar.gz ] && tar -tf cmake.tar.gz >/dev/null 2>&1; then
-            tar -xzf cmake.tar.gz
-            echo "$PWD/cmake-4.5.0-rc1-linux-x86_64/bin" >> $GITHUB_PATH
-          else
-            python -m pip install --pre "cmake>=4.5.0rc1" || true
-          fi
+          npm ci --prefix editors/vscode
+          npm run check --prefix editors/vscode
+          npm run compile --prefix editors/vscode
+          npm test --prefix editors/vscode
+          git diff --exit-code -- editors/vscode/out/extension.js
+          npm run package --prefix editors/vscode
 
-      - name: Install CMake 4.5.0-rc1 (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          curl -sSL -o cmake.tar.gz https://github.com/Kitware/CMake/releases/download/v4.5.0-rc1/cmake-4.5.0-rc1-macos-universal.tar.gz || true
-          if [ -s cmake.tar.gz ] && tar -tf cmake.tar.gz >/dev/null 2>&1; then
-            tar -xzf cmake.tar.gz
-            if [ -d "$PWD/cmake-4.5.0-rc1-macos-universal/CMake.app/Contents/bin" ]; then
-              echo "$PWD/cmake-4.5.0-rc1-macos-universal/CMake.app/Contents/bin" >> $GITHUB_PATH
-            elif [ -d "$PWD/cmake-4.5.0-rc1-macos-universal/bin" ]; then
-              echo "$PWD/cmake-4.5.0-rc1-macos-universal/bin" >> $GITHUB_PATH
-            fi
-          else
-            python -m pip install --pre "cmake>=4.5.0rc1" || true
-          fi
-
-      - name: Install CMake 4.5.0-rc1 (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          try {
-            $dest = "$env:RUNNER_TEMP/cmake45"
-            New-Item -ItemType Directory -Force -Path $dest | Out-Null
-            Invoke-WebRequest -Uri "https://github.com/Kitware/CMake/releases/download/v4.5.0-rc1/cmake-4.5.0-rc1-windows-x86_64.zip" -OutFile "$dest/cmake.zip"
-            Expand-Archive -Path "$dest/cmake.zip" -DestinationPath $dest
-            "$dest/cmake-4.5.0-rc1-windows-x86_64/bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-          } catch {
-            python -m pip install --pre "cmake>=4.5.0rc1"
-          }
-
-      - name: Install LLVM / Clang 23 (Ubuntu)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget lsb-release software-properties-common gnupg
-          wget https://apt.llvm.org/llvm.sh
-          chmod +x llvm.sh
-          sudo ./llvm.sh 23 all || sudo apt-get install -y clang ninja-build || true
-          if command -v clang++-23 >/dev/null 2>&1; then
-            echo "CC=clang-23" >> $GITHUB_ENV
-            echo "CXX=clang++-23" >> $GITHUB_ENV
-          else
-            echo "CC=clang" >> $GITHUB_ENV
-            echo "CXX=clang++" >> $GITHUB_ENV
-          fi
-
-      - name: Install Clang / LLVM (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install llvm ninja || true
-          echo "PATH=/opt/homebrew/opt/llvm/bin:$PATH" >> $GITHUB_ENV
-          echo "CC=$(brew --prefix llvm)/bin/clang" >> $GITHUB_ENV
-          echo "CXX=$(brew --prefix llvm)/bin/clang++" >> $GITHUB_ENV
-
-      - name: Set up Clang environment (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          if (Test-Path "D:/clang-23.1.3/bin/clang++.exe") {
-            echo "CC=D:/clang-23.1.3/bin/clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "CXX=D:/clang-23.1.3/bin/clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          } else {
-            echo "CC=clang" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "CXX=clang++" | Out-File -FilePath $env:GITHUB_ENV -Append
-          }
-
-      - name: Display tools and compiler versions
-        shell: bash
-        run: |
-          cmake --version
-          ninja --version
-          ${CXX:-clang++} --version || true
-
+      - name: Install verified toolchain
+        uses: ./.github/actions/toolchain
       - name: Configure CMake (CMake 4.5.0-rc1 + Ninja)
         shell: bash
         run: |
@@ -198,44 +129,32 @@ jobs:
           mkdir -p dist
           cpack --config build/CPackConfig.cmake -B dist -G "ZIP;TGZ"
 
-      - name: Generate Checksums (Linux / macOS)
-        if: runner.os != 'Windows'
+      - name: Include installable extension
+        if: runner.os == 'Linux'
         shell: bash
-        run: |
-          cd dist
-          for f in *; do
-            if [ -f "$f" ]; then
-              sha256sum "$f" > "$f.sha256"
-            fi
-          done
+        run: cp editors/vscode/parsley-lang-[0-9]*.vsix dist/
 
-      - name: Generate Checksums (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cd dist
-          Get-ChildItem -File | ForEach-Object {
-            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$hash  $($_.Name)" | Out-File -FilePath "$($_.FullName).sha256" -Encoding ascii
-          }
-
+      - name: Generate checksums
+        run: python scripts/package_checksums.py dist
       - name: Upload Platform Package Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: parsley-${{ matrix.triplet }}-${{ needs.verify-version.outputs.release_tag }}
           path: dist/*
           if-no-files-found: error
 
   publish-release:
+    permissions:
+      contents: write
     name: Publish GitHub Release
     needs: [verify-version, build-and-package]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Download all package artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets/
 
@@ -243,13 +162,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p release-final
-          find release-assets/ -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.tgz" \) -exec cp {} release-final/ \;
+          find release-assets/ -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.tgz" -o -name "*.vsix" \) -exec cp {} release-final/ \;
           cd release-final
-          sha256sum * > SHA256SUMS.txt
+          python ../scripts/package_checksums.py .
           ls -la
 
       - name: Create or Update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.verify-version.outputs.release_tag }}
           name: "Parsley ${{ needs.verify-version.outputs.release_tag }}"

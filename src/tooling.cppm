@@ -2,11 +2,15 @@ module;
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
+#include <locale>
 #include <map>
 #include <optional>
 #include <regex>
@@ -37,6 +41,8 @@ import parsley.resolve;
 import parsley.typecheck;
 import parsley.desugar;
 import parsley.eval;
+import parsley.regex;
+import parsley.c17_text;
 import parsley.psl;
 
 namespace parsley::tooling::detail {
@@ -454,7 +460,8 @@ inline std::string json_stringify(const Json& j) {
         return std::to_string(j.int_val);
       } else {
         std::ostringstream os;
-        os << j.num_val;
+        os.imbue(std::locale::classic());
+        os << std::setprecision(17) << j.num_val;
         return os.str();
       }
     case Json::Kind::String:
@@ -484,204 +491,71 @@ inline std::string json_stringify(const Json& j) {
 }
 
 class JsonParser {
-public:
-  explicit JsonParser(std::string_view src) : src_(src) {}
-
-  std::optional<Json> parse() {
-    skip_ws();
-    auto v = parse_val();
-    if (!v) return std::nullopt;
-    skip_ws();
-    return v;
+  std::string_view src_; size_t pos_ = 0, depth_ = 0;
+  void skip_ws() { while (pos_ < src_.size() && (src_[pos_]==' ' || src_[pos_]=='\t' || src_[pos_]=='\r' || src_[pos_]=='\n')) ++pos_; }
+  std::optional<unsigned> hex4() {
+    unsigned cp=0; for (int i=0;i<4;++i) { if (pos_==src_.size()) return {}; char c=src_[pos_++]; int d=c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:c>='A'&&c<='F'?c-'A'+10:-1; if (d<0) return {}; cp=cp*16+static_cast<unsigned>(d); } return cp;
   }
-
-private:
-  std::string_view src_;
-  std::size_t pos_ = 0;
-
-  void skip_ws() {
-    while (pos_ < src_.size() && std::isspace(static_cast<unsigned char>(src_[pos_]))) {
-      ++pos_;
-    }
+  static void append_utf8(std::string& out, unsigned cp) {
+    if(cp<0x80) out+=char(cp);
+    else if(cp<0x800) {out+=char(0xc0|(cp>>6));out+=char(0x80|(cp&63));}
+    else if(cp<0x10000) {out+=char(0xe0|(cp>>12));out+=char(0x80|((cp>>6)&63));out+=char(0x80|(cp&63));}
+    else {out+=char(0xf0|(cp>>18));out+=char(0x80|((cp>>12)&63));out+=char(0x80|((cp>>6)&63));out+=char(0x80|(cp&63));}
   }
-
-  std::optional<Json> parse_val() {
-    skip_ws();
-    if (pos_ >= src_.size()) return std::nullopt;
-    char c = src_[pos_];
-    if (c == '{') return parse_obj();
-    if (c == '[') return parse_arr();
-    if (c == '"') {
-      auto s = parse_str();
-      if (!s) return std::nullopt;
-      return Json::make_string(*s);
-    }
-    if (c == 't' && src_.substr(pos_, 4) == "true") {
-      pos_ += 4;
-      return Json::make_bool(true);
-    }
-    if (c == 'f' && src_.substr(pos_, 5) == "false") {
-      pos_ += 5;
-      return Json::make_bool(false);
-    }
-    if (c == 'n' && src_.substr(pos_, 4) == "null") {
-      pos_ += 4;
-      return Json::make_null();
-    }
-    if (c == '-' || std::isdigit(static_cast<unsigned char>(c))) {
-      return parse_num();
-    }
-    return std::nullopt;
-  }
-
-  std::optional<std::string> parse_str() {
-    if (pos_ >= src_.size() || src_[pos_] != '"') return std::nullopt;
-    ++pos_;
+  std::optional<std::string> str() {
+    if (pos_==src_.size() || src_[pos_++]!='"') return {};
     std::string out;
-    while (pos_ < src_.size()) {
-      char c = src_[pos_++];
-      if (c == '"') return out;
-      if (c == '\\' && pos_ < src_.size()) {
-        char e = src_[pos_++];
-        switch (e) {
-          case '"':
-            out.push_back('"');
-            break;
-          case '\\':
-            out.push_back('\\');
-            break;
-          case '/':
-            out.push_back('/');
-            break;
-          case 'b':
-            out.push_back('\b');
-            break;
-          case 'f':
-            out.push_back('\f');
-            break;
-          case 'n':
-            out.push_back('\n');
-            break;
-          case 'r':
-            out.push_back('\r');
-            break;
-          case 't':
-            out.push_back('\t');
-            break;
-          case 'u':
-            if (pos_ + 4 <= src_.size()) {
-              unsigned int cp = 0;
-              for (int k = 0; k < 4; ++k) {
-                char hc = src_[pos_++];
-                cp <<= 4;
-                if (hc >= '0' && hc <= '9') cp |= static_cast<unsigned int>(hc - '0');
-                else if (hc >= 'a' && hc <= 'f') cp |= static_cast<unsigned int>(hc - 'a' + 10);
-                else if (hc >= 'A' && hc <= 'F') cp |= static_cast<unsigned int>(hc - 'A' + 10);
-              }
-              if (cp < 0x80) {
-                out.push_back(static_cast<char>(cp));
-              } else {
-                out.push_back('?');
-              }
-            }
-            break;
-          default:
-            out.push_back(e);
-            break;
-        }
-      } else {
-        out.push_back(c);
+    while (pos_<src_.size()) {
+      unsigned char c=static_cast<unsigned char>(src_[pos_++]); if(c=='"') return out; if(c<32) return {};
+      if(c!='\\') {out+=char(c);continue;} if(pos_==src_.size()) return {};
+      switch(src_[pos_++]) {
+        case '"':out+='"';break; case '\\':out+='\\';break; case '/':out+='/';break;
+        case 'b':out+='\b';break; case 'f':out+='\f';break; case 'n':out+='\n';break;case 'r':out+='\r';break;case 't':out+='\t';break;
+        case 'u': {auto cp=hex4();if(!cp) return {};if(*cp>=0xd800&&*cp<=0xdbff) {if(src_.substr(pos_,2)!="\\u")return {};pos_+=2;auto lo=hex4();if(!lo||*lo<0xdc00||*lo>0xdfff)return {};*cp=0x10000+((*cp-0xd800)<<10)+*lo-0xdc00;}else if(*cp>=0xdc00&&*cp<=0xdfff)return {};append_utf8(out,*cp);break;}
+        default:return {};
       }
-    }
-    return std::nullopt;
+    } return {};
   }
-
-  std::optional<Json> parse_num() {
-    std::size_t start = pos_;
-    if (src_[pos_] == '-') ++pos_;
-    while (pos_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[pos_]))) ++pos_;
-    bool is_float = false;
-    if (pos_ < src_.size() && src_[pos_] == '.') {
-      is_float = true;
-      ++pos_;
-      while (pos_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[pos_]))) ++pos_;
+  std::optional<Json> val() {
+    skip_ws(); if(pos_==src_.size() || ++depth_>128)return {};
+    struct Guard {size_t& d;~Guard(){--d;}} guard{depth_}; char c=src_[pos_];
+    if(c=='"') {auto v=str();return v?std::optional<Json>(Json::make_string(*v)):std::nullopt;}
+    if(c=='[' || c=='{') {
+      bool object=c=='{';++pos_;Json j=object?Json::make_object():Json::make_array();skip_ws();char close=object?'}':']';
+      if(pos_<src_.size()&&src_[pos_]==close){++pos_;return j;}
+      while(pos_<src_.size()) {
+        std::optional<std::string> key;
+        if(object){skip_ws();key=str();if(!key)return {};skip_ws();if(pos_==src_.size()||src_[pos_++]!=':')return {};}
+        auto v=val();if(!v)return {};if(object)j.obj_val.emplace_back(*key,std::move(*v));else j.arr_val.push_back(std::move(*v));skip_ws();
+        if(pos_==src_.size())return {};char sep=src_[pos_++];if(sep==close)return j;if(sep!=',')return {};
+      }return {};
     }
-    if (pos_ < src_.size() && (src_[pos_] == 'e' || src_[pos_] == 'E')) {
-      is_float = true;
-      ++pos_;
-      if (pos_ < src_.size() && (src_[pos_] == '+' || src_[pos_] == '-')) ++pos_;
-      while (pos_ < src_.size() && std::isdigit(static_cast<unsigned char>(src_[pos_]))) ++pos_;
-    }
-    std::string tmp(src_.substr(start, pos_ - start));
-    if (!is_float) {
-      return Json::make_int(std::stoll(tmp));
-    }
-    Json j;
-    j.kind = Json::Kind::Number;
-    j.is_int = false;
-    j.num_val = std::stod(tmp);
-    return j;
+    if(src_.substr(pos_,4)=="true"){pos_+=4;return Json::make_bool(true);}if(src_.substr(pos_,5)=="false"){pos_+=5;return Json::make_bool(false);}if(src_.substr(pos_,4)=="null"){pos_+=4;return Json::make_null();}
+    size_t start=pos_;if(c=='-')++pos_;
+    if(pos_==src_.size()||src_[pos_]<'0'||src_[pos_]>'9')return {};
+    if(src_[pos_]=='0')++pos_;else while(pos_<src_.size()&&src_[pos_]>='0'&&src_[pos_]<='9')++pos_;
+    bool real=false;
+    if(pos_<src_.size()&&src_[pos_]=='.'){real=true;++pos_;size_t digit=pos_;while(pos_<src_.size()&&src_[pos_]>='0'&&src_[pos_]<='9')++pos_;if(pos_==digit)return {};}
+    if(pos_<src_.size()&&(src_[pos_]=='e'||src_[pos_]=='E')){real=true;++pos_;if(pos_<src_.size()&&(src_[pos_]=='+'||src_[pos_]=='-'))++pos_;size_t digit=pos_;while(pos_<src_.size()&&src_[pos_]>='0'&&src_[pos_]<='9')++pos_;if(pos_==digit)return {};}
+    auto number=src_.substr(start,pos_-start);
+    if(!real){long long n;auto [p,e]=std::from_chars(number.data(),number.data()+number.size(),n);if(e!=std::errc{}||p!=number.data()+number.size())return {};return Json::make_int(n);}
+    double n;auto [p,e]=std::from_chars(number.data(),number.data()+number.size(),n);if(e!=std::errc{}||p!=number.data()+number.size()||!std::isfinite(n))return {};Json j;j.kind=Json::Kind::Number;j.is_int=false;j.num_val=n;return j;
   }
-
-  std::optional<Json> parse_arr() {
-    ++pos_;
-    Json arr = Json::make_array();
-    skip_ws();
-    if (pos_ < src_.size() && src_[pos_] == ']') {
-      ++pos_;
-      return arr;
-    }
-    while (pos_ < src_.size()) {
-      auto v = parse_val();
-      if (!v) return std::nullopt;
-      arr.arr_val.push_back(std::move(*v));
-      skip_ws();
-      if (pos_ < src_.size() && src_[pos_] == ',') {
-        ++pos_;
-        continue;
-      }
-      if (pos_ < src_.size() && src_[pos_] == ']') {
-        ++pos_;
-        return arr;
-      }
-      return std::nullopt;
-    }
-    return std::nullopt;
-  }
-
-  std::optional<Json> parse_obj() {
-    ++pos_;
-    Json obj = Json::make_object();
-    skip_ws();
-    if (pos_ < src_.size() && src_[pos_] == '}') {
-      ++pos_;
-      return obj;
-    }
-    while (pos_ < src_.size()) {
-      skip_ws();
-      auto k = parse_str();
-      if (!k) return std::nullopt;
-      skip_ws();
-      if (pos_ >= src_.size() || src_[pos_] != ':') return std::nullopt;
-      ++pos_;
-      auto v = parse_val();
-      if (!v) return std::nullopt;
-      obj.obj_val.emplace_back(std::move(*k), std::move(*v));
-      skip_ws();
-      if (pos_ < src_.size() && src_[pos_] == ',') {
-        ++pos_;
-        continue;
-      }
-      if (pos_ < src_.size() && src_[pos_] == '}') {
-        ++pos_;
-        return obj;
-      }
-      return std::nullopt;
-    }
-    return std::nullopt;
-  }
+public:
+  explicit JsonParser(std::string_view source):src_(source){}
+  std::optional<Json> parse(){auto result=val();skip_ws();return pos_==src_.size()?result:std::nullopt;}
 };
 
+inline int utf16_length(std::string_view s) {
+  int n=0;for(unsigned char c:s)if((c&0xc0)!=0x80)n+=c>=0xf0?2:1;return n;
+}
+inline int lsp_column(std::string_view source,int line,int codepoints) {
+  size_t start=0;for(int i=0;i<line;++i){auto p=source.find('\n',start);if(p==std::string_view::npos)return 0;start=p+1;}
+  size_t end=start;int count=0;
+  while(end<source.size()&&source[end]!='\n'&&count<codepoints){unsigned char c=static_cast<unsigned char>(source[end++]);if((c&0xc0)!=0x80)++count;}
+  while(end<source.size()&&(static_cast<unsigned char>(source[end])&0xc0)==0x80)++end;
+  return utf16_length(source.substr(start,end-start));
+}
 inline std::string ident_at_position(std::string_view source, int line0, int char0) {
   int cur_line = 0;
   std::size_t line_start = 0;
@@ -694,7 +568,12 @@ inline std::string ident_at_position(std::string_view source, int line0, int cha
   if (cur_line != line0) return "";
   std::size_t line_end = source.find('\n', line_start);
   if (line_end == std::string_view::npos) line_end = source.size();
-  std::size_t pos = line_start + static_cast<std::size_t>(std::max(0, char0));
+  std::size_t pos = line_start; int units = 0;
+  while (pos < line_end && units < char0) {
+    unsigned char c = static_cast<unsigned char>(source[pos++]);
+    if ((c & 0xc0) != 0x80) units += c >= 0xf0 ? 2 : 1;
+  }
+  while (pos < line_end && (static_cast<unsigned char>(source[pos]) & 0xc0) == 0x80) ++pos;
   if (pos >= line_end && pos > line_start) pos = line_end - 1;
   if (pos >= line_end) return "";
 
@@ -1266,6 +1145,7 @@ public:
     detail::JsonParser parser(json_rpc);
     auto msg_opt = parser.parse();
     if (!msg_opt || msg_opt->kind != detail::Json::Kind::Object) {
+      out.push_back(R"({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON"}})");
       return out;
     }
     const detail::Json& msg = *msg_opt;
@@ -1368,6 +1248,10 @@ public:
         if (!uri.empty()) {
           update_document(uri, text);
           out.push_back(build_publish_diagnostics(uri));
+          if (uri.ends_with(".parsley")) {
+            const std::string sibling = uri.substr(0,uri.size()-8)+".psem";
+            if (docs_.contains(sibling)) out.push_back(build_publish_diagnostics(sibling));
+          }
         }
       }
       return out;
@@ -1384,7 +1268,23 @@ public:
           if (!uri.empty()) {
             update_document(uri, txt->as_string());
             out.push_back(build_publish_diagnostics(uri));
+          if (uri.ends_with(".parsley")) {
+            const std::string sibling = uri.substr(0,uri.size()-8)+".psem";
+            if (docs_.contains(sibling)) out.push_back(build_publish_diagnostics(sibling));
           }
+          }
+        }
+      }
+      return out;
+    }
+
+    if (method == "textDocument/didClose" && params) {
+      std::string uri = extract_doc_uri(*params);
+      docs_.erase(uri); out.push_back(build_publish_diagnostics(uri));
+      if (uri.ends_with(".parsley")) {
+        std::string sibling = uri.substr(0,uri.size()-8)+".psem";
+        if (auto it=docs_.find(sibling);it!=docs_.end()) {
+          std::string source=it->second.source; update_document(sibling,std::move(source)); out.push_back(build_publish_diagnostics(sibling));
         }
       }
       return out;
@@ -1433,6 +1333,25 @@ public:
     if (method == "textDocument/codeLens" && params) {
       out.push_back(make_response(handle_code_lens(*params)));
       return out;
+    }
+
+    if (method == "parsley/runExample" && params) {
+      const std::string uri = extract_doc_uri(*params);
+      const std::string name = params->get("name") ? params->get("name")->as_string() : "";
+      bool passed = false; std::string message = "Example not found";
+      if (auto it=docs_.find(uri); it!=docs_.end()) {
+        DiagnosticBag diagnostics;
+        if (it->second.is_psl) {
+          auto summary = psl::run_psl_examples(it->second.psl_mod,it->second.grammar,diagnostics);
+          bool found=false; passed=true; message="PSL fires/silent assertions";
+          for (const auto& item:summary.cases) if(item.lint_name==name) {found=true;passed=passed&&item.passed;if(!item.passed)message=item.message;}
+          passed=passed&&found;
+        } else {
+          auto summary=eval::run_examples(it->second.grammar,diagnostics);
+          for(const auto& item:summary.cases)if(item.name==name){passed=item.passed;message=item.message;break;}
+        }
+      }
+      out.push_back(make_response(detail::Json::make_object({{"passed",detail::Json::make_bool(passed)},{"message",detail::Json::make_string(message)}})));return out;
     }
 
     if (method == "parsley/evalInput" && params) {
@@ -1493,6 +1412,30 @@ private:
     return src.substr(i).starts_with("semantics ");
   }
 
+  detail::Json span_range(const Span& span) const {
+    Span adjusted = span;
+    if (auto it = docs_.find(span.file); it != docs_.end()) {
+      adjusted.start_col = detail::lsp_column(it->second.source, span.start_line-1, span.start_col-1)+1;
+      adjusted.end_col = detail::lsp_column(it->second.source, span.end_line-1, span.end_col-1)+1;
+    }
+    return detail::span_to_lsp_range(adjusted);
+  }
+
+  static std::optional<std::string> disk_document(std::string_view uri) {
+    if (!uri.starts_with("file://")) return std::nullopt;
+    std::string path(uri.substr(7)), decoded;
+    for (size_t i=0;i<path.size();++i) {
+      if (path[i]=='%' && i+2<path.size()) { unsigned n=0; auto [end,ec]=std::from_chars(path.data()+i+1,path.data()+i+3,n,16); if(ec!=std::errc{}||end!=path.data()+i+3)return std::nullopt; decoded+=static_cast<char>(n); i+=2; }
+      else decoded+=path[i];
+    }
+#ifdef _WIN32
+    if (decoded.size()>2 && decoded[0]=='/' && decoded[2]==':') decoded.erase(0,1);
+#endif
+    std::ifstream in(std::filesystem::path(std::u8string(decoded.begin(),decoded.end())), std::ios::binary);
+    if (!in) return std::nullopt;
+    std::ostringstream text; text<<in.rdbuf(); return text.str();
+  }
+
   void update_document(const std::string& uri, std::string text) {
     DocState st;
     st.uri = uri;
@@ -1503,6 +1446,7 @@ private:
       const ir::Grammar* g_ptr = nullptr;
       if (uri.ends_with(".psem")) {
         std::string g_uri = uri.substr(0, uri.size() - 5) + ".parsley";
+        if (!docs_.contains(g_uri)) if (auto disk = disk_document(g_uri)) update_document(g_uri, *disk);
         if (auto git = docs_.find(g_uri); git != docs_.end() && !git->second.is_psl) {
           st.grammar = git->second.grammar;
           g_ptr = &st.grammar;
@@ -1516,9 +1460,17 @@ private:
       st.resolved = resolve::resolve_module(st.ast_mod, st.diags);
       st.typed = typecheck::check_module(st.ast_mod, st.resolved, st.diags);
       st.grammar = desugar::desugar_module(st.ast_mod, st.resolved, st.typed, st.diags);
-      st.analysis = analysis::analyze_grammar(st.grammar, st.diags);
+      auto validate=[&](const auto& tokens){for(const auto& token:tokens)if(token.is_regex){try{(void)regex::RegexParser(token.pattern).parse();}catch(const std::exception& error){st.diags.error("E0600",error.what(),token.span);}}};
+      validate(st.grammar.gTokens);for(const auto& mode:st.grammar.gModes)validate(mode.tokens);
+      if(!st.diags.has_errors())st.analysis = analysis::analyze_grammar(st.grammar, st.diags);
     }
     docs_[uri] = std::move(st);
+    if (uri.ends_with(".parsley")) {
+      std::string sibling = uri.substr(0,uri.size()-8)+".psem";
+      if (auto it = docs_.find(sibling); it != docs_.end()) {
+        std::string source = it->second.source; update_document(sibling, std::move(source));
+      }
+    }
   }
 
   std::string build_publish_diagnostics(const std::string& uri) const {
@@ -1530,7 +1482,7 @@ private:
         if (d.severity == Severity::Warning) sev = 2;
         else if (d.severity == Severity::Note) sev = 3;
         detail::Json dj = detail::Json::make_object({
-            {"range", detail::span_to_lsp_range(d.span)},
+            {"range", span_range(d.span)},
             {"severity", detail::Json::make_int(sev)},
             {"code", detail::Json::make_string(d.code)},
             {"source", detail::Json::make_string("parsley")},
@@ -1627,7 +1579,7 @@ private:
     if (auto ra_it = doc.analysis.rules.find(sym); ra_it != doc.analysis.rules.end()) {
       found = true;
       const auto& ra = ra_it->second;
-      md << "\n- **Strategy**: `" << analysis::strategy_name(doc.analysis.selected_strategy) << "`";
+      md << "\n- **Analysis mode**: `" << analysis::strategy_name(doc.analysis.selected_strategy) << "`";
       md << "\n- **Nullable**: `" << (ra.nullable ? "true" : "false") << "`";
       md << "\n- **FIRST**: `{";
       bool first_item = true;
@@ -1676,7 +1628,7 @@ private:
     if (!target) return detail::Json::make_null();
     return detail::Json::make_object({
         {"uri", detail::Json::make_string(uri)},
-        {"range", detail::span_to_lsp_range(*target)},
+        {"range", span_range(*target)},
     });
   }
 
@@ -1692,14 +1644,14 @@ private:
     if (auto vs = doc.resolved.lookup_value(sym); vs && vs->span.is_valid()) {
       locs.arr_val.push_back(detail::Json::make_object({
           {"uri", detail::Json::make_string(uri)},
-          {"range", detail::span_to_lsp_range(vs->span)},
+          {"range", span_range(vs->span)},
       }));
     }
     for (const auto& ref : doc.resolved.references) {
       if ((ref.target_name == sym || ref.name == sym) && ref.span.is_valid()) {
         locs.arr_val.push_back(detail::Json::make_object({
             {"uri", detail::Json::make_string(uri)},
-            {"range", detail::span_to_lsp_range(ref.span)},
+            {"range", span_range(ref.span)},
         }));
       }
     }
@@ -1724,7 +1676,7 @@ private:
         ++line;
         col = 0;
       } else {
-        ++col;
+        if ((static_cast<unsigned char>(c)&0xc0)!=0x80) col += static_cast<unsigned char>(c)>=0xf0?2:1;
       }
     }
     return {line, col};
@@ -1737,8 +1689,8 @@ private:
     });
   }
 
-  static detail::Json valid_span_or_default(const Span& sp) {
-    if (sp.is_valid()) return detail::span_to_lsp_range(sp);
+  detail::Json valid_span_or_default(const Span& sp) const {
+    if (sp.is_valid()) return span_range(sp);
     return make_lsp_range(0, 0, 0, 1);
   }
 
@@ -1750,7 +1702,8 @@ private:
         return detail::Json::make_bool(v.bool_value);
       case eval::EvalValue::Kind::Number:
         if (v.is_int) {
-          return detail::Json::make_int(static_cast<std::int64_t>(v.number_value));
+          if(v.integer_value>INT64_C(9007199254740991)||v.integer_value<-INT64_C(9007199254740991))return detail::Json::make_string(std::to_string(v.integer_value));
+          return detail::Json::make_int(v.integer_value);
         }
         return detail::Json::make_double(v.number_value);
       case eval::EvalValue::Kind::String:
@@ -1782,6 +1735,9 @@ private:
   static std::vector<detail::Json> tokenize_input_with_grammar(const ir::Grammar& g,
                                                                  std::string_view input) {
     std::vector<detail::Json> out;
+    std::unordered_map<const ir::TokenDef*, regex::CompiledRegex> regexes;
+    auto add = [&](const auto& tokens) { for (const auto& td : tokens) if (td.is_regex) regexes.emplace(&td, regex::CompiledRegex::compile(td.pattern)); };
+    add(g.gTokens); for (const auto& mode : g.gModes) add(mode.tokens);
     std::size_t pos = 0;
     int line = 1;
     int col = 1;
@@ -1792,7 +1748,7 @@ private:
         if (input[pos + i] == '\n') {
           ++line;
           col = 1;
-        } else {
+        } else if ((static_cast<unsigned char>(input[pos+i])&0xc0)!=0x80 && input[pos+i]!='\r') {
           ++col;
         }
       }
@@ -1822,20 +1778,12 @@ private:
             matched = td.pattern.size();
           }
         } else if (!td.pattern.empty()) {
-          try {
-            std::regex rx(td.pattern, std::regex_constants::ECMAScript);
-            std::cmatch m;
-            const char* beg = input.data() + pos;
-            const char* end = input.data() + input.size();
-            if (std::regex_search(beg, end, m, rx, std::regex_constants::match_continuous)) {
-              matched = static_cast<std::size_t>(m.length());
-            }
-          } catch (const std::regex_error&) {
-          }
+          auto found = regexes.find(&td);
+          if (found != regexes.end()) matched = found->second.match_prefix(input,pos).value_or(0);
         }
         if (matched > best_len ||
             (matched > 0 && matched == best_len && best_tok &&
-             !best_tok->is_keyword && td.is_keyword)) {
+             (td.priority > best_tok->priority || (td.priority == best_tok->priority && td.decl_order < best_tok->decl_order)))) {
           best_len = matched;
           best_tok = &td;
         }
@@ -1845,12 +1793,12 @@ private:
         if (!std::isspace(static_cast<unsigned char>(input[pos]))) {
           out.push_back(detail::Json::make_object({
               {"id", detail::Json::make_string("<unknown>")},
-              {"lexeme", detail::Json::make_string(std::string(1, input[pos]))},
+              {"lexeme", detail::Json::make_string(std::string(input.substr(pos,c17_text::utf8_width(input,pos))))},
               {"line", detail::Json::make_int(line)},
               {"col", detail::Json::make_int(col)},
           }));
         }
-        advance_pos(1);
+        advance_pos(c17_text::utf8_width(input,pos));
         continue;
       }
 
@@ -1900,9 +1848,9 @@ private:
       while (p <= text.size()) {
         std::size_t nl = text.find('\n', p);
         std::size_t end_p = (nl == std::string_view::npos) ? text.size() : nl;
-        int seg_len = static_cast<int>(end_p - p);
+        int seg_len = detail::utf16_length(text.substr(p, end_p - p));
         if (seg_len > 0) {
-          toks.push_back({cur_line, cur_col, seg_len, type, mods});
+          toks.push_back({cur_line, detail::lsp_column(doc.source, cur_line, cur_col), seg_len, type, mods});
         }
         if (nl == std::string_view::npos) break;
         p = nl + 1;
@@ -2495,7 +2443,7 @@ private:
 
     for (const auto& ex : doc.ast_mod.examples) {
       detail::Json er = valid_span_or_default(ex.span);
-      lenses.arr_val.push_back(make_lens(er, "Run Example: " + ex.name, "parsley.debugExample",
+      lenses.arr_val.push_back(make_lens(er, "Run Example: " + ex.name, "parsley.runSingleExample",
                                          {detail::Json::make_string(uri),
                                           detail::Json::make_string(ex.name),
                                           detail::Json::make_string(ex.input)}));
@@ -2526,8 +2474,10 @@ private:
       });
     }
     const DocState& doc = it->second;
-    eval::EvalResult res = eval::parse_input(doc.grammar, input, start_rule);
-    std::vector<detail::Json> toks = tokenize_input_with_grammar(doc.grammar, input);
+    eval::EvalResult res;
+    std::vector<detail::Json> toks;
+    if(doc.diags.has_errors())res.error=eval::EvalParseError{1,1,"valid grammar","grammar","Fix grammar diagnostics before evaluating input"};
+    else {res=eval::parse_input(doc.grammar,input,start_rule);toks=tokenize_input_with_grammar(doc.grammar,input);}
 
     detail::Json err_json = detail::Json::make_null();
     if (!res.ok && res.error) {
@@ -2563,57 +2513,42 @@ private:
 
 inline int run_lsp_server() {
 #ifdef _WIN32
-  _setmode(_fileno(stdin), _O_BINARY);
-  _setmode(_fileno(stdout), _O_BINARY);
+  _setmode(_fileno(stdin), _O_BINARY); _setmode(_fileno(stdout), _O_BINARY);
 #endif
   LspServer server;
-  std::string line;
+  auto send = [](std::string_view body) { std::cout << "Content-Length: " << body.size() << "\r\n\r\n" << body << std::flush; };
+  auto line = [](std::string& out) {
+    out.clear(); char c;
+    while (std::cin.get(c)) { if (c=='\n') { if(!out.empty()&&out.back()=='\r')out.pop_back(); return true; } if(out.size()>=8192)return false;out+=c; }return false;
+  };
+  constexpr std::string_view error = R"({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON-RPC frame"}})";
   while (!server.should_exit()) {
-    std::size_t content_length = 0;
-    bool got_header = false;
-    while (std::getline(std::cin, line)) {
-      if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
+    size_t length=0, headers=0; bool have=false; std::string text;
+    if (!line(text)) break;
+    while (!text.empty()) {
+      if (++headers>64) {send(error);return 2;}
+      constexpr std::string_view prefix="Content-Length:";
+      if(text.size()>=prefix.size()&&std::equal(prefix.begin(),prefix.end(),text.begin(),[](char a,char b){return std::tolower(static_cast<unsigned char>(a))==std::tolower(static_cast<unsigned char>(b));})) {
+        std::string_view value(text);value.remove_prefix(prefix.size());while(!value.empty()&&(value.front()==' '||value.front()=='\t'))value.remove_prefix(1);
+        size_t n;auto [end,ec]=std::from_chars(value.data(),value.data()+value.size(),n);
+        if(have||value.empty()||ec!=std::errc{}||end!=value.data()+value.size()||n>8*1024*1024){send(error);return 2;}length=n;have=true;
       }
-      if (line.empty()) {
-        if (got_header) break;
-        continue;
-      }
-      got_header = true;
-      constexpr std::string_view kPrefix = "Content-Length:";
-      if (line.size() >= kPrefix.size() &&
-          std::equal(kPrefix.begin(), kPrefix.end(), line.begin(), [](char a, char b) {
-            return std::tolower(static_cast<unsigned char>(a)) ==
-                   std::tolower(static_cast<unsigned char>(b));
-          })) {
-        std::string val = line.substr(kPrefix.size());
-        std::size_t idx = 0;
-        while (idx < val.size() && std::isspace(static_cast<unsigned char>(val[idx]))) ++idx;
-        if (idx < val.size()) {
-          content_length = static_cast<std::size_t>(std::stoull(val.substr(idx)));
-        }
-      }
+      if(!line(text))return 2;
     }
-    if (!std::cin || content_length == 0) {
-      break;
-    }
-    std::string payload(content_length, '\0');
-    std::cin.read(payload.data(), static_cast<std::streamsize>(content_length));
-    if (std::cin.gcount() < static_cast<std::streamsize>(content_length)) {
-      break;
-    }
-    for (const auto& out_msg : server.process_message(payload)) {
-      std::cout << "Content-Length: " << out_msg.size() << "\r\n\r\n" << out_msg << std::flush;
-    }
+    if(!have){send(error);continue;}
+    std::string payload(length,'\0');std::cin.read(payload.data(),static_cast<std::streamsize>(length));
+    if(static_cast<size_t>(std::cin.gcount())!=length)return 2;
+    try { for(const auto& msg:server.process_message(payload))send(msg); }
+    catch(const std::exception&) {send(error);}
   }
   return server.exit_code();
 }
-
 // ---------------------------------------------------------------------------
 // 4. Package Manager & Agent Documentation Helpers
 // ---------------------------------------------------------------------------
 
 inline std::string format_psl_module(std::string_view source) {
+  if(source.starts_with("\xef\xbb\xbf"))source.remove_prefix(3);
   std::ostringstream out;
   std::size_t pos = 0;
   bool last_blank = false;
@@ -2857,97 +2792,33 @@ struct InitPackageResult {
 inline InitPackageResult init_package(std::string_view name, std::string_view target_dir = ".") {
   InitPackageResult res;
   std::string pkg_name = name.empty() ? "MyGrammar" : std::string(name);
-  std::string mod_name = pkg_name;
-  mod_name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(mod_name[0])));
-
-  namespace fs = std::filesystem;
-  std::error_code ec;
-  fs::path dir(target_dir);
-  fs::create_directories(dir / "src", ec);
-  if (ec) {
-    res.ok = false;
-    res.message = "Failed to create package directory: " + ec.message();
-    return res;
+  auto alpha=[](unsigned char c){return (c>='a'&&c<='z')||(c>='A'&&c<='Z');};
+  if (!alpha(static_cast<unsigned char>(pkg_name.front())) || !std::all_of(pkg_name.begin(),pkg_name.end(),[&](unsigned char c){return alpha(c)||(c>='0'&&c<='9')||c=='_';})) {
+    res.message="Package name must be an ASCII identifier starting with a letter";return res;
   }
-
-  fs::path manifest = dir / "parsley.toml";
-  {
-    std::ofstream mf(manifest);
-    if (!mf) {
-      res.ok = false;
-      res.message = "Failed to write " + manifest.string();
-      return res;
-    }
-    mf << "[package]\n";
-    mf << "name = \"" << pkg_name << "\"\n";
-    mf << "version = \"0.1.0\"\n";
-    mf << "entry = \"src/" << mod_name << ".parsley\"\n";
-    mf << "target = \"c17\"\n";
-    res.created_files.push_back(manifest.string());
+  std::string mod=pkg_name;mod[0]=static_cast<char>(std::toupper(static_cast<unsigned char>(mod[0])));
+  namespace fs=std::filesystem;fs::path dir(target_dir);std::error_code ec;
+  std::map<fs::path,std::string> files;
+  files[dir/"parsley.toml"]="[package]\nname = \""+pkg_name+"\"\nversion = \"0.1.0\"\nentry = \"src/"+mod+".parsley\"\ntarget = \"c17\"\n";
+  files[dir/"src"/(mod+".parsley")]=
+    "module "+mod+" (program) where\n\nimport Parsley.Prelude (eof)\n\nskip ws = /[[:space:]]+/\ntoken ident = /[a-zA-Z_][a-zA-Z0-9_]*/ :: Text\n\ndata Ast = Word Text\n\nprogram :: Ast\nprogram = (Word <$> ident) <* eof\n\nexample \"basic\" : \"hello\" parses-to Word \"hello\"\n";
+  files[dir/"src"/(mod+".psem")]=
+    "{-# LANGUAGE Sem1 #-}\nsemantics "+mod+" where\n\nimport "+mod+"\n\nsource ref = manual \""+mod+" Specification\" rev \"1.0\"\n\n{-# SOURCE ref \"1.0\"; STATUS reviewed; CONFIDENCE 0.95 #-}\nlint reservedWord :: Warning, Style\n  match (Word x)\n  when x == \"todo\"\n  say \"Avoid placeholder word `{x}`\"\n\nexample reservedWord\n  fires \"todo\"\n  silent \"hello\"\n";
+  files[dir/"AGENTS.md"]=generate_agent_docs_markdown();
+  files[dir/"skills"/"parsley"/"SKILL.md"]=generate_agent_skill_markdown(mod);
+  for(const auto& [path,text]:files) {
+    (void)text;
+    if(fs::exists(path,ec)||ec){res.message="Refusing to overwrite existing or inaccessible file: "+path.string();return res;}
   }
-
-  fs::path grammar_file = dir / "src" / (mod_name + ".parsley");
-  if (!fs::exists(grammar_file, ec)) {
-    std::ofstream gf(grammar_file);
-    if (!gf) {
-      res.ok = false;
-      res.message = "Failed to write " + grammar_file.string();
-      return res;
-    }
-    gf << "module " << mod_name << " (program) where\n\n";
-    gf << "import Parsley.Prelude (eof)\n\n";
-    gf << "skip  ws    = /[[:space:]]+/\n";
-    gf << "token ident = /[a-zA-Z_][a-zA-Z0-9_]*/ :: Text\n\n";
-    gf << "data Ast = Word Text\n\n";
-    gf << "program :: Ast\n";
-    gf << "program = (Word <$> ident) <* eof\n\n";
-    gf << "example \"basic\" : \"hello\" parses-to Word \"hello\"\n";
-    res.created_files.push_back(grammar_file.string());
+  auto rollback=[&] {for(const auto& file:res.created_files){std::error_code ignored;fs::remove(file,ignored);}res.created_files.clear();};
+  for(const auto& [path,text]:files) {
+    fs::create_directories(path.parent_path(),ec);
+    if(ec){rollback();res.message="Cannot create directory: "+ec.message();return res;}
+    std::ofstream file(path,std::ios::binary);
+    if(!file){rollback();res.message="Cannot write "+path.string();return res;}
+    res.created_files.push_back(path.string());file.write(text.data(),static_cast<std::streamsize>(text.size()));file.close();
+    if(!file){rollback();res.message="Failed to finish writing "+path.string();return res;}
   }
-
-  fs::path psem_file = dir / "src" / (mod_name + ".psem");
-  if (!fs::exists(psem_file, ec)) {
-    std::ofstream pf(psem_file);
-    if (pf) {
-      pf << "{-# LANGUAGE Sem1 #-}\n";
-      pf << "semantics " << mod_name << " where\n\n";
-      pf << "import " << mod_name << "\n\n";
-      pf << "source ref = manual \"" << mod_name << " Specification\" rev \"1.0\"\n\n";
-      pf << "{-# SOURCE ref \"1.0\"; STATUS reviewed; CONFIDENCE 0.95 #-}\n";
-      pf << "lint reservedWord :: Warning, Style\n";
-      pf << "  match (Word x)\n";
-      pf << "  when  x == \"todo\"\n";
-      pf << "  say   \"Avoid placeholder word `{x}`\"\n\n";
-      pf << "example reservedWord\n";
-      pf << "  fires  \"todo\"\n";
-      pf << "  silent \"hello\"\n";
-      res.created_files.push_back(psem_file.string());
-    }
-  }
-
-  fs::path agents_file = dir / "AGENTS.md";
-  if (!fs::exists(agents_file, ec)) {
-    std::ofstream af(agents_file);
-    if (af) {
-      af << generate_agent_docs_markdown();
-      res.created_files.push_back(agents_file.string());
-    }
-  }
-
-  fs::path skill_dir = dir / "skills" / "parsley";
-  fs::create_directories(skill_dir, ec);
-  fs::path skill_file = skill_dir / "SKILL.md";
-  if (!fs::exists(skill_file, ec)) {
-    std::ofstream sf(skill_file);
-    if (sf) {
-      sf << generate_agent_skill_markdown(mod_name);
-      res.created_files.push_back(skill_file.string());
-    }
-  }
-
-  res.ok = true;
-  res.message = "Initialized Parsley package `" + pkg_name + "` in " + dir.string();
-  return res;
+  res.ok=true;res.message="Initialized Parsley package `"+pkg_name+"` in "+dir.string();return res;
 }
-
 } // namespace parsley::tooling

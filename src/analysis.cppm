@@ -625,7 +625,7 @@ inline ir::ProdPtr factor_prod(const ir::Grammar& g,
       Diagnostic d;
       d.code = "E0214";
       d.severity = Severity::Error;
-      d.message = "ambiguous alternatives in rule `" + rule_id + "`";
+      d.message = "overlapping prefixes in rule `" + rule_id + "`";
       d.span = conflict_span;
       d.label = "both start with `" + prefix_desc + "`";
       if (alts[members[1]].span.is_valid()) {
@@ -674,7 +674,7 @@ inline ir::ProdPtr factor_prod(const ir::Grammar& g,
     Diagnostic d;
     d.code = "E0214";
     d.severity = Severity::Note;
-    d.message = "ambiguous alternatives in rule `" + rule_id + "`";
+    d.message = "overlapping prefixes in rule `" + rule_id + "`";
     d.span = conflict_span;
     d.label = "both start with `" + prefix_desc + "`";
     d.notes.push_back("this is resolved by left-factoring (automatic)");
@@ -746,83 +746,29 @@ inline bool is_prod_nullable(const ir::ProdPtr& p,
   return false;
 }
 
-inline std::set<std::string> first_of_prod(const ir::ProdPtr& p,
-                                           const std::map<std::string, RuleAnalysis>& rules) {
-  std::set<std::string> out;
-  if (!p) {
-    return out;
-  }
-  switch (p->kind) {
-    case ir::Prod::Kind::Eps:
-      return out;
-    case ir::Prod::Kind::Tok:
-      out.insert(p->token_id);
-      return out;
-    case ir::Prod::Kind::Ref: {
-      auto it = rules.find(p->rule_id);
-      if (it != rules.end()) {
-        out.insert(it->second.first.begin(), it->second.first.end());
-      }
-      return out;
-    }
-    case ir::Prod::Kind::Seq:
-    case ir::Prod::Kind::Act:
-      for (const auto& item : p->items) {
-        auto f = first_of_prod(item, rules);
-        out.insert(f.begin(), f.end());
-        if (!is_prod_nullable(item, rules)) {
-          break;
-        }
-      }
-      return out;
-    case ir::Prod::Kind::Alt:
-      for (const auto& item : p->items) {
-        auto f = first_of_prod(item, rules);
-        out.insert(f.begin(), f.end());
-      }
-      return out;
-    case ir::Prod::Kind::Rep:
-      return first_of_prod(p->inner, rules);
-    case ir::Prod::Kind::Look:
-      if (p->polarity == ir::Polarity::Positive) {
-        return first_of_prod(p->inner, rules);
-      }
-      return out;
-    case ir::Prod::Kind::PrecTable: {
-      auto f = first_of_prod(p->inner, rules);
-      out.insert(f.begin(), f.end());
-      for (const auto& lvl : p->levels) {
-        if (lvl.assoc == ast::AssocKind::Prefix) {
-          for (const auto& op : lvl.ops) {
-            if (!op.pattern.empty()) {
-              auto pf = first_of_prod(op.pattern[0], rules);
-              out.insert(pf.begin(), pf.end());
-            }
-          }
-        }
-      }
-      return out;
-    }
+inline void append_first(const ir::ProdPtr& p, const std::map<std::string,RuleAnalysis>& rules, std::set<std::string>& out) {
+  if(!p)return;
+  switch(p->kind) {
+    case ir::Prod::Kind::Eps:return;
+    case ir::Prod::Kind::Tok:out.insert(p->token_id);return;
+    case ir::Prod::Kind::Ref:{auto it=rules.find(p->rule_id);if(it!=rules.end())out.insert(it->second.first.begin(),it->second.first.end());return;}
+    case ir::Prod::Kind::Seq:case ir::Prod::Kind::Act:
+      for(const auto& item:p->items){append_first(item,rules,out);if(!is_prod_nullable(item,rules))break;}return;
+    case ir::Prod::Kind::Alt:for(const auto& item:p->items)append_first(item,rules,out);return;
+    case ir::Prod::Kind::Rep:case ir::Prod::Kind::Label:case ir::Prod::Kind::Recover:append_first(p->inner,rules,out);return;
+    case ir::Prod::Kind::Look:if(p->polarity==ir::Polarity::Positive)append_first(p->inner,rules,out);return;
+    case ir::Prod::Kind::PrecTable:
+      append_first(p->inner,rules,out);
+      for(const auto& level:p->levels)if(level.assoc==ast::AssocKind::Prefix)for(const auto& op:level.ops)if(!op.pattern.empty())append_first(op.pattern[0],rules,out);
+      return;
     case ir::Prod::Kind::Ctx:
-      if (!p->ctx_var.empty()) {
-        out.insert("<ctx:" + p->ctx_var + ">");
-        return out;
-      }
-      for (const auto& st : p->ctx_steps) {
-        auto f = first_of_prod(st.prod, rules);
-        out.insert(f.begin(), f.end());
-        if (!is_prod_nullable(st.prod, rules)) {
-          break;
-        }
-      }
-      return out;
-    case ir::Prod::Kind::Label:
-    case ir::Prod::Kind::Recover:
-      return first_of_prod(p->inner, rules);
+      if(!p->ctx_var.empty())return; // A dynamic exactly binding is not a lexer-token ID.
+      for(const auto& step:p->ctx_steps){append_first(step.prod,rules,out);if(!is_prod_nullable(step.prod,rules))break;}return;
   }
-  return out;
 }
-
+inline std::set<std::string> first_of_prod(const ir::ProdPtr& p,const std::map<std::string,RuleAnalysis>& rules) {
+  std::set<std::string> out;append_first(p,rules,out);return out;
+}
 inline bool propagate_follow(const ir::ProdPtr& p,
                              const std::set<std::string>& tail_follow,
                              std::map<std::string, RuleAnalysis>& rules) {
@@ -1370,6 +1316,18 @@ inline AnalysisResult analyze_grammar(ir::Grammar& grammar, DiagnosticBag& diags
     }
   }
 
+  // Seed growing supports direct recursion only. Reject unsupported cycles rather
+  // than generating order-dependent partial trees.
+  for(const auto& [rid,rule]:grammar.gRules) {
+    std::queue<std::string> pending;std::unordered_set<std::string> seen;
+    for(const auto& next:left_adj[rid])if(next!=rid){pending.push(next);seen.insert(next);}
+    while(!pending.empty()) {
+      auto current=pending.front();pending.pop();
+      if(current==rid){diags.error("E0500","mutual left recursion is unsupported; rewrite the cycle through `"+rid+"`",rule.rSpan);break;}
+      for(const auto& next:left_adj[current])if(seen.insert(next).second)pending.push(next);
+    }
+  }
+  if(result.has_context_rules&&result.has_left_recursion)diags.error("E0510","context do cannot be combined with left recursion");
   // 8. Check Alt FIRST/FOLLOW conflicts & generate counterexamples
   for (const auto& [rid, rule] : grammar.gRules) {
     detail::check_alt_conflicts(

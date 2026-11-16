@@ -47,10 +47,10 @@ std::string read_fixture(std::string_view name) {
 }
 
 void test_version() {
-  check(parsley::VERSION_MAJOR == 1, "VERSION_MAJOR == 1");
-  check(parsley::VERSION_MINOR == 3, "VERSION_MINOR == 3");
-  check(parsley::VERSION_PATCH == 0, "VERSION_PATCH == 0");
-  check(parsley::VERSION_STRING == "1.3.0", "VERSION_STRING == 1.3.0");
+  std::ifstream file(std::string(PARSLEY_SOURCE_DIR) + "/VERSION");
+  std::string expected; file >> expected;
+  check(!expected.empty() && parsley::VERSION_STRING == expected, "compiled version agrees with VERSION");
+  check(expected == std::to_string(parsley::VERSION_MAJOR) + "." + std::to_string(parsley::VERSION_MINOR) + "." + std::to_string(parsley::VERSION_PATCH), "version components agree with VERSION");
 }
 
 void test_diagnostics() {
@@ -760,7 +760,7 @@ void test_tooling_compiler_cli() {
     auto lens_resp = lsp.process_message(
         R"({"jsonrpc":"2.0","id":9,"method":"textDocument/codeLens","params":{"textDocument":{"uri":"file:///T.parsley"}}})");
     check(lens_resp.size() == 1 && lens_resp[0].find("parsley.buildC17") != std::string::npos &&
-          lens_resp[0].find("parsley.debugExample") != std::string::npos,
+          lens_resp[0].find("parsley.runSingleExample") != std::string::npos,
           "LSP codeLens returns module and example lenses");
 
     auto eval_resp = lsp.process_message(
@@ -972,6 +972,6 @@ int main() {
     std::cerr << g_failures << " test check(s) failed.\n";
     return 1;
   }
-  std::cout << "All Phase v1.3.0 tests passed.\n";
+  std::cout << "All Parsley " << parsley::VERSION_STRING << " tests passed.\n";
   return 0;
 }

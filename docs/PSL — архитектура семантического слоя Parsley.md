@@ -1,5 +1,7 @@
 # PSL — архитектура семантического слоя Parsley
 
+> Design reference; implementation limits and verified interfaces are documented in [STATUS.md](STATUS.md). Current generated parser ownership uses checked transactions; only PSL data uses the caller's arena. Examples and the audit suites define tested coverage, not a claim that every proposed semantic/project feature is complete.
+
 Статус: черновик v0.2 · Дополняет документ «Parsley — архитектура DSL для описания грамматик». Семантика описывается на самом Parsley (модуль semantics), компилируется в C17 и входит в состав сгенерированного фронтенда.
 
 ## 1. Назначение и границы

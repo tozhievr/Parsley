@@ -13,6 +13,10 @@ With Parsley, your grammar reads like a high-level Haskell module—featuring al
 
 ---
 
+Current implementation and ABI contracts: [STATUS.md](docs/STATUS.md); accepted regex syntax: [REGEX.md](docs/REGEX.md). Only C17 is generated. The bundled language grammars are subsets; `MODE` selects analysis checks, while the runtime uses ordered recursive descent/Pratt parsing. Regenerate headers and libraries together after the unreleased ABI changes described in STATUS.
+
+Актуальные возможности и контракты: [STATUS.md](docs/STATUS.md), [regex-диалект](docs/REGEX.md). Единственный таргет — C17; встроенные грамматики — подмножества языков. `MODE` выбирает проверки, а не отдельный алгоритм исполнения. После изменений ABI заголовки и библиотеки нужно регенерировать вместе.
+
 ### Core Architecture & Philosophy
 
 1. **Haskell-like Syntax & Aesthetics**:
@@ -55,7 +59,7 @@ With Parsley, your grammar reads like a high-level Haskell module—featuring al
 
 4. **Static Grammar Analysis**:
    - Computes `NULLABLE`, `FIRST`, and `FOLLOW` sets.
-   - Detects unreachable rules (`E0520`) and direct/indirect left recursion (`E0500`).
+   - Detects unreachable rules (`E0520`) and left recursion (`E0500` in LL analysis; mutual cycles are rejected in every profile).
    - Automated left-factoring for overlapping prefixes (e.g. `Call` vs `Var` in `atom`).
    - Conflict diagnostics with concrete counterexamples and explanations (e.g. `parsley explain E0214`).
 
@@ -130,9 +134,9 @@ example "ошибка" : "1 +" fails-at (1, 4) expecting "expression"
 
 ---
 
-### ANTLR4 Production Grammars & ISO C17 Static Analyzers
+### ANTLR4-Inspired Language Subsets & ISO C17 Static Analyzers
 
-Parsley includes complete production-grade grammars translated from real-world ANTLR4 grammars, each paired with an end-to-end static analyzer written in pure ISO C17 linked against the generated parser dynamic library:
+Parsley includes representative grammar subsets based on ANTLR4 grammars, each paired with an end-to-end static analyzer written in pure ISO C17 linked against the generated parser dynamic library:
 
 1. **Python 3 (`tests/fixtures/Python.parsley` & `tests/analyzers/python_analyzer.c`)**:
    - Translated from `PythonLexer.g4` & `PythonParser.g4`.
@@ -186,10 +190,10 @@ Parsley comes with a full-featured, zero-external-npm-dependency extension for b
 
 ```bash
 # In VS Code
-code --install-extension ./parsley-lang-1.6.0.vsix --force
+code --install-extension ./parsley-lang-1.6.1.vsix --force
 
 # In Cursor
-cursor --install-extension ./parsley-lang-1.6.0.vsix --force
+cursor --install-extension ./parsley-lang-1.6.1.vsix --force
 ```
 Or symlink `editors/vscode/` directly to `~/.vscode/extensions/parsley-lang` or `~/.cursor/extensions/parsley-lang`.
 
@@ -197,9 +201,9 @@ Or symlink `editors/vscode/` directly to `~/.vscode/extensions/parsley-lang` or 
 
 ### One-Line Installation / Установка одной командой
 
-Run from the directory containing the downloaded package. CLI version: **1.3.0**; extension version: **1.6.0**. Choose the archive for your OS and architecture.
+Run from the directory containing the downloaded package. CLI version: **1.3.0**; extension version: **1.6.1**. Choose the archive for your OS and architecture.
 
-Запускайте из каталога со скачанным пакетом. Версия CLI — **1.3.0**, расширения — **1.6.0**. Выбирайте архив под свою ОС и архитектуру.
+Запускайте из каталога со скачанным пакетом. Версия CLI — **1.3.0**, расширения — **1.6.1**. Выбирайте архив под свою ОС и архитектуру.
 
 **Windows x64 — PowerShell**. Installs for the current user and updates PATH for current and future terminals. Установка в профиль пользователя с добавлением в PATH текущего и будущих терминалов:
 
@@ -220,7 +224,7 @@ For another version, update both the archive name and extracted directory. These
 **VS Code / Cursor — Windows & Linux** (from the directory with the VSIX / из каталога с VSIX):
 
 ```sh
-code --install-extension ./parsley-lang-1.6.0.vsix --force
+code --install-extension ./parsley-lang-1.6.1.vsix --force
 ```
 
 For Cursor, replace `code` with `cursor`. Для Cursor замените `code` на `cursor`.
@@ -278,39 +282,43 @@ cpack --config build/CPackConfig.cmake -B dist
 
 ### CLI Reference
 
-| Command | Description | Example |
-|---|---|---|
-| `build <file> [-o <dir>] [--no-compile-shared] [--emit-ir-json] [--emit-ir-sexpr]` | Generate C17 `parser.h`, `parser.c`, `CMakeLists.txt`, and compile the dynamic library (`.dll`/`.so`/`.dylib`) | `parsley build Calc.parsley -o ./build_calc` |
-| `check <file>` | Validate syntax, resolve imports, check types, and verify grammar properties | `parsley check Calc.parsley` |
-| `test <file> [--fuzz <N>]` | Run in-grammar `example` test assertions and grammar-guided fuzzer | `parsley test Calc.parsley --fuzz 100` |
-| `explain <CODE>` | Display detailed diagnostics, root causes, and fixes for error codes | `parsley explain E0214` |
-| `fmt <file> [--write\|--check]` | Ormolu-style canonical code formatter | `parsley fmt Calc.parsley --write` |
-| `graph <file> [--format dot\|svg] [-o <file>]` | Export grammar railroad or Graphviz DOT diagram | `parsley graph Calc.parsley -o grammar.dot` |
-| `lsp` | Start JSON-RPC 2.0 Language Server Protocol server | `parsley lsp` |
-| `pkg <list\|show\|init> [name]` | Inspect or scaffold standard library packages | `parsley pkg list` |
-| `--version` / `--help` | Display version information or help | `parsley --version` |
+| Command | Contract / flags |
+|---|---|
+| `build <file.parsley\|file.psem> [-o dir]` | Generate C17; semantic files use the adjacent grammar. `--no-compile-shared`, `--min-status draft|reviewed|verified`, `--emit-agent-docs`, `--emit-ir-json`, `--emit-ir-sexpr` |
+| `check <file.parsley\|file.psem>` | Validate grammar/PSL; accepts `--min-status` |
+| `test <file.parsley\|file.psem> [--fuzz N] [--seed N]` | Grammar and PSL assertions; `N` is 0–1,000,000, default seed 42; accepts `--min-status` |
+| `fmt <file> [--write\|-w\|--check\|-c]` | Print canonical grammar formatting or PSL whitespace normalization; write/check are mutually exclusive |
+| `graph <file.parsley> [--format dot\|svg] [-o file]` | Grammar visualization |
+| `agent-docs [--format markdown\|json] [-o path] [file.parsley]` | Agent reference/schema output |
+| `explain <CODE>` | Explain a supported diagnostic code; codes are a catalog, not every number in a contiguous range |
+| `lsp` | Full-document stdio JSON-RPC language server with UTF-16 positions |
+| `pkg <list\|show\|init> [name] [directory]` | Inspect bundled modules or scaffold a package; refuses existing files |
+| `--version`, `-V`, `version`; `--help`, `-h`, `help` | Version/help aliases |
+
+`-b/--backend c17` and `c` select the sole code-generation backend. Compatibility values `ir-json`/`ir-sexpr` produce IR dumps, not another executable-language target. `-v/--verbose` includes analysis notes; `--no-color` is accepted and diagnostics are plain text. Exit 0 indicates success; 1 indicates a failed check/test/I/O or ordinary usage error; 2 indicates rejected bounded numeric options or a caught compiler/protocol failure. `PARSLEY_CC` is a path/name of one C compiler executable, without shell syntax or appended flags.
+
+`program = expr <* eof` requires a complete parse. Without `eof`, a generated parser may accept a prefix; inspect `result.consumed`. Generic `parsley_*` names in examples are compatibility aliases for the module-prefixed symbols. See [STATUS.md](docs/STATUS.md) for resource/ownership rules and multiple-parser integration.
 
 ---
-
 ### Standard Library (`parsley.stdlib`)
 
 Parsley includes built-in standard modules accessible via `import`:
 
 - **`Parsley.Prelude`**: Primitives: `sepBy`, `sepEndBy`, `many`, `some`, `optional`, `between`, `eof`, `lookahead`, `notFollowedBy`, `recover`, `exactly`.
-- **`Parsley.Unicode`**: Tokens for character classes: `alpha`, `digit`, `hexDigit`, `space`, `whitespace`, `upper`, `lower`, `letter`, `alphanum`, `newline`.
+- **`Parsley.Ascii`** (legacy alias `Parsley.Unicode`, ASCII only): Tokens for character classes: `alpha`, `digit`, `hexDigit`, `space`, `whitespace`, `upper`, `lower`, `letter`, `alphanum`, `newline`.
 - **`Parsley.Layout`**: Layout tokens: `indent`, `dedent`, `newline`, `sameIndent`, `block`.
-- **`Json`**: Complete RFC 8259 JSON grammar.
+- **`Json`**: JSON grammar subset; consult its examples for coverage.
 - **`Sql`**: ANSI SQL grammar subset (SELECT, INSERT, UPDATE, DELETE).
-- **`Python`**: Complete Python 3 grammar derived from ANTLR4 Python3.
-- **`Swift`**: Complete Swift 5 grammar derived from ANTLR4 Swift5.
-- **`Kotlin`**: Complete Kotlin grammar derived from ANTLR4 Kotlin.
-- **`Haskell`**: Complete Haskell 2010 grammar derived from ANTLR4 Haskell.
+- **`Python`**: Python 3 grammar subset derived from ANTLR4 Python3.
+- **`Swift`**: Swift 5 grammar subset derived from ANTLR4 Swift5.
+- **`Kotlin`**: Kotlin grammar subset derived from ANTLR4 Kotlin.
+- **`Haskell`**: Haskell 2010 grammar subset derived from ANTLR4 Haskell.
 
 ---
 
 ### Semantic Versioning Workflow
 
-Version management is synchronized across `VERSION` and `src/version.cppm`:
+The compiler version is read only from `VERSION`; CMake generates `build/generated/version.cppm` from `src/version.cppm.in`. The extension version is independent in `editors/vscode/package.json`:
 
 ```bash
 # Bump patch: 0.1.0 -> 0.1.1
@@ -452,21 +460,13 @@ cpack --config build/CPackConfig.cmake -B dist
 
 ### Команды CLI
 
-- `parsley build <file.parsley> [-o <dir>] [--no-compile-shared] [--emit-ir-json] [--emit-ir-sexpr]` — генерация C17-парсера (`parser.h`, `parser.c`, `CMakeLists.txt`) и компиляция динамической библиотеки (`.dll`/`.so`/`.dylib`).
-- `parsley check <file.parsley>` — проверка синтаксиса, импортов, типов и свойств грамматики.
-- `parsley test <file.parsley> [--fuzz <N>]` — выполнение проверок `example` и property-based fuzzing.
-- `parsley explain <CODE>` — объяснение ошибки и вариантов исправления (например, `E0214`).
-- `parsley fmt <file.parsley> [--write|--check]` — каноническое форматирование кода.
-- `parsley graph <file.parsley> [--format dot|svg] [-o <file>]` — экспорт railroad-диаграмм или Graphviz DOT.
-- `parsley lsp` — запуск Language Server Protocol сервера.
-- `parsley pkg <list|show|init> [name]` — управление модулями стандартной библиотеки.
-- `parsley --version` / `parsley --help` — вывод версии и справки.
+Полная таблица флагов приведена в [CLI Reference](#cli-reference). `build/check/test/fmt` работают с `.parsley` и `.psem`; `graph` требует грамматику. `test --fuzz N --seed S` воспроизводим, `fmt --write` и `--check` несовместимы. `pkg init` создаёт шаблон проекта и не перезаписывает существующие файлы; это не сетевой менеджер зависимостей.
 
----
+C17 — единственный таргет. IR JSON/S-expression — форматы инспекции. `MODE` задаёт профиль анализа. Для полного разбора добавляйте `<* eof`; правила памяти, ABI и ограничений приведены в [STATUS.md](docs/STATUS.md). Версия компилятора берётся из `VERSION`, расширение версионируется независимо.
 
 ### Управление версиями (SemVer)
 
-Файл `VERSION` хранит версию проекта, синхронизированную с `src/version.cppm`:
+Файл `VERSION` — единственный источник версии компилятора. CMake генерирует `build/generated/version.cppm` из шаблона `src/version.cppm.in`; версия расширения независима:
 
 ```bash
 cmake -DBUMP=patch -P scripts/bump_semver.cmake

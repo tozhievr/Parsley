@@ -2,6 +2,7 @@ module;
 
 #include <cctype>
 #include <filesystem>
+#include <exception>
 #include <fstream>
 #include <optional>
 #include <sstream>
@@ -23,6 +24,7 @@ import parsley.ir;
 import parsley.desugar;
 import parsley.analysis;
 import parsley.eval;
+import parsley.regex;
 import parsley.psl;
 import parsley.codegen;
 import parsley.tooling;
@@ -102,15 +104,17 @@ inline void verify_lockfile_if_present(const std::filesystem::path& lock_path,
                                        const psl::PslModule& psl_mod,
                                        DiagnosticBag& diags) {
   std::error_code ec;
-  if (!std::filesystem::exists(lock_path, ec)) {
-    return;
-  }
+  const bool exists=std::filesystem::exists(lock_path,ec);
+  if(ec){diags.error("PSL-LOCK-READ","cannot inspect lockfile `"+lock_path.string()+"`",psl_mod.span);return;}
+  if(!exists)return;
   auto lock_txt = read_file_bytes(lock_path);
   if (!lock_txt) {
+    diags.error("PSL-LOCK-READ", "cannot read existing lockfile `" + lock_path.string() + "`", psl_mod.span);
     return;
   }
   auto expected = psl::parse_psl_lock(*lock_txt);
   if (!expected) {
+    diags.error("PSL-LOCK-FORMAT", "invalid lockfile `" + lock_path.string() + "`", psl_mod.span);
     return;
   }
   auto current = psl::compute_psl_lock_data(grammar, psl_mod.language_version);
@@ -182,10 +186,20 @@ inline CompileResult compile_source_with_options(std::string_view source,
   }
 
   res.ast_module = parser::parse_module(res.source, res.filename, res.diagnostics);
+  if (res.ast_module.rule_defs.empty()) res.diagnostics.error("E0600", "grammar must define at least one rule");
+  if (res.diagnostics.has_errors()) return res;
   res.resolved = resolve::resolve_module(res.ast_module, res.diagnostics);
   res.typed = typecheck::check_module(res.ast_module, res.resolved, res.diagnostics);
   res.grammar = desugar::desugar_module(res.ast_module, res.resolved, res.typed, res.diagnostics);
-  res.analysis = analysis::analyze_grammar(res.grammar, res.diagnostics);
+  auto validate_tokens = [&](const auto& tokens) {
+    for (const auto& token : tokens) if (token.is_regex) {
+      try { (void)regex::RegexParser(token.pattern).parse(); }
+      catch (const std::exception& e) { res.diagnostics.error("E0600", "invalid regex for `" + token.id + "`: " + e.what()); }
+    }
+  };
+  validate_tokens(res.grammar.gTokens);
+  for (const auto& mode : res.grammar.gModes) validate_tokens(mode.tokens);
+  if (!res.diagnostics.has_errors()) res.analysis = analysis::analyze_grammar(res.grammar, res.diagnostics);
 
   if (opts.run_examples && !res.diagnostics.has_errors()) {
     res.example_summary = eval::run_examples(res.grammar, res.diagnostics);
@@ -234,6 +248,7 @@ inline CompileResult compile_file_with_options(const std::string& path,
         g_opts.psl_source_override.clear();
         CompileResult res =
             compile_source_with_options(*g_content, sibling_grammar.string(), g_opts);
+        if(!res.ok)return res;
         std::filesystem::path lock_path = in_path.string() + ".lock";
         detail::attach_psl_to_result(res, *content, path, &res.grammar, opts, &lock_path);
         res.ok = !res.diagnostics.has_errors();
@@ -244,6 +259,7 @@ inline CompileResult compile_file_with_options(const std::string& path,
   }
 
   CompileResult res = compile_source_with_options(*content, path, opts);
+  if(!res.ok)return res;
   if (!res.psl_module.has_value()) {
     std::filesystem::path sibling_psem = in_path;
     sibling_psem.replace_extension(".psem");

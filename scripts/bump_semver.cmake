@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.20)
 get_filename_component(ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 
 set(VERSION_FILE "${ROOT_DIR}/VERSION")
-set(VERSION_CPPM_FILE "${ROOT_DIR}/src/version.cppm")
+# VERSION is the only compiler-version source of truth.
 
 if(NOT EXISTS "${VERSION_FILE}")
   message(FATAL_ERROR "VERSION file not found at ${VERSION_FILE}")
@@ -61,24 +61,7 @@ endif()
 # Write new VERSION file (with trailing \n)
 file(WRITE "${VERSION_FILE}" "${NEW_VERSION}\n")
 
-# Regenerate src/version.cppm
-set(CPPM_CONTENT
-"module;
-#include <string_view>
-
-export module parsley.version;
-
-export namespace parsley {
-
-inline constexpr int VERSION_MAJOR = ${NEW_MAJOR};
-inline constexpr int VERSION_MINOR = ${NEW_MINOR};
-inline constexpr int VERSION_PATCH = ${NEW_PATCH};
-inline constexpr std::string_view VERSION_STRING = \"${NEW_VERSION}\";
-
-} // namespace parsley
-")
-
-file(WRITE "${VERSION_CPPM_FILE}" "${CPPM_CONTENT}")
+# CMake generates the version module from VERSION at configure time.
 
 # Print Updated Parsley version: <old> -> <new> via message(STATUS ...)
 message(STATUS "Updated Parsley version: ${OLD_VERSION} -> ${NEW_VERSION}")

@@ -127,7 +127,7 @@ function escapeXml(value) {
 
 function collectRuntimeFiles(dir, relPrefix = "") {
   const results = [];
-  const excludedTopDirs = new Set([".vscode", "src", "scripts", "node_modules"]);
+  const excludedTopDirs = new Set([".vscode", "src", "scripts", "test", "node_modules"]);
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   entries.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -144,7 +144,7 @@ function collectRuntimeFiles(dir, relPrefix = "") {
     }
 
     if (
-      item.name === "tsconfig.json" ||
+      item.name === "tsconfig.json" || item.name === "package-lock.json" || item.name === ".vscodeignore" ||
       item.name.endsWith(".vsix") ||
       item.name.endsWith(".ts") ||
       item.name.endsWith(".map")
@@ -181,7 +181,7 @@ function buildContentTypesXml() {
 function buildVsixManifestXml(pkg) {
   const publisher = escapeXml(pkg.publisher || "parsley-lang");
   const id = escapeXml(pkg.name || "parsley-lang");
-  const version = escapeXml(pkg.version || "1.6.0");
+  const version = escapeXml(pkg.version || "1.6.1");
   const displayName = escapeXml(pkg.displayName || id);
   const description = escapeXml(pkg.description || "");
   const engine = escapeXml((pkg.engines && pkg.engines.vscode) || "^1.85.0");
@@ -221,7 +221,7 @@ function buildVsixManifestXml(pkg) {
 function main() {
   const pkgPath = path.join(EXTENSION_ROOT, "package.json");
   const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-  const version = pkg.version || "1.6.0";
+  const version = pkg.version || "1.6.1";
   const name = pkg.name || "parsley-lang";
 
   const runtimeFiles = collectRuntimeFiles(EXTENSION_ROOT);

@@ -2,6 +2,9 @@ module;
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <stdexcept>
+#include <locale>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +26,8 @@ export module parsley.eval;
 import parsley.ast;
 import parsley.diagnostic;
 import parsley.ir;
+import parsley.regex;
+import parsley.c17_text;
 
 export namespace parsley::eval {
 
@@ -40,6 +45,7 @@ struct EvalValue {
   Kind kind = Kind::Unit;
   bool bool_value = false;
   double number_value = 0.0;
+  std::int64_t integer_value = 0;
   bool is_int = false;
   std::string string_value;
   std::string ctor_name;
@@ -63,6 +69,10 @@ struct EvalValue {
     v.kind = Kind::Number;
     v.number_value = n;
     v.is_int = as_int;
+    if (as_int) {
+      if (!std::isfinite(n) || n < -9223372036854775808.0 || n >= 9223372036854775808.0) throw std::invalid_argument("integer outside Int64 range");
+      v.integer_value = static_cast<std::int64_t>(n);
+    }
     return v;
   }
 
@@ -105,6 +115,7 @@ struct EvalValue {
       case Kind::Bool:
         return bool_value == other.bool_value;
       case Kind::Number:
+        if (is_int && other.is_int) return integer_value == other.integer_value;
         return std::abs(number_value - other.number_value) < 1e-9;
       case Kind::String:
         return string_value == other.string_value;
@@ -126,35 +137,17 @@ inline std::string format_value(const EvalValue& v, bool wrap_parens = false) {
       return v.bool_value ? "True" : "False";
     case EvalValue::Kind::Number: {
       std::ostringstream out;
-      if (v.is_int ||
-          (std::isfinite(v.number_value) && std::floor(v.number_value) == v.number_value &&
+      out.imbue(std::locale::classic());
+      if (v.is_int) return std::to_string(v.integer_value);
+      if ((std::isfinite(v.number_value) && std::floor(v.number_value) == v.number_value &&
            v.number_value >= -9e15 && v.number_value <= 9e15)) {
         out << static_cast<long long>(v.number_value);
       } else {
-        out << v.number_value;
+        out << std::setprecision(15) << v.number_value;
       }
       return out.str();
     }
-    case EvalValue::Kind::String: {
-      std::string out = "\"";
-      for (char c : v.string_value) {
-        if (c == '"') {
-          out += "\\\"";
-        } else if (c == '\\') {
-          out += "\\\\";
-        } else if (c == '\n') {
-          out += "\\n";
-        } else if (c == '\r') {
-          out += "\\r";
-        } else if (c == '\t') {
-          out += "\\t";
-        } else {
-          out.push_back(c);
-        }
-      }
-      out.push_back('"');
-      return out;
-    }
+    case EvalValue::Kind::String: return c17_text::display_string(v.string_value);
     case EvalValue::Kind::List: {
       std::string out = "[";
       for (std::size_t i = 0; i < v.elements.size(); ++i) {
@@ -204,6 +197,10 @@ inline bool matches_pattern(const EvalValue& val, const ast::AstPattern& pat) {
     case ast::AstPattern::Kind::Wildcard:
       return true;
     case ast::AstPattern::Kind::Number:
+      if (val.is_int && !pat.name.empty() && pat.name.find_first_of(".eE") == std::string::npos) {
+        std::int64_t expected;auto [end,ec]=std::from_chars(pat.name.data(),pat.name.data()+pat.name.size(),expected);
+        return ec==std::errc{}&&end==pat.name.data()+pat.name.size()&&expected==val.integer_value;
+      }
       return val.kind == EvalValue::Kind::Number &&
              std::abs(val.number_value - pat.number_value) < 1e-9;
     case ast::AstPattern::Kind::String:
@@ -293,534 +290,13 @@ namespace parsley::eval::detail {
 // Cross-platform Thompson NFA regex engine (with POSIX [:space:] etc.)
 // ---------------------------------------------------------------------------
 
-struct CharMatcher {
-  bool negated = false;
-  bool match_any_non_nl = false;
-  std::vector<std::pair<unsigned char, unsigned char>> ranges;
-  std::vector<std::string> posix_classes;
+using regex::CharMatcher;
+using regex::RegexAst;
+using regex::RegexAstPtr;
+using regex::RegexParser;
 
-  bool matches(unsigned char c) const noexcept {
-    if (match_any_non_nl) {
-      return c != '\n' && c != '\r';
-    }
-    bool hit = false;
-    for (const auto& [lo, hi] : ranges) {
-      if (c >= lo && c <= hi) {
-        hit = true;
-        break;
-      }
-    }
-    if (!hit) {
-      for (const auto& cls : posix_classes) {
-        if (cls == "space" && std::isspace(c)) {
-          hit = true;
-        } else if (cls == "alpha" && std::isalpha(c)) {
-          hit = true;
-        } else if (cls == "alnum" && std::isalnum(c)) {
-          hit = true;
-        } else if (cls == "digit" && std::isdigit(c)) {
-          hit = true;
-        } else if (cls == "upper" && std::isupper(c)) {
-          hit = true;
-        } else if (cls == "lower" && std::islower(c)) {
-          hit = true;
-        } else if (cls == "xdigit" && std::isxdigit(c)) {
-          hit = true;
-        } else if (cls == "blank" && (c == ' ' || c == '\t')) {
-          hit = true;
-        } else if (cls == "punct" && std::ispunct(c)) {
-          hit = true;
-        } else if (cls == "print" && std::isprint(c)) {
-          hit = true;
-        } else if (cls == "cntrl" && std::iscntrl(c)) {
-          hit = true;
-        }
-        if (hit) {
-          break;
-        }
-      }
-    }
-    return negated ? !hit : hit;
-  }
-
-  std::vector<unsigned char> candidate_chars() const {
-    std::vector<unsigned char> out;
-    for (int ci = 32; ci <= 126; ++ci) {
-      unsigned char c = static_cast<unsigned char>(ci);
-      if (matches(c)) {
-        out.push_back(c);
-      }
-    }
-    if (out.empty()) {
-      for (int ci = 1; ci < 128; ++ci) {
-        unsigned char c = static_cast<unsigned char>(ci);
-        if (matches(c)) {
-          out.push_back(c);
-        }
-      }
-    }
-    return out;
-  }
-};
-
-struct RegexAst {
-  enum class Kind {
-    Empty,
-    Char,
-    Seq,
-    Alt,
-    Repeat,
-  };
-  Kind kind = Kind::Empty;
-  CharMatcher matcher;
-  std::vector<std::shared_ptr<RegexAst>> items;
-  std::shared_ptr<RegexAst> inner;
-  int min_rep = 0;
-  int max_rep = -1; // -1 = unbounded
-};
-
-using RegexAstPtr = std::shared_ptr<RegexAst>;
-
-class RegexParser {
-public:
-  explicit RegexParser(std::string_view pat) : pat_(pat) {}
-
-  RegexAstPtr parse() {
-    auto node = parse_alt();
-    return node;
-  }
-
-private:
-  std::string_view pat_;
-  std::size_t pos_ = 0;
-
-  bool eof() const noexcept { return pos_ >= pat_.size(); }
-  char peek() const noexcept { return eof() ? '\0' : pat_[pos_]; }
-  char get() noexcept { return eof() ? '\0' : pat_[pos_++]; }
-
-  RegexAstPtr parse_alt() {
-    std::vector<RegexAstPtr> branches;
-    branches.push_back(parse_seq());
-    while (!eof() && peek() == '|') {
-      get();
-      branches.push_back(parse_seq());
-    }
-    if (branches.size() == 1) {
-      return branches[0];
-    }
-    auto n = std::make_shared<RegexAst>();
-    n->kind = RegexAst::Kind::Alt;
-    n->items = std::move(branches);
-    return n;
-  }
-
-  RegexAstPtr parse_seq() {
-    std::vector<RegexAstPtr> items;
-    while (!eof() && peek() != '|' && peek() != ')') {
-      items.push_back(parse_quantified());
-    }
-    if (items.empty()) {
-      auto n = std::make_shared<RegexAst>();
-      n->kind = RegexAst::Kind::Empty;
-      return n;
-    }
-    if (items.size() == 1) {
-      return items[0];
-    }
-    auto n = std::make_shared<RegexAst>();
-    n->kind = RegexAst::Kind::Seq;
-    n->items = std::move(items);
-    return n;
-  }
-
-  RegexAstPtr parse_quantified() {
-    auto atom = parse_atom();
-    while (!eof()) {
-      char c = peek();
-      if (c == '*') {
-        get();
-        auto r = std::make_shared<RegexAst>();
-        r->kind = RegexAst::Kind::Repeat;
-        r->inner = std::move(atom);
-        r->min_rep = 0;
-        r->max_rep = -1;
-        atom = std::move(r);
-      } else if (c == '+') {
-        get();
-        auto r = std::make_shared<RegexAst>();
-        r->kind = RegexAst::Kind::Repeat;
-        r->inner = std::move(atom);
-        r->min_rep = 1;
-        r->max_rep = -1;
-        atom = std::move(r);
-      } else if (c == '?') {
-        get();
-        auto r = std::make_shared<RegexAst>();
-        r->kind = RegexAst::Kind::Repeat;
-        r->inner = std::move(atom);
-        r->min_rep = 0;
-        r->max_rep = 1;
-        atom = std::move(r);
-      } else if (c == '{') {
-        std::size_t save = pos_;
-        get();
-        int lo = 0;
-        bool has_lo = false;
-        while (!eof() && std::isdigit(static_cast<unsigned char>(peek()))) {
-          has_lo = true;
-          lo = lo * 10 + (get() - '0');
-        }
-        int hi = lo;
-        if (!eof() && peek() == ',') {
-          get();
-          if (!eof() && peek() == '}') {
-            hi = -1;
-          } else {
-            hi = 0;
-            bool has_hi = false;
-            while (!eof() && std::isdigit(static_cast<unsigned char>(peek()))) {
-              has_hi = true;
-              hi = hi * 10 + (get() - '0');
-            }
-            if (!has_hi) {
-              hi = -1;
-            }
-          }
-        }
-        if (has_lo && !eof() && peek() == '}') {
-          get();
-          auto r = std::make_shared<RegexAst>();
-          r->kind = RegexAst::Kind::Repeat;
-          r->inner = std::move(atom);
-          r->min_rep = lo;
-          r->max_rep = hi;
-          atom = std::move(r);
-        } else {
-          pos_ = save;
-          break;
-        }
-      } else {
-        break;
-      }
-      // Non-greedy suffix '?' ignored for maximal munch lexer
-      if (!eof() && peek() == '?') {
-        get();
-      }
-    }
-    return atom;
-  }
-
-  static void add_escape_to_matcher(char esc, CharMatcher& m) {
-    unsigned char uc = static_cast<unsigned char>(esc);
-    switch (esc) {
-      case 'n':
-        m.ranges.emplace_back('\n', '\n');
-        break;
-      case 'r':
-        m.ranges.emplace_back('\r', '\r');
-        break;
-      case 't':
-        m.ranges.emplace_back('\t', '\t');
-        break;
-      case 'd':
-        m.ranges.emplace_back('0', '9');
-        break;
-      case 'w':
-        m.ranges.emplace_back('a', 'z');
-        m.ranges.emplace_back('A', 'Z');
-        m.ranges.emplace_back('0', '9');
-        m.ranges.emplace_back('_', '_');
-        break;
-      case 's':
-        m.posix_classes.push_back("space");
-        break;
-      case 'D': {
-        CharMatcher sub;
-        sub.ranges.emplace_back('0', '9');
-        for (int ci = 0; ci < 256; ++ci) {
-          if (!sub.matches(static_cast<unsigned char>(ci))) {
-            m.ranges.emplace_back(static_cast<unsigned char>(ci), static_cast<unsigned char>(ci));
-          }
-        }
-        break;
-      }
-      case 'W': {
-        CharMatcher sub;
-        sub.ranges.emplace_back('a', 'z');
-        sub.ranges.emplace_back('A', 'Z');
-        sub.ranges.emplace_back('0', '9');
-        sub.ranges.emplace_back('_', '_');
-        for (int ci = 0; ci < 256; ++ci) {
-          if (!sub.matches(static_cast<unsigned char>(ci))) {
-            m.ranges.emplace_back(static_cast<unsigned char>(ci), static_cast<unsigned char>(ci));
-          }
-        }
-        break;
-      }
-      case 'S': {
-        for (int ci = 0; ci < 256; ++ci) {
-          if (!std::isspace(ci)) {
-            m.ranges.emplace_back(static_cast<unsigned char>(ci), static_cast<unsigned char>(ci));
-          }
-        }
-        break;
-      }
-      default:
-        m.ranges.emplace_back(uc, uc);
-        break;
-    }
-  }
-
-  unsigned char parse_class_char() {
-    char c = get();
-    if (c == '\\' && !eof()) {
-      char esc = get();
-      switch (esc) {
-        case 'n':
-          return '\n';
-        case 'r':
-          return '\r';
-        case 't':
-          return '\t';
-        default:
-          return static_cast<unsigned char>(esc);
-      }
-    }
-    return static_cast<unsigned char>(c);
-  }
-
-  RegexAstPtr parse_char_class() {
-    get(); // '['
-    auto n = std::make_shared<RegexAst>();
-    n->kind = RegexAst::Kind::Char;
-    if (!eof() && peek() == '^') {
-      get();
-      n->matcher.negated = true;
-    }
-    bool first = true;
-    while (!eof() && (first || peek() != ']')) {
-      first = false;
-      // POSIX bracket class [:name:]
-      if (pat_.substr(pos_, 2) == "[:") {
-        std::size_t close = pat_.find(":]", pos_ + 2);
-        if (close != std::string_view::npos) {
-          n->matcher.posix_classes.emplace_back(pat_.substr(pos_ + 2, close - (pos_ + 2)));
-          pos_ = close + 2;
-          continue;
-        }
-      }
-      if (peek() == '\\' && pos_ + 1 < pat_.size()) {
-        char next_esc = pat_[pos_ + 1];
-        if (next_esc == 'd' || next_esc == 'w' || next_esc == 's' || next_esc == 'D' ||
-            next_esc == 'W' || next_esc == 'S') {
-          get();
-          get();
-          add_escape_to_matcher(next_esc, n->matcher);
-          continue;
-        }
-      }
-      unsigned char ch = parse_class_char();
-      if (!eof() && peek() == '-' && pos_ + 1 < pat_.size() && pat_[pos_ + 1] != ']') {
-        get(); // '-'
-        unsigned char ch2 = parse_class_char();
-        if (ch <= ch2) {
-          n->matcher.ranges.emplace_back(ch, ch2);
-        } else {
-          n->matcher.ranges.emplace_back(ch2, ch);
-        }
-      } else {
-        n->matcher.ranges.emplace_back(ch, ch);
-      }
-    }
-    if (!eof() && peek() == ']') {
-      get();
-    }
-    return n;
-  }
-
-  RegexAstPtr parse_atom() {
-    if (eof()) {
-      auto n = std::make_shared<RegexAst>();
-      n->kind = RegexAst::Kind::Empty;
-      return n;
-    }
-    char c = peek();
-    if (c == '(') {
-      get();
-      if (pat_.substr(pos_, 2) == "?:") {
-        pos_ += 2;
-      }
-      auto inner = parse_alt();
-      if (!eof() && peek() == ')') {
-        get();
-      }
-      return inner;
-    }
-    if (c == '[') {
-      return parse_char_class();
-    }
-    if (c == '.') {
-      get();
-      auto n = std::make_shared<RegexAst>();
-      n->kind = RegexAst::Kind::Char;
-      n->matcher.match_any_non_nl = true;
-      return n;
-    }
-    if (c == '\\') {
-      get();
-      auto n = std::make_shared<RegexAst>();
-      n->kind = RegexAst::Kind::Char;
-      if (!eof()) {
-        add_escape_to_matcher(get(), n->matcher);
-      }
-      return n;
-    }
-    // Literal character (anchors ^/$ treated as literal if present, or ignore ^/$)
-    get();
-    auto n = std::make_shared<RegexAst>();
-    n->kind = RegexAst::Kind::Char;
-    n->matcher.ranges.emplace_back(static_cast<unsigned char>(c), static_cast<unsigned char>(c));
-    return n;
-  }
-};
-
-struct NfaState {
-  enum class Kind {
-    Match,
-    Split,
-    Char,
-  };
-  Kind kind = Kind::Match;
-  CharMatcher matcher;
-  int out1 = -1;
-  int out2 = -1;
-};
-
-struct CompiledRegex {
-  RegexAstPtr ast;
-  std::vector<NfaState> states;
-  int start = 0;
-
-  static CompiledRegex compile(std::string_view pattern) {
-    CompiledRegex cr;
-    RegexParser parser(pattern);
-    cr.ast = parser.parse();
-    int match_id = cr.add_state(NfaState{NfaState::Kind::Match, {}, -1, -1});
-    cr.start = cr.emit_ast(cr.ast, match_id);
-    return cr;
-  }
-
-  std::optional<std::size_t> match_prefix(std::string_view input, std::size_t offset) const {
-    std::vector<int> cur_states;
-    std::vector<int> next_states;
-    std::vector<int> seen(states.size(), 0);
-    int mark = 1;
-
-    auto add_eps = [&](auto& self, int s, std::vector<int>& list, int stamp) -> void {
-      if (s < 0 || seen[static_cast<std::size_t>(s)] == stamp) {
-        return;
-      }
-      seen[static_cast<std::size_t>(s)] = stamp;
-      const auto& st = states[static_cast<std::size_t>(s)];
-      if (st.kind == NfaState::Kind::Split) {
-        self(self, st.out1, list, stamp);
-        self(self, st.out2, list, stamp);
-      } else {
-        list.push_back(s);
-      }
-    };
-
-    add_eps(add_eps, start, cur_states, mark++);
-
-    std::optional<std::size_t> best;
-    for (int s : cur_states) {
-      if (states[static_cast<std::size_t>(s)].kind == NfaState::Kind::Match) {
-        best = 0;
-        break;
-      }
-    }
-
-    for (std::size_t i = offset; i < input.size() && !cur_states.empty(); ++i) {
-      unsigned char ch = static_cast<unsigned char>(input[i]);
-      next_states.clear();
-      int step_mark = mark++;
-      for (int s : cur_states) {
-        const auto& st = states[static_cast<std::size_t>(s)];
-        if (st.kind == NfaState::Kind::Char && st.matcher.matches(ch)) {
-          add_eps(add_eps, st.out1, next_states, step_mark);
-        }
-      }
-      cur_states.swap(next_states);
-      for (int s : cur_states) {
-        if (states[static_cast<std::size_t>(s)].kind == NfaState::Kind::Match) {
-          best = (i - offset) + 1;
-          break;
-        }
-      }
-    }
-    return best;
-  }
-
-private:
-  int add_state(NfaState st) {
-    int id = static_cast<int>(states.size());
-    states.push_back(std::move(st));
-    return id;
-  }
-
-  int emit_ast(const RegexAstPtr& node, int next_state) {
-    if (!node) {
-      return next_state;
-    }
-    switch (node->kind) {
-      case RegexAst::Kind::Empty:
-        return next_state;
-      case RegexAst::Kind::Char:
-        return add_state(NfaState{NfaState::Kind::Char, node->matcher, next_state, -1});
-      case RegexAst::Kind::Seq: {
-        int cur = next_state;
-        for (std::size_t i = node->items.size(); i > 0; --i) {
-          cur = emit_ast(node->items[i - 1], cur);
-        }
-        return cur;
-      }
-      case RegexAst::Kind::Alt: {
-        if (node->items.empty()) {
-          return next_state;
-        }
-        std::vector<int> starts;
-        starts.reserve(node->items.size());
-        for (const auto& it : node->items) {
-          starts.push_back(emit_ast(it, next_state));
-        }
-        int head = starts.back();
-        for (std::size_t i = starts.size() - 1; i > 0; --i) {
-          head = add_state(NfaState{NfaState::Kind::Split, {}, starts[i - 1], head});
-        }
-        return head;
-      }
-      case RegexAst::Kind::Repeat: {
-        int tail = next_state;
-        if (node->max_rep < 0) {
-          int split_id = add_state(NfaState{NfaState::Kind::Split, {}, -1, tail});
-          int body_start = emit_ast(node->inner, split_id);
-          states[static_cast<std::size_t>(split_id)].out1 = body_start;
-          tail = split_id;
-        } else {
-          for (int k = node->max_rep; k > node->min_rep; --k) {
-            int body_start = emit_ast(node->inner, tail);
-            tail = add_state(NfaState{NfaState::Kind::Split, {}, body_start, tail});
-          }
-        }
-        for (int k = 0; k < node->min_rep; ++k) {
-          tail = emit_ast(node->inner, tail);
-        }
-        return tail;
-      }
-    }
-    return next_state;
-  }
-};
+using regex::NfaState;
+using regex::CompiledRegex;
 
 inline std::string sample_from_regex_ast(const RegexAstPtr& node, std::mt19937_64& rng) {
   if (!node) {
@@ -899,7 +375,7 @@ inline void advance_pos(std::string_view text, int& line, int& col) noexcept {
     if (c == '\n') {
       ++line;
       col = 1;
-    } else {
+    } else if ((static_cast<unsigned char>(c) & 0xc0) != 0x80 && c != '\r') {
       ++col;
     }
   }
@@ -911,7 +387,7 @@ inline std::string display_token_name(const ir::Grammar& g, const std::string& i
   }
   if (const auto* td = ir::find_token(g, id)) {
     if (!td->is_regex && (td->is_anonymous || td->is_keyword)) {
-      return "\"" + td->pattern + "\"";
+      return c17_text::display_string(td->pattern);
     }
   }
   return id;
@@ -926,20 +402,16 @@ inline EvalValue token_to_value(const ir::TokenDef* td, const std::string& lexem
   }
   if (td->type.kind == ir::Type::Kind::Named) {
     if (td->type.name == "Double" || td->type.name == "Float") {
-      try {
-        double d = std::stod(lexeme);
-        return EvalValue::make_number(d, lexeme.find('.') == std::string::npos);
-      } catch (...) {
-        return EvalValue::make_number(0.0, false);
-      }
+      double d;
+      auto [end, ec] = std::from_chars(lexeme.data(), lexeme.data() + lexeme.size(), d);
+      if (ec != std::errc{} || end != lexeme.data() + lexeme.size() || !std::isfinite(d)) throw std::invalid_argument("invalid or out-of-range Double token");
+      return EvalValue::make_number(d, false);
     }
     if (td->type.name == "Int") {
-      try {
-        long long v = std::stoll(lexeme);
-        return EvalValue::make_number(static_cast<double>(v), true);
-      } catch (...) {
-        return EvalValue::make_number(0.0, true);
-      }
+      std::int64_t n;
+      auto [end, ec] = std::from_chars(lexeme.data(), lexeme.data() + lexeme.size(), n);
+      if (ec != std::errc{} || end != lexeme.data() + lexeme.size()) throw std::invalid_argument("invalid or out-of-range Int64 token");
+      auto v = EvalValue::make_number(0, true); v.integer_value = n; v.number_value = static_cast<double>(n); return v;
     }
     if (td->type.name == "Bool") {
       return EvalValue::make_bool(lexeme == "true" || lexeme == "True");
@@ -1027,6 +499,12 @@ public:
   }
 
 private:
+  struct DepthGuard {
+    std::size_t& depth;
+    explicit DepthGuard(std::size_t& value) : depth(value) { if (++depth > 128) throw std::runtime_error("parse nesting exceeds 128"); }
+    ~DepthGuard() { --depth; }
+  };
+  std::size_t depth_ = 0, steps_ = 0;
   const ir::Grammar& grammar_;
   std::string_view input_;
   bool scannerless_ = false;
@@ -1235,6 +713,7 @@ private:
       return;
     }
     if (td->action == ir::LexActionKind::Push && !td->target_mode.empty()) {
+      if(modes.size()>=64)throw std::runtime_error("lexer mode depth exceeds 64");
       modes.push_back(td->target_mode);
     } else if (td->action == ir::LexActionKind::Pop && modes.size() > 1) {
       modes.pop_back();
@@ -1416,9 +895,11 @@ private:
       if (ct.def == target->def || ct.def->is_skip) {
         continue;
       }
-      if (ct.def->priority > target->def->priority) {
+      {
         auto other_len = match_compiled(ct, input_, char_pos_);
-        if (other_len && *other_len >= *mlen) {
+        if (other_len && (*other_len > *mlen || (*other_len == *mlen &&
+            (ct.def->priority > target->def->priority ||
+             (ct.def->priority == target->def->priority && ct.def->decl_order < target->def->decl_order))))) {
           record_failure(display_token_name(grammar_, token_id));
           return std::nullopt;
         }
@@ -1462,6 +943,10 @@ private:
       case ir::ActionExpr::Kind::BoolLit:
         return EvalValue::make_bool(act.bool_value);
       case ir::ActionExpr::Kind::IntLit:
+        if (!act.name.empty()) {
+          ir::TokenDef token;token.type.kind=ir::Type::Kind::Named;token.type.name="Int";
+          return token_to_value(&token,act.name);
+        }
         return EvalValue::make_number(act.number_value, true);
       case ir::ActionExpr::Kind::FloatLit:
         return EvalValue::make_number(act.number_value, false);
@@ -1522,6 +1007,7 @@ private:
   }
 
   std::optional<EvalValue> eval_rule(const std::string& rule_id) {
+    DepthGuard guard(depth_);
     auto it = grammar_.gRules.find(rule_id);
     if (it == grammar_.gRules.end()) {
       record_failure(rule_id);
@@ -1597,6 +1083,7 @@ private:
   }
 
   std::optional<EvalValue> eval_prec_table(const ir::ProdPtr& p, int min_prec) {
+    DepthGuard guard(depth_);
     const std::size_t start_off = current_offset();
     std::optional<EvalValue> lhs;
 
@@ -1704,6 +1191,7 @@ private:
   }
 
   std::optional<EvalValue> eval_prod(const ir::ProdPtr& p) {
+    if (++steps_ > 10000000) throw std::runtime_error("parse step budget exceeded");
     if (!p) {
       return EvalValue::make_unit();
     }
@@ -1734,6 +1222,7 @@ private:
             return std::nullopt;
           }
           if (i < prefix_count) {
+            if(prefix_stack_.size()>=64)throw std::runtime_error("factored prefix depth exceeds 64");
             prefix_stack_.push_back(*item_val);
           }
           last = std::move(*item_val);
@@ -2180,8 +1669,12 @@ export namespace parsley::eval {
 inline EvalResult parse_input(const ir::Grammar& grammar,
                               std::string_view input,
                               std::string_view start_rule = "") {
-  detail::Interpreter interp(grammar, input);
-  return interp.run(start_rule);
+  try {
+    detail::Interpreter interp(grammar, input);
+    return interp.run(start_rule);
+  } catch (const std::exception& e) {
+    EvalResult r; r.error = EvalParseError{1, 1, "valid input within resource limits", "input", e.what()}; return r;
+  }
 }
 
 inline ExampleRunSummary run_examples(const ir::Grammar& grammar, DiagnosticBag& diags) {

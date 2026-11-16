@@ -450,8 +450,10 @@ private:
   }
 
   void determine_starts(ir::Grammar& g) {
-    if (g.pragmas.start_rule && g.gRules.contains(*g.pragmas.start_rule)) {
-      g.gStarts.push_back(*g.pragmas.start_rule);
+    if (g.pragmas.start_rule) {
+      if (!g.gRules.contains(*g.pragmas.start_rule)) {
+        diags_.error("E0600", "unknown START rule `" + *g.pragmas.start_rule + "`");
+      } else g.gStarts.push_back(*g.pragmas.start_rule);
       return;
     }
     if (mod_.has_export_list) {
@@ -465,7 +467,10 @@ private:
       if (g.gRules.contains("program")) {
         g.gStarts.push_back("program");
       } else if (!g.gRules.empty()) {
-        g.gStarts.push_back(g.gRules.begin()->first);
+        auto first = std::min_element(g.gRules.begin(), g.gRules.end(), [](const auto& a, const auto& b) {
+          return a.second.rSpan.start_offset < b.second.rSpan.start_offset;
+        });
+        g.gStarts.push_back(first->first);
       }
     }
   }
@@ -595,6 +600,7 @@ private:
       case ast::RuleExpr::Kind::IntLit: {
         ir::ActionExpr act;
         act.kind = ir::ActionExpr::Kind::IntLit;
+        act.name = expr->text;
         act.number_value = expr->number_value;
         return act;
       }

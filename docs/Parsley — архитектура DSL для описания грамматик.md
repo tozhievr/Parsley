@@ -1,5 +1,8 @@
 # Parsley — архитектура DSL для описания грамматик
 
+> Historical architecture proposal, not a product specification. The supported target is C17 only. Multi-language backends, independent LALR/GLL runtimes and parse forests below are design ideas, not delivered behavior. Current contracts: [STATUS.md](STATUS.md), [REGEX.md](REGEX.md).
+> Исторический проектный документ. Единственный поддерживаемый таргет — C17; перечисление других языков и алгоритмов ниже не означает их наличия в продукте.
+
 Статус: черновик v0.1 · Назначение: проектирование Haskell-подобного языка описания грамматик и генератора парсеров на его основе.
 
 ## 1. Цели и не-цели

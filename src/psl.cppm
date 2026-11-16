@@ -26,6 +26,7 @@ import parsley.diagnostic;
 import parsley.ast;
 import parsley.ir;
 import parsley.eval;
+import parsley.c17_text;
 
 export namespace parsley::psl {
 
@@ -4183,6 +4184,7 @@ export namespace parsley::psl {
 inline PslModule parse_psl_module(std::string_view source,
                                   std::string_view filename,
                                   DiagnosticBag& diags) {
+  if(source.starts_with("\xef\xbb\xbf"))source.remove_prefix(3);
   const auto tokens = detail::lex_psem(source, filename, diags);
   detail::PslParser parser(tokens, filename, diags);
   return parser.parse_module();
@@ -4557,36 +4559,7 @@ inline std::string sanitize_ident(std::string_view s) {
   return out;
 }
 
-inline std::string c_str_lit(std::string_view s) {
-  std::string out = "\"";
-  std::size_t chunk_len = 0;
-  for (unsigned char c : s) {
-    if (chunk_len >= 1800) {
-      out += "\" \"";
-      chunk_len = 0;
-    }
-    switch (c) {
-      case '\\': out += "\\\\"; chunk_len += 2; break;
-      case '"':  out += "\\\""; chunk_len += 2; break;
-      case '\n': out += "\\n";  chunk_len += 2; break;
-      case '\r': out += "\\r";  chunk_len += 2; break;
-      case '\t': out += "\\t";  chunk_len += 2; break;
-      default:
-        if (c < 0x20 || c >= 0x7f) {
-          char buf[8];
-          std::snprintf(buf, sizeof(buf), "\\x%02x", static_cast<unsigned>(c));
-          out += buf;
-          chunk_len += 4;
-        } else {
-          out.push_back(static_cast<char>(c));
-          ++chunk_len;
-        }
-        break;
-    }
-  }
-  out.push_back('"');
-  return out;
-}
+inline std::string c_str_lit(std::string_view text) { return c17_text::literal(text); }
 
 struct CtorInfo {
   std::string ctor_name;
@@ -4692,7 +4665,9 @@ inline std::string emit_ast_header(const std::string& mod_low,
   o << "#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n";
 
   o << "#ifndef PARSLEY_API\n"
-       "#  if defined(_WIN32) && !defined(PARSLEY_STATIC)\n"
+       "#  if defined(PARSLEY_STATIC)\n"
+       "#    define PARSLEY_API\n"
+       "#  elif defined(_WIN32)\n"
        "#    ifdef PARSLEY_BUILDING_DLL\n"
        "#      define PARSLEY_API __declspec(dllexport)\n"
        "#    else\n"
@@ -4708,16 +4683,18 @@ inline std::string emit_ast_header(const std::string& mod_low,
   o << "#ifndef PSL_RUNTIME_TYPES_DEFINED\n#define PSL_RUNTIME_TYPES_DEFINED\n\n";
   o << "typedef struct psl_str {\n  const char *ptr;\n  size_t len;\n} psl_str;\n\n";
   o << "typedef struct psl_span {\n  uint32_t offset;\n  uint32_t len;\n  uint32_t line;\n  uint32_t col;\n} psl_span;\n\n";
-  o << "typedef struct psl_arena {\n  uint8_t *base;\n  size_t cap;\n  size_t used;\n} psl_arena;\n\n";
+  o << "typedef struct psl_arena {\n  uint8_t *base;\n  size_t cap;\n  size_t used;\n  int error; /* 1 exhausted, 2 invalid size/alignment */\n} psl_arena;\n\n";
 
   o << "static inline void psl_arena_init(psl_arena *a, void *buf, size_t cap) {\n";
-  o << "  if (!a) return;\n  a->base = (uint8_t *)buf;\n  a->cap = cap;\n  a->used = 0;\n}\n\n";
+  o << "  if (!a) return;\n  a->base = (uint8_t *)buf;\n  a->cap = cap;\n  a->used = 0;\n  a->error = 0;\n}\n\n";
 
   o << "static inline void *psl_arena_alloc(psl_arena *a, size_t bytes, size_t align) {\n";
-  o << "  if (!a || !a->base) return NULL;\n";
+  o << "  if (!a) return NULL;\n  if (!a->base) { a->error=1; return NULL; }\n";
   o << "  if (align == 0) align = 8;\n";
-  o << "  size_t aligned = (a->used + (align - 1u)) & ~(align - 1u);\n";
-  o << "  if (aligned > a->cap || bytes > a->cap - aligned) return NULL;\n";
+  o << "  if ((align & (align-1u)) || a->used > a->cap || (uintptr_t)a->base > UINTPTR_MAX-a->used || (uintptr_t)a->base+a->used > UINTPTR_MAX-(align-1u)) {a->error=2;return NULL;}\n";
+  o << "  uintptr_t address = ((uintptr_t)a->base+a->used+(align-1u)) & ~(uintptr_t)(align-1u);\n";
+  o << "  size_t aligned = (size_t)(address-(uintptr_t)a->base);\n";
+  o << "  if (aligned > a->cap || bytes > a->cap - aligned) {a->error=1;return NULL;}\n";
   o << "  void *p = a->base + aligned;\n";
   o << "  if (bytes > 0) memset(p, 0, bytes);\n";
   o << "  a->used = aligned + bytes;\n";
@@ -4728,7 +4705,7 @@ inline std::string emit_ast_header(const std::string& mod_low,
   o << "  psl_str s;\n  s.ptr = p ? p : \"\";\n  s.len = len;\n  return s;\n}\n\n";
 
   o << "#define PSL_STR_INIT(LIT) { (LIT), sizeof(LIT) - 1u }\n";
-  o << "#define psl_str_lit(LIT) ((psl_str){ (LIT), sizeof(LIT) - 1u })\n\n";
+  o << "#ifdef __cplusplus\n#define psl_str_lit(LIT) (psl_str{ (LIT), sizeof(LIT) - 1u })\n#else\n#define psl_str_lit(LIT) ((psl_str){ (LIT), sizeof(LIT) - 1u })\n#endif\n\n";
 
   o << "static inline int psl_str_eq(psl_str a, psl_str b) {\n";
   o << "  if (a.len != b.len) return 0;\n";
@@ -4743,9 +4720,9 @@ inline std::string emit_ast_header(const std::string& mod_low,
   o << "}\n\n";
 
   o << "static inline psl_str psl_str_concat(psl_arena *a, psl_str x, psl_str y) {\n";
-  o << "  size_t total = x.len + y.len;\n";
+  o << "  if (y.len == SIZE_MAX || x.len > SIZE_MAX-y.len-1u) {if(a)a->error=2;psl_str invalid={NULL,0};return invalid;}\n  size_t total = x.len + y.len;\n";
   o << "  char *buf = (char *)psl_arena_alloc(a, total + 1u, 1u);\n";
-  o << "  if (!buf) return psl_str_lit(\"\");\n";
+  o << "  if (!buf) {psl_str invalid={NULL,0};return invalid;}\n";
   o << "  if (x.len > 0) memcpy(buf, x.ptr, x.len);\n";
   o << "  if (y.len > 0) memcpy(buf + x.len, y.ptr, y.len);\n";
   o << "  buf[total] = '\\0';\n";
@@ -4886,7 +4863,7 @@ inline std::string emit_parse_header(const std::string& mod_low, const std::stri
 }
 
 inline std::string emit_parse_source(const std::string& mod_low,
-                                     const std::string& mod_up) {
+                                     const std::string& mod_up, const CtorCatalog& cat) {
   std::ostringstream o;
   o << "/* Generated by Parsley PSL C17 backend; do not edit manually. */\n";
   o << "#if !defined(PARSLEY_STATIC) && !defined(PARSLEY_BUILDING_DLL)\n";
@@ -4901,7 +4878,7 @@ inline std::string emit_parse_source(const std::string& mod_low,
   o << "  n->size = sizeof(" << mod_low << "_node);\n";
   o << "  n->tag = tag;\n  n->ctor_name = ctor_name;\n  n->type_name = type_name;\n";
   o << "  n->span = span;\n  n->child_count = child_count;\n";
-  o << "  if (child_count > 0) {\n";
+  o << "  if(child_count>SIZE_MAX/sizeof(void*)){arena->error=2;return NULL;}\n  if (child_count > 0) {\n";
   o << "    n->children = (const " << mod_low << "_node **)psl_arena_alloc(arena, child_count * sizeof(const " << mod_low << "_node *), sizeof(void *));\n";
   o << "    if (!n->children) return NULL;\n";
   o << "  }\n  return n;\n}\n\n";
@@ -4909,7 +4886,7 @@ inline std::string emit_parse_source(const std::string& mod_low,
   o << "PARSLEY_API " << mod_low << "_node *" << mod_low << "_new_str_node(psl_arena *arena, psl_str text, psl_span span) {\n";
   o << "  " << mod_low << "_node *n = " << mod_low << "_new_node(arena, " << mod_up
     << "_NODE_STRING, psl_str_lit(\"String\"), psl_str_lit(\"Text\"), span, 0);\n";
-  o << "  if (n) n->text_val = text;\n  return n;\n}\n\n";
+  o << "  if (n) {\n    if(text.len==SIZE_MAX){arena->error=2;return NULL;}\n    char *copy=(char*)psl_arena_alloc(arena,text.len+1u,1u);if(!copy)return NULL;\n    if(text.len)memcpy(copy,text.ptr,text.len);copy[text.len]=0;n->text_val=psl_str_make(copy,text.len);\n  }\n  return n;\n}\n\n";
 
   o << "PARSLEY_API " << mod_low << "_node *" << mod_low << "_new_num_node(psl_arena *arena, double val, psl_span span) {\n";
   o << "  " << mod_low << "_node *n = " << mod_low << "_new_node(arena, " << mod_up
@@ -4925,94 +4902,30 @@ inline std::string emit_parse_source(const std::string& mod_low,
   o << "  return " << mod_low << "_new_node(arena, " << mod_up
     << "_NODE_LIST, psl_str_lit(\"List\"), psl_str_lit(\"List\"), span, count);\n}\n\n";
 
-  o << "static int is_space_ch(char c) { return c == ' ' || c == '\\t' || c == '\\r' || c == '\\n'; }\n";
-  o << "static int is_digit_ch(char c) { return c >= '0' && c <= '9'; }\n";
-  o << "static int is_alpha_ch(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }\n\n";
-
-  o << "static const psl_diag_def " << mod_low << "_PARSE_ERR_DEF = {\n";
-  o << "  sizeof(psl_diag_def), PSL_STR_INIT(\"PSL-PARSE\"), PSL_STR_INIT(\"parse\"),\n";
-  o << "  PSL_SEV_ERROR, PSL_STATUS_VERIFIED, 1.0, PSL_STR_INIT(\"Syntax error\"), PSL_STR_INIT(\"parser\")\n};\n\n";
-
-  o << "PARSLEY_API int " << mod_low << "_parse(psl_arena *arena, psl_str src, const " << mod_low
-    << "_node **out_root, psl_diag *err_out) {\n";
-  o << "  if (!arena || !out_root) return -1;\n";
-  o << "  *out_root = NULL;\n";
-  o << "  size_t i = 0;\n  uint32_t line = 1, col = 1;\n";
-  o << "  size_t cap = 64, count = 0;\n";
-  o << "  const " << mod_low << "_node **items = (const " << mod_low
-    << "_node **)psl_arena_alloc(arena, cap * sizeof(const " << mod_low << "_node *), sizeof(void *));\n";
-  o << "  if (!items) return -1;\n";
-  o << "  while (i < src.len) {\n";
-  o << "    char c = src.ptr[i];\n";
-  o << "    if (is_space_ch(c)) {\n";
-  o << "      if (c == '\\n') { ++line; col = 1; } else { ++col; }\n";
-  o << "      ++i;\n      continue;\n";
-  o << "    }\n";
-  o << "    if ((c == '-' && i + 1 < src.len && src.ptr[i + 1] == '-') ||\n";
-  o << "        (c == '/' && i + 1 < src.len && src.ptr[i + 1] == '/') || c == '#') {\n";
-  o << "      while (i < src.len && src.ptr[i] != '\\n') { ++i; }\n";
-  o << "      continue;\n";
-  o << "    }\n";
-  o << "    psl_span sp = { (uint32_t)i, 1u, line, col };\n";
-  o << "    const " << mod_low << "_node *tok_node = NULL;\n";
-  o << "    if (is_digit_ch(c)) {\n";
-  o << "      size_t start = i;\n      double val = 0.0;\n";
-  o << "      while (i < src.len && is_digit_ch(src.ptr[i])) {\n";
-  o << "        val = val * 10.0 + (double)(src.ptr[i] - '0');\n        ++i; ++col;\n";
-  o << "      }\n";
-  o << "      if (i + 1 < src.len && src.ptr[i] == '.' && is_digit_ch(src.ptr[i + 1])) {\n";
-  o << "        double frac = 0.1;\n        ++i; ++col;\n";
-  o << "        while (i < src.len && is_digit_ch(src.ptr[i])) {\n";
-  o << "          val += (double)(src.ptr[i] - '0') * frac;\n          frac *= 0.1;\n          ++i; ++col;\n";
-  o << "        }\n";
-  o << "      }\n";
-  o << "      sp.len = (uint32_t)(i - start);\n";
-  o << "      tok_node = " << mod_low << "_new_num_node(arena, val, sp);\n";
-  o << "    } else if (is_alpha_ch(c)) {\n";
-  o << "      size_t start = i;\n";
-  o << "      while (i < src.len && (is_alpha_ch(src.ptr[i]) || is_digit_ch(src.ptr[i]))) { ++i; ++col; }\n";
-  o << "      sp.len = (uint32_t)(i - start);\n";
-  o << "      tok_node = " << mod_low << "_new_str_node(arena, psl_str_make(src.ptr + start, i - start), sp);\n";
-  o << "    } else if (c == '\"' || c == '\\'') {\n";
-  o << "      char q = c;\n      size_t start = i++;\n      ++col;\n";
-  o << "      while (i < src.len && src.ptr[i] != q) {\n";
-  o << "        if (src.ptr[i] == '\\\\' && i + 1 < src.len) { i += 2; col += 2; continue; }\n";
-  o << "        if (src.ptr[i] == '\\n') { ++line; col = 1; ++i; continue; }\n";
-  o << "        ++i; ++col;\n";
-  o << "      }\n";
-  o << "      if (i >= src.len) {\n";
-  o << "        if (err_out) {\n";
-  o << "          err_out->size = sizeof(psl_diag);\n          err_out->def = &" << mod_low << "_PARSE_ERR_DEF;\n";
-  o << "          err_out->severity = PSL_SEV_ERROR;\n          err_out->span = sp;\n";
-  o << "          err_out->message = psl_str_lit(\"Unterminated string literal\");\n";
-  o << "        }\n";
-  o << "        return -1;\n";
-  o << "      }\n";
-  o << "      ++i; ++col;\n";
-  o << "      sp.len = (uint32_t)(i - start);\n";
-  o << "      tok_node = " << mod_low << "_new_str_node(arena, psl_str_make(src.ptr + start + 1, (i - start) - 2u), sp);\n";
-  o << "    } else {\n";
-  o << "      tok_node = " << mod_low << "_new_str_node(arena, psl_str_make(src.ptr + i, 1u), sp);\n";
-  o << "      ++i; ++col;\n";
-  o << "    }\n";
-  o << "    if (!tok_node) return -1;\n";
-  o << "    if (count < cap) { items[count++] = tok_node; }\n";
-  o << "  }\n";
-  o << "  if (count == 0) {\n";
-  o << "    if (err_out) {\n";
-  o << "      err_out->size = sizeof(psl_diag);\n      err_out->def = &" << mod_low << "_PARSE_ERR_DEF;\n";
-  o << "      err_out->severity = PSL_SEV_ERROR;\n      err_out->span = (psl_span){0u, 0u, 1u, 1u};\n";
-  o << "      err_out->message = psl_str_lit(\"Empty input\");\n";
-  o << "    }\n";
-  o << "    return -1;\n";
-  o << "  }\n";
-  o << "  " << mod_low << "_node *root = " << mod_low << "_new_list_node(arena, count, (psl_span){0u, (uint32_t)src.len, 1u, 1u});\n";
-  o << "  if (!root) return -1;\n";
-  o << "  for (size_t k = 0; k < count; ++k) root->children[k] = items[k];\n";
-  o << "  *out_root = root;\n";
-  o << "  return 0;\n";
-  o << "}\n";
-  return o.str();
+  o << "#define PARSLEY_INTERNAL 1\n#include \"include/" << mod_low << "_parser.h\"\n\n";
+  o << "static " << mod_low << "_node *convert_parser_value(psl_arena *arena,const ParsleyValue *value,size_t depth) {\n";
+  o << "  if(!value || depth>128u){arena->error=2;return NULL;}\n  psl_span span={0u,0u,1u,1u};\n";
+  o << "  switch(value->kind){\n";
+  o << "    case PARSLEY_VAL_STRING:return " << mod_low << "_new_str_node(arena,psl_str_make(value->string_val,value->string_len),span);\n";
+  o << "    case PARSLEY_VAL_NUMBER:return " << mod_low << "_new_num_node(arena,value->is_int?(double)value->integer_val:value->number_val,span);\n";
+  o << "    case PARSLEY_VAL_BOOL:return " << mod_low << "_new_bool_node(arena,value->bool_val,span);\n";
+  o << "    default:break;\n  }\n";
+  o << "  " << mod_low << "_node_tag tag=" << mod_up << "_NODE_UNKNOWN;\n";
+  o << "  psl_str ctor=psl_str_lit(\"Unit\"),type=psl_str_lit(\"Unit\");\n";
+  o << "  if(value->kind==PARSLEY_VAL_LIST || value->kind==PARSLEY_VAL_TUPLE){tag=" << mod_up << "_NODE_LIST;ctor=psl_str_lit(\"List\");type=psl_str_lit(\"List\");}\n";
+  for(const auto& c:cat.ctors) {
+    o << "  if(value->kind==PARSLEY_VAL_CTOR && value->ctor_name && strcmp(value->ctor_name," << c_str_lit(c.ctor_name) << ")==0){tag=" << c.enum_name << ";ctor=psl_str_lit(" << c_str_lit(c.ctor_name) << ");type=psl_str_lit(" << c_str_lit(c.type_name) << ");}\n";
+  }
+  o << "  " << mod_low << "_node *node=" << mod_low << "_new_node(arena,tag,ctor,type,span,value->item_count);\n";
+  o << "  if(!node)return NULL;\n  for(size_t i=0;i<value->item_count;++i){node->children[i]=convert_parser_value(arena,value->items[i],depth+1u);if(!node->children[i])return NULL;}\n  return node;\n}\n\n";
+  o << "static const psl_diag_def parse_error={sizeof(psl_diag_def),PSL_STR_INIT(\"PSL-PARSE\"),PSL_STR_INIT(\"parse\"),PSL_SEV_ERROR,PSL_STATUS_VERIFIED,1.0,PSL_STR_INIT(\"Syntax error\"),PSL_STR_INIT(\"parser\")};\n";
+  o << "PARSLEY_API int " << mod_low << "_parse(psl_arena *arena,psl_str source,const " << mod_low << "_node **root,psl_diag *error){\n";
+  o << "  if(!arena || !root || (!source.ptr && source.len))return -1;\n  *root=NULL;\n  if(error)memset(error,0,sizeof(*error));\n";
+  o << "  ParsleyResult parsed=parsley_parse_n(source.ptr,source.len);\n";
+  o << "  if(!parsed.ok || parsed.consumed!=source.len){\n    int code=parsed.error.code;\n";
+  o << "    if(error){error->size=sizeof(*error);error->def=&parse_error;error->severity=PSL_SEV_ERROR;error->span=(psl_span){(uint32_t)parsed.consumed,0u,(uint32_t)parsed.error.line,(uint32_t)parsed.error.col};error->message=psl_str_lit(\"Invalid or incomplete input\");}\n";
+  o << "    parsley_result_free(&parsed);return code==1||code==2?-2:-1;\n  }\n";
+  o << "  *root=convert_parser_value(arena,parsed.value,0u);parsley_result_free(&parsed);\n  return *root && !arena->error ? 0 : -2;\n}\n";  return o.str();
 }
 
 inline std::string emit_sem_header(const std::string& mod_low, const std::string& mod_up) {
@@ -5909,28 +5822,30 @@ inline std::string emit_sem_source(const PslModule& psem,
   o << "  return rv_str(v.s);\n}\n\n";
 
   o << "static inline psl_str format_diag_tpl(" << mod_low << "_ctx *cx, psl_str tpl, const psl_kv *kvs, size_t kvn) {\n";
-  o << "  psl_str out = psl_str_lit(\"\");\n";
-  o << "  size_t i = 0;\n";
-  o << "  while (i < tpl.len) {\n";
-  o << "    if (tpl.ptr[i] == '{') {\n";
-  o << "      size_t end = i + 1u;\n";
-  o << "      while (end < tpl.len && tpl.ptr[end] != '}') ++end;\n";
-  o << "      if (end < tpl.len) {\n";
-  o << "        psl_str key = psl_str_make(tpl.ptr + i + 1u, end - i - 1u);\n";
-  o << "        psl_str val = psl_str_lit(\"?\");\n";
-  o << "        for (size_t k = 0; k < kvn; ++k) {\n";
-  o << "          if (psl_str_eq(kvs[k].key, key)) {\n";
-  o << "            val = (kvs[k].val.kind == RV_TYPE) ? ty_format(cx, kvs[k].val.id, 0) : kvs[k].val.s;\n";
-  o << "            break;\n";
-  o << "          }\n        }\n";
-  o << "        out = psl_str_concat(cx->arena, out, val);\n";
-  o << "        i = end + 1u;\n        continue;\n";
-  o << "      }\n    }\n";
-  o << "    size_t st = i;\n";
-  o << "    while (i < tpl.len && tpl.ptr[i] != '{') ++i;\n";
-  o << "    out = psl_str_concat(cx->arena, out, psl_str_make(tpl.ptr + st, i - st));\n";
-  o << "  }\n  return out;\n}\n\n";
-
+  o << R"C17(
+  psl_str invalid = {NULL,0};
+  if (tpl.len > (SIZE_MAX / sizeof(psl_str))-1u) {cx->arena->error=2;return invalid;}
+  psl_str* parts=(psl_str*)psl_arena_alloc(cx->arena,(tpl.len+1u)*sizeof(psl_str),sizeof(void*));
+  if(!parts)return invalid;
+  size_t i=0,count=0,total=0;
+  while(i<tpl.len) {
+    psl_str value; size_t start=i;
+    if(tpl.ptr[i]=='{') {
+      size_t end=i+1;while(end<tpl.len&&tpl.ptr[end]!='}')++end;
+      if(end<tpl.len) {
+        psl_str key=psl_str_make(tpl.ptr+i+1,end-i-1);value=psl_str_lit("?");
+        for(size_t k=0;k<kvn;++k)if(psl_str_eq(kvs[k].key,key)){value=kvs[k].val.kind==RV_TYPE?ty_format(cx,kvs[k].val.id,0):kvs[k].val.s;break;}
+        i=end+1;
+      } else {++i;value=psl_str_make(tpl.ptr+start,1);}
+    } else {while(i<tpl.len&&tpl.ptr[i]!='{')++i;value=psl_str_make(tpl.ptr+start,i-start);}
+    if(value.len>SIZE_MAX-total-1u){cx->arena->error=2;return invalid;}
+    parts[count++]=value;total+=value.len;
+  }
+  char* text=(char*)psl_arena_alloc(cx->arena,total+1u,1u);if(!text)return invalid;
+  size_t pos=0;for(size_t k=0;k<count;++k){if(parts[k].len)memcpy(text+pos,parts[k].ptr,parts[k].len);pos+=parts[k].len;}
+  text[pos]='\0';return psl_str_make(text,pos);
+}
+)C17";
   o << "static inline void emit_diag_msg(" << mod_low << "_ctx *cx, const psl_diag_def *def, psl_severity sev, psl_span sp, psl_str msg, int has_fix, psl_span fsp, psl_str ftxt, psl_fix_safety fsafe) {\n";
   o << "  ++cx->diag_count;\n";
   o << "  if (!cx->sink) return;\n";
@@ -6424,9 +6339,9 @@ inline std::string emit_sem_source(const PslModule& psem,
   o << "  }\n  return cx;\n}\n\n";
 
   o << "static size_t count_ast_nodes(const " << mod_low << "_node *n, int depth) {\n";
-  o << "  if (!n || depth > 256) return 0;\n";
+  o << "  if (!n) return 0;\n  if (depth > 128 || n->child_count > 1000000u || (n->child_count && !n->children)) return SIZE_MAX;\n";
   o << "  size_t c = 1u;\n";
-  o << "  for (size_t i = 0; i < n->child_count; ++i) c += count_ast_nodes(n->children[i], depth + 1);\n";
+  o << "  for (size_t i = 0; i < n->child_count; ++i) {size_t child=count_ast_nodes(n->children[i],depth+1);if(child>1000000u || c>1000000u-child)return SIZE_MAX;c+=child;}\n";
   o << "  return c;\n}\n\n";
 
   o << "static int32_t index_ast_nodes(" << mod_low << "_ctx *cx, const " << mod_low << "_node *n, int32_t parent_id, size_t *cursor, int depth) {\n";
@@ -6465,11 +6380,11 @@ inline std::string emit_sem_source(const PslModule& psem,
   o << "  cx->diag_count = 0;\n  cx->type_unifications = 0;\n  cx->cfg_blocks = 0;\n  cx->lints_evaluated = "
     << psem.lints.size() << "u;\n";
   o << "  size_t total = count_ast_nodes(root, 0);\n";
-  o << "  if (total == 0) return -1;\n";
+  o << "  if (total == 0) return -1;\n  if (total > 1000000u || cx->arena->error) return -2;\n";
   o << "  cx->nodes = (psl_node_info *)psl_arena_alloc(cx->arena, total * sizeof(psl_node_info), sizeof(void *));\n";
   o << "  if (!cx->nodes) return -1;\n";
   o << "  cx->node_count = total;\n";
-  o << "  size_t cursor = 0;\n  index_ast_nodes(cx, root, -1, &cursor, 0);\n";
+  o << "  size_t cursor = 0;\n  index_ast_nodes(cx, root, -1, &cursor, 0);\n  if(cx->arena->error)return -2;\n";
   o << "  cx->type_cap = total * 4u + 64u;\n";
   o << "  cx->types = (psl_type_node *)psl_arena_alloc(cx->arena, cx->type_cap * sizeof(psl_type_node), sizeof(void *));\n";
   o << "  cx->type_count = 0;\n";
@@ -6487,10 +6402,10 @@ inline std::string emit_sem_source(const PslModule& psem,
     o << "  sym_declare(cx, psl_str_lit(" << c_str_lit(bi.name) << "), psl_str_lit("
       << c_str_lit(bi.symbol_kind) << "), " << emit_type_expr_builder(bi.value_type) << ", -1);\n";
   }
-  o << "  run_node_passes(cx, 0, 0);\n";
-  o << "  run_dataflow_pass(cx);\n";
+  o << "  run_node_passes(cx, 0, 0);\n  if(cx->arena->error)return -2;\n";
+  o << "  run_dataflow_pass(cx);\n  if(cx->arena->error)return -2;\n";
   o << "  for (size_t i = 0; i < cx->node_count; ++i) {\n";
-  o << "    run_lints(cx, cx->nodes[i].node, (int32_t)i);\n";
+  o << "    run_lints(cx, cx->nodes[i].node, (int32_t)i);\n    if(cx->arena->error)return -2;\n";
   o << "  }\n";
   o << "  return 0;\n}\n\n";
 
@@ -6566,7 +6481,7 @@ inline std::vector<PslGeneratedFile> emit_psl_c17_files(
   const std::string mod_name = opts.module_override.empty()
                                    ? (psem.module_name.empty() ? grammar.module_name : psem.module_name)
                                    : opts.module_override;
-  const std::string mod_low = detail::c17::sanitize_ident(detail::to_lower_ascii(mod_name));
+  const std::string mod_low = c17_text::module_stem(mod_name);
   const std::string mod_up = detail::c17::to_upper_ascii(mod_low);
   const auto cat = detail::c17::build_ctor_catalog(psem, grammar, mod_up);
 
@@ -6574,7 +6489,7 @@ inline std::vector<PslGeneratedFile> emit_psl_c17_files(
   files.push_back({mod_low + "_ast.h", detail::c17::emit_ast_header(mod_low, mod_up, cat)});
   files.push_back({mod_low + "_diag.h", detail::c17::emit_diag_header(psem, mod_low, mod_up)});
   files.push_back({mod_low + "_parse.h", detail::c17::emit_parse_header(mod_low, mod_up)});
-  files.push_back({mod_low + "_parse.c", detail::c17::emit_parse_source(mod_low, mod_up)});
+  files.push_back({mod_low + "_parse.c", detail::c17::emit_parse_source(mod_low, mod_up, cat)});
   files.push_back({mod_low + "_sem.h", detail::c17::emit_sem_header(mod_low, mod_up)});
   files.push_back({mod_low + "_sem.c",
                    detail::c17::emit_sem_source(psem, grammar, opts, mod_low, mod_up, cat)});

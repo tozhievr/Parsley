@@ -11,3 +11,7 @@ Testing
 *.ilk
 
 *.vsix
+.aed/
+node_modules/
+__pycache__/
+editors/vscode/out/*.map

@@ -1,5 +1,10 @@
+#define _CRT_SECURE_NO_WARNINGS
+#include "process.hpp"
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cstdint>
+#include <exception>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -19,25 +24,16 @@ import parsley.analysis;
 import parsley.eval;
 import parsley.psl;
 import parsley.codegen;
+import parsley.c17_text;
 import parsley.tooling;
 import parsley.compiler;
 
 namespace {
 
 namespace fs = std::filesystem;
+bool verbose_diagnostics = false;
 
-std::string to_lower(std::string_view s) {
-  std::string out;
-  out.reserve(s.size());
-  for (unsigned char c : s) {
-    if (std::isalnum(c)) {
-      out.push_back(static_cast<char>(std::tolower(c)));
-    } else {
-      out.push_back('_');
-    }
-  }
-  return out.empty() ? "parser" : out;
-}
+std::string to_lower(std::string_view name) {return parsley::c17_text::module_stem(name);}
 
 std::optional<std::string> read_text_file(const std::string& path) {
   std::ifstream in(path, std::ios::binary);
@@ -72,19 +68,21 @@ void print_help() {
       << "Usage:\n"
       << "  parsley build <file.parsley|file.psem> [-o <dir>] [--no-compile-shared] [--min-status draft|reviewed|verified] [--emit-agent-docs] [--emit-ir-json] [--emit-ir-sexpr]\n"
       << "  parsley check <file.parsley|file.psem> [--min-status draft|reviewed|verified]\n"
-      << "  parsley test <file.parsley|file.psem> [--fuzz <N>] [--min-status draft|reviewed|verified]\n"
+      << "  parsley test <file.parsley|file.psem> [--fuzz <N>] [--seed <N>] [--min-status draft|reviewed|verified]\n"
       << "  parsley explain <CODE>\n"
       << "  parsley fmt <file.parsley|file.psem> [--write|--check]\n"
       << "  parsley graph <file.parsley> [--format dot|svg] [-o <file>]\n"
       << "  parsley agent-docs [--format markdown|json] [-o <dir_or_file>] [<file.parsley>]\n"
       << "  parsley lsp\n"
       << "  parsley pkg <list|show|init> [name]\n"
-      << "  parsley --version | --help\n";
+      << "  parsley --version | --help\n"
+      << "  Global: -v|--verbose (include analysis notes), --no-color (plain text)\n";
 }
 
 void print_diagnostics(const parsley::DiagnosticBag& diags, std::string_view source,
                        std::string_view psl_source = "") {
   for (const auto& d : diags.items()) {
+    if (d.severity == parsley::Severity::Note && !verbose_diagnostics) continue;
     const std::string_view src =
         (d.span.file.ends_with(".psem") && !psl_source.empty()) ? psl_source : source;
     std::cerr << parsley::render_diagnostics(std::vector<parsley::Diagnostic>{d}, src);
@@ -95,84 +93,46 @@ void print_diagnostics(const parsley::compiler::CompileResult& res) {
   print_diagnostics(res.diagnostics, res.is_psl_only ? res.psl_source : res.source, res.psl_source);
 }
 
-int run_system_cmd(const std::string& cmd) {
-#ifdef _WIN32
-  std::string wrapped = "\"" + cmd + "\"";
-  return std::system(wrapped.c_str());
-#else
-  return std::system(cmd.c_str());
-#endif
-}
-
 std::vector<std::string> candidate_c_compilers() {
+  if (const char* cc = std::getenv("PARSLEY_CC"); cc && *cc) return {cc};
   std::vector<std::string> list;
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996)
+#ifdef PARSLEY_DEFAULT_CC
+  if (fs::exists(PARSLEY_DEFAULT_CC)) list.emplace_back(PARSLEY_DEFAULT_CC);
 #endif
-  if (const char* env_cc = std::getenv("PARSLEY_CC"); env_cc && env_cc[0] != '\0') {
-    list.emplace_back(env_cc);
-  }
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-  list.emplace_back("clang");
-#ifdef _WIN32
-  if (fs::exists("D:/clang-23.1.3/bin/clang.exe")) {
-    list.emplace_back("D:/clang-23.1.3/bin/clang.exe");
-  }
-  list.emplace_back("gcc");
-#else
-  list.emplace_back("cc");
-  list.emplace_back("gcc");
-#endif
-  return list;
+  list.emplace_back("clang"); list.emplace_back("cc"); list.emplace_back("gcc"); return list;
 }
 
-bool compile_shared_library(const fs::path& out_dir,
-                            const std::string& mod_low,
-                            const std::vector<std::string>& extra_c_files,
-                            fs::path& out_lib_path) {
+bool compile_shared_library(const fs::path& out_dir, const std::string& mod_low,
+                            const std::vector<std::string>& extra_c_files, fs::path& out_lib_path) {
   const std::string tgt = mod_low + "_parser";
 #ifdef _WIN32
   out_lib_path = out_dir / (tgt + ".dll");
-  const std::string platform_flags = "-shared";
-  const std::string math_flag;
 #elif defined(__APPLE__)
   out_lib_path = out_dir / ("lib" + tgt + ".dylib");
-  const std::string platform_flags = "-dynamiclib -fPIC";
-  const std::string math_flag;
 #else
   out_lib_path = out_dir / ("lib" + tgt + ".so");
-  const std::string platform_flags = "-shared -fPIC";
-  const std::string math_flag = " -lm";
 #endif
-
-  const fs::path src = out_dir / "parser.c";
-  const fs::path inc1 = out_dir / "include";
-  const fs::path inc2 = out_dir;
-
   for (const auto& cc : candidate_c_compilers()) {
-    std::ostringstream cmd;
-    cmd << "\"" << cc << "\" -std=c17 -O2 " << platform_flags
-        << " -DPARSLEY_BUILDING_DLL"
-        << " -I\"" << inc1.string() << "\""
-        << " -I\"" << inc2.string() << "\""
-        << " \"" << src.string() << "\"";
-    for (const auto& cf : extra_c_files) {
-      fs::path ep = out_dir / cf;
-      if (fs::exists(ep)) {
-        cmd << " \"" << ep.string() << "\"";
-      }
-    }
-    cmd << math_flag << " -o \"" << out_lib_path.string() << "\"";
-    if (run_system_cmd(cmd.str()) == 0 && fs::exists(out_lib_path)) {
-      return true;
-    }
+    std::vector<std::string> args{cc, "-std=c17", "-O2", "-Wall", "-Wextra", "-pedantic", "-DPARSLEY_BUILDING_DLL"};
+#ifdef __APPLE__
+    args.push_back("-dynamiclib");
+#else
+    args.push_back("-shared");
+#endif
+#ifndef _WIN32
+    args.push_back("-fPIC");
+#endif
+    args.push_back("-I" + (out_dir / "include").string());
+    args.push_back("-I" + out_dir.string()); args.push_back((out_dir / "parser.c").string());
+    for (const auto& cf : extra_c_files) if (fs::exists(out_dir / cf)) args.push_back((out_dir / cf).string());
+#if !defined(_WIN32) && !defined(__APPLE__)
+    args.push_back("-lm");
+#endif
+    args.push_back("-o"); args.push_back(out_lib_path.string());
+    if (run_process(args) == 0 && fs::exists(out_lib_path)) return true;
   }
   return false;
 }
-
 bool parse_min_status_arg(std::string_view val, parsley::psl::PslStatus& out_status) {
   auto parsed = parsley::psl::parse_status_name(val);
   if (!parsed) {
@@ -370,7 +330,7 @@ int cmd_check(const std::vector<std::string>& args) {
 
   if (!res.is_psl_only && !res.grammar.module_name.empty()) {
     std::cout << "OK: module `" << res.grammar.module_name << "` checked ("
-              << res.grammar.gRules.size() << " rules, strategy: "
+              << res.grammar.gRules.size() << " rules, analysis mode: "
               << parsley::analysis::strategy_name(res.analysis.selected_strategy) << ")\n";
   }
   if (res.psl_module) {
@@ -389,15 +349,25 @@ int cmd_test(const std::vector<std::string>& args) {
   }
   std::string input_file;
   std::size_t fuzz_count = 0;
+  std::uint64_t fuzz_seed = 42;
   parsley::psl::PslStatus min_status = parsley::psl::PslStatus::Draft;
 
   for (std::size_t i = 0; i < args.size(); ++i) {
-    if (args[i] == "--fuzz") {
+    if(args[i]=="--seed") {
+      if(i+1>=args.size()){std::cerr<<"error: missing --seed value\n";return 2;}
+      const auto& value=args[++i];auto [end,ec]=std::from_chars(value.data(),value.data()+value.size(),fuzz_seed);
+      if(value.empty()||ec!=std::errc{}||end!=value.data()+value.size()){std::cerr<<"error: --seed requires an unsigned 64-bit integer\n";return 2;}
+    } else if (args[i] == "--fuzz") {
       if (i + 1 >= args.size()) {
         std::cerr << "error: missing count after `--fuzz`\n";
         return 1;
       }
-      fuzz_count = static_cast<std::size_t>(std::stoull(args[++i]));
+      const std::string& count = args[++i];
+      const auto [end, ec] = std::from_chars(count.data(), count.data() + count.size(), fuzz_count);
+      if (count.empty() || ec != std::errc{} || end != count.data() + count.size() || fuzz_count > 1000000) {
+        std::cerr << "error: --fuzz requires an integer in [0, 1000000]\n";
+        return 2;
+      }
     } else if (args[i] == "--min-status") {
       if (i + 1 >= args.size()) {
         std::cerr << "error: missing status after `--min-status`\n";
@@ -448,10 +418,10 @@ int cmd_test(const std::vector<std::string>& args) {
   }
 
   bool fuzz_ok = true;
-  if (fuzz_count > 0 && !res.grammar.gRules.empty()) {
-    auto fz = parsley::eval::fuzz_grammar(res.grammar, fuzz_count);
+  if (res.ok && fuzz_count > 0 && !res.grammar.gRules.empty()) {
+    auto fz = parsley::eval::fuzz_grammar(res.grammar, fuzz_count, fuzz_seed);
     std::cout << "Fuzz: " << fz.passed << "/" << fz.generated << " generated inputs parsed ("
-              << fz.attempts << " attempts)\n";
+              << fz.attempts << " attempts, seed " << fuzz_seed << ")\n";
     for (const auto& fail : fz.failures) {
       std::cerr << "  [FUZZ FAIL] " << fail << "\n";
     }
@@ -572,6 +542,7 @@ int cmd_fmt(const std::vector<std::string>& args) {
     formatted = parsley::tooling::format_module(mod, *src);
   }
 
+  if (mode_write && mode_check) {std::cerr << "error: --write and --check are mutually exclusive\n";return 2;}
   if (mode_check) {
     if (*src == formatted) {
       return 0;
@@ -780,7 +751,7 @@ int cmd_pkg(const std::vector<std::string>& args) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+int parsley_main(int argc, char** argv) {
   if (argc < 2) {
     print_help();
     return 0;
@@ -789,7 +760,10 @@ int main(int argc, char** argv) {
   std::string cmd = argv[1];
   std::vector<std::string> args;
   for (int i = 2; i < argc; ++i) {
-    args.emplace_back(argv[i]);
+    std::string_view arg=argv[i];
+    if(arg=="-v"||arg=="--verbose")verbose_diagnostics=true;
+    else if(arg=="--no-color") { /* Diagnostics are plain text. */ }
+    else args.emplace_back(argv[i]);
   }
 
   if (cmd == "--version" || cmd == "-V" || cmd == "version") {
@@ -831,4 +805,10 @@ int main(int argc, char** argv) {
   std::cerr << "error: unknown command `" << cmd << "`\n";
   print_help();
   return 1;
+}
+
+int main(int argc, char** argv) {
+  try { return parsley_main(argc, argv); }
+  catch (const std::exception& e) { std::cerr << "error: " << e.what() << '\n'; return 2; }
+  catch (...) { std::cerr << "error: unexpected compiler failure\n"; return 2; }
 }

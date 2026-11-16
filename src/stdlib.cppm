@@ -73,7 +73,7 @@ exactly :: Text -> Rule Text
         },
         StdModule{
             .name = "Parsley.Unicode",
-            .description = "Unicode character categories, whitespace, and letter definitions",
+            .description = "Legacy ASCII character categories (use Parsley.Ascii; not Unicode-aware)",
             .exported_rules = {
                 "alpha",
                 "digit",
@@ -88,6 +88,47 @@ exactly :: Text -> Rule Text
             },
             .exported_types = {},
             .source = R"PARSLEY(module Parsley.Unicode
+  ( alpha
+  , digit
+  , hexDigit
+  , space
+  , whitespace
+  , upper
+  , lower
+  , letter
+  , alphanum
+  , newline
+  ) where
+
+token alpha      = /[a-zA-Z]/
+token digit      = /[0-9]/
+token hexDigit   = /[0-9a-fA-F]/
+token space      = /[ \t]/
+token whitespace = /[ \t\r\n]/
+token upper      = /[A-Z]/
+token lower      = /[a-z]/
+token letter     = /[a-zA-Z_]/
+token alphanum   = /[a-zA-Z0-9_]/
+token newline    = /\r?\n/
+)PARSLEY"
+        },
+        StdModule{
+            .name = "Parsley.Ascii",
+            .description = "ASCII character categories, whitespace, and letter definitions",
+            .exported_rules = {
+                "alpha",
+                "digit",
+                "hexDigit",
+                "space",
+                "whitespace",
+                "upper",
+                "lower",
+                "letter",
+                "alphanum",
+                "newline"
+            },
+            .exported_types = {},
+            .source = R"PARSLEY(module Parsley.Ascii
   ( alpha
   , digit
   , hexDigit

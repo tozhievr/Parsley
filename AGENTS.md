@@ -1,3 +1,5 @@
+Current implementation contracts: [docs/STATUS.md](docs/STATUS.md); byte regex dialect: [docs/REGEX.md](docs/REGEX.md). Only C17 is a code-generation target. The following specification is subject to the documented implementation limits.
+
 # AGENTS.md — Parsley & PSL Guide for AI Coding Agents
 
 This document is the authoritative technical reference for autonomous and assistant AI coding agents authoring, extending, debugging, and compiling Parsley grammars (`.parsley`) and Parsley Semantic Layer specifications (`.psem`).
@@ -72,7 +74,7 @@ import Parsley.Prelude (sepBy, many, some, optional, between, eof)
 
 Supported pragmas:
 - `{-# START <rule> #-}`: Overrides the entry point rule.
-- `{-# MODE LL1|LLk|LALR|PEG|GLL #-}`: Forces parser execution strategy.
+- `{-# MODE LL1|LLk|LALR|PEG|GLL #-}`: Selects grammar-analysis constraints/labels; the generated runtime remains ordered recursive descent/Pratt parsing.
 - `{-# NOFACTOR #-}`: Suppresses automatic left-factoring for ambiguity inspection (`E0214`).
 
 ### 2.2 Lexical Syntax (`skip`, `token`, `keywords`, `mode`)
@@ -298,8 +300,8 @@ The `parsley` binary provides an all-in-one command-line interface:
 | `build` | `parsley build <file> [-o dir] [--no-compile-shared]` | Compiles grammar/semantics into C17 project and shared library (`.dll`/`.so`/`.dylib`). |
 | `check` | `parsley check <file>` | Validates syntax, imports, HM types, and PSL attributes without code generation. |
 | `test` | `parsley test <file> [--fuzz N]` | Runs in-grammar `example` assertions and property-guided grammar fuzzer. |
-| `explain` | `parsley explain <CODE>` | Explains diagnostic codes (`E0001`–`E0600`, `PSL-*`) with bad/good examples and fixes. |
-| `fmt` | `parsley fmt <file> [--write\|--check]` | Canonical Ormolu-style formatter for both `.parsley` and `.psem`. |
+| `explain` | `parsley explain <CODE>` | Explains diagnostic codes (supported catalog entries such as `E0001`, `E0600`, `PSL-*`) with bad/good examples and fixes. |
+| `fmt` | `parsley fmt <file> [--write\|--check]` | Canonical grammar formatter and PSL whitespace normalizer. |
 | `graph` | `parsley graph <file> [--format dot\|svg] [-o file]` | Generates railroad syntax diagrams or Graphviz DOT graphs. |
 | `lsp` | `parsley lsp` | Starts the stdio JSON-RPC 2.0 Language Server Protocol daemon. |
 | `agent-docs`| `parsley agent-docs [--format markdown\|json]` | Emits machine-readable AST schemas and combinator signatures for AI agents. |
@@ -311,7 +313,7 @@ The `parsley` binary provides an all-in-one command-line interface:
 
 The generated C17 codebase adheres to strict engineering constraints:
 1. **ISO C17 Standard Compliance**: Compiled with `-std=c17 -Wall -Wextra -pedantic` with zero warnings.
-2. **Deterministic Region-Based Memory (`psl_arena`)**: Zero unchecked `malloc`/`free`. All AST nodes, strings, and types reside in a caller-supplied memory arena.
+2. **Checked ownership**: Parser allocations use a checked, bounded transaction and are released by `parsley_result_free`; PSL nodes/types use the caller-supplied `psl_arena`. Allocation/resource failures are explicit. See `docs/STATUS.md` for codes and limits.
 3. **Tagged Unions for AST**: Every `data` constructor compiles to an `enum tag` and corresponding `union payload`.
 
 ### Public C17 ABI Interface (`parser.h`)
@@ -376,13 +378,13 @@ Running `parsley build <file> -o <dir>` emits:
 
 1. **Always Verify with Both `check` and `test`**:
    - Run `parsley check <file.parsley>` to catch syntax and HM type errors.
-   - Run `parsley test <file.parsley> --fuzz 30` to verify all `example` assertions and guarantee absence of parser panics under random generation.
+   - Run `parsley test <file.parsley> --fuzz 30` to verify all `example` assertions and exercise the sampled inputs (fuzzing does not prove absence of all parser faults).
 2. **Never Edit Generated C17 Code Manually**:
    - Modify the source `.parsley` or `.psem` files and let `parsley build` re-generate the C17 targets.
 3. **Maintain Strict Parity Between `.parsley` and `.psem`**:
    - Constructor names and arities used in `node` equations or `lint` match patterns must exactly match the `data` declarations in the imported `.parsley` grammar.
 4. **Always Provide Mandatory `example` Blocks for Lints**:
-   - Every `lint` must include both `fires:` (positive assertion) and `silent:` (negative assertion).
+   - Every `lint` must include both `fires` (positive assertion) and `silent` (negative assertion), without colons.
 5. **Always Set Provenance Pragmas**:
    - Annotate rules with `{-# SOURCE ... #-}`, `{-# STATUS ... #-}`, and `{-# CONFIDENCE ... #-}`.
 6. **Use Layout Formatting**:

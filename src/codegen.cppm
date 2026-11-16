@@ -3,6 +3,7 @@ module;
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,9 @@ export module parsley.codegen;
 import parsley.ast;
 import parsley.diagnostic;
 import parsley.ir;
+import parsley.regex;
+import parsley.c17_runtime;
+import parsley.c17_text;
 import parsley.analysis;
 import parsley.psl;
 
@@ -159,42 +163,7 @@ inline std::string to_upper_ascii(std::string_view s) {
   return out;
 }
 
-inline std::string c_string_lit(std::string_view s) {
-  std::ostringstream out;
-  out << '"';
-  for (unsigned char c : s) {
-    switch (c) {
-      case '"':
-        out << "\\\"";
-        break;
-      case '\\':
-        out << "\\\\";
-        break;
-      case '\n':
-        out << "\\n";
-        break;
-      case '\r':
-        out << "\\r";
-        break;
-      case '\t':
-        out << "\\t";
-        break;
-      case '\0':
-        out << "\\0";
-        break;
-      default:
-        if (c < 0x20 || c >= 0x7f) {
-          out << "\\x" << std::hex << std::setw(2) << std::setfill('0')
-              << static_cast<int>(c) << std::dec;
-        } else {
-          out << static_cast<char>(c);
-        }
-        break;
-    }
-  }
-  out << '"';
-  return out.str();
-}
+inline std::string c_string_lit(std::string_view text) { return c17_text::literal(text); }
 
 inline std::string safe_comment(std::string_view s) {
   std::string out;
@@ -216,365 +185,10 @@ inline std::string safe_comment(std::string_view s) {
 // Compile-time regex -> Thompson NFA compiler (produces 256-bit char bitmaps)
 // ---------------------------------------------------------------------------
 
-struct CharMatcher {
-  bool negated = false;
-  bool match_any_non_nl = false;
-  std::vector<std::pair<unsigned char, unsigned char>> ranges;
-  std::vector<std::string> posix_classes;
-
-  bool matches(unsigned char c) const noexcept {
-    if (match_any_non_nl) {
-      return c != '\n' && c != '\r';
-    }
-    bool hit = false;
-    for (const auto& [lo, hi] : ranges) {
-      if (c >= lo && c <= hi) {
-        hit = true;
-        break;
-      }
-    }
-    if (!hit) {
-      for (const auto& cls : posix_classes) {
-        if (cls == "space" && std::isspace(c)) {
-          hit = true;
-        } else if (cls == "alpha" && std::isalpha(c)) {
-          hit = true;
-        } else if (cls == "alnum" && std::isalnum(c)) {
-          hit = true;
-        } else if (cls == "digit" && std::isdigit(c)) {
-          hit = true;
-        } else if (cls == "upper" && std::isupper(c)) {
-          hit = true;
-        } else if (cls == "lower" && std::islower(c)) {
-          hit = true;
-        } else if (cls == "xdigit" && std::isxdigit(c)) {
-          hit = true;
-        } else if (cls == "blank" && (c == ' ' || c == '\t')) {
-          hit = true;
-        } else if (cls == "punct" && std::ispunct(c)) {
-          hit = true;
-        } else if (cls == "print" && std::isprint(c)) {
-          hit = true;
-        } else if (cls == "cntrl" && std::iscntrl(c)) {
-          hit = true;
-        }
-        if (hit) {
-          break;
-        }
-      }
-    }
-    return negated ? !hit : hit;
-  }
-
-  std::array<std::uint8_t, 32> to_bitmap() const noexcept {
-    std::array<std::uint8_t, 32> bits{};
-    for (int ci = 0; ci < 256; ++ci) {
-      if (matches(static_cast<unsigned char>(ci))) {
-        bits[static_cast<std::size_t>(ci >> 3)] |= static_cast<std::uint8_t>(1u << (ci & 7));
-      }
-    }
-    return bits;
-  }
-};
-
-struct RegexAst {
-  enum class Kind { Empty, Char, Seq, Alt, Repeat };
-  Kind kind = Kind::Empty;
-  CharMatcher matcher;
-  std::vector<std::shared_ptr<RegexAst>> items;
-  std::shared_ptr<RegexAst> inner;
-  int min_rep = 0;
-  int max_rep = -1;
-};
-
-using RegexAstPtr = std::shared_ptr<RegexAst>;
-
-class RegexParser {
-public:
-  explicit RegexParser(std::string_view pat) : pat_(pat) {}
-
-  RegexAstPtr parse() { return parse_alt(); }
-
-private:
-  std::string_view pat_;
-  std::size_t pos_ = 0;
-
-  bool eof() const noexcept { return pos_ >= pat_.size(); }
-  char peek() const noexcept { return eof() ? '\0' : pat_[pos_]; }
-  char get() noexcept { return eof() ? '\0' : pat_[pos_++]; }
-
-  RegexAstPtr parse_alt() {
-    std::vector<RegexAstPtr> branches;
-    branches.push_back(parse_seq());
-    while (!eof() && peek() == '|') {
-      get();
-      branches.push_back(parse_seq());
-    }
-    if (branches.size() == 1) {
-      return branches[0];
-    }
-    auto n = std::make_shared<RegexAst>();
-    n->kind = RegexAst::Kind::Alt;
-    n->items = std::move(branches);
-    return n;
-  }
-
-  RegexAstPtr parse_seq() {
-    std::vector<RegexAstPtr> items;
-    while (!eof() && peek() != '|' && peek() != ')') {
-      items.push_back(parse_quantified());
-    }
-    if (items.empty()) {
-      auto n = std::make_shared<RegexAst>();
-      n->kind = RegexAst::Kind::Empty;
-      return n;
-    }
-    if (items.size() == 1) {
-      return items[0];
-    }
-    auto n = std::make_shared<RegexAst>();
-    n->kind = RegexAst::Kind::Seq;
-    n->items = std::move(items);
-    return n;
-  }
-
-  RegexAstPtr parse_quantified() {
-    auto atom = parse_atom();
-    while (!eof()) {
-      char c = peek();
-      if (c == '*') {
-        get();
-        auto r = std::make_shared<RegexAst>();
-        r->kind = RegexAst::Kind::Repeat;
-        r->inner = std::move(atom);
-        r->min_rep = 0;
-        r->max_rep = -1;
-        atom = std::move(r);
-      } else if (c == '+') {
-        get();
-        auto r = std::make_shared<RegexAst>();
-        r->kind = RegexAst::Kind::Repeat;
-        r->inner = std::move(atom);
-        r->min_rep = 1;
-        r->max_rep = -1;
-        atom = std::move(r);
-      } else if (c == '?') {
-        get();
-        auto r = std::make_shared<RegexAst>();
-        r->kind = RegexAst::Kind::Repeat;
-        r->inner = std::move(atom);
-        r->min_rep = 0;
-        r->max_rep = 1;
-        atom = std::move(r);
-      } else if (c == '{') {
-        std::size_t save = pos_;
-        get();
-        int lo = 0;
-        bool has_lo = false;
-        while (!eof() && std::isdigit(static_cast<unsigned char>(peek()))) {
-          has_lo = true;
-          lo = lo * 10 + (get() - '0');
-        }
-        int hi = lo;
-        if (!eof() && peek() == ',') {
-          get();
-          if (!eof() && peek() == '}') {
-            hi = -1;
-          } else {
-            hi = 0;
-            bool has_hi = false;
-            while (!eof() && std::isdigit(static_cast<unsigned char>(peek()))) {
-              has_hi = true;
-              hi = hi * 10 + (get() - '0');
-            }
-            if (!has_hi) {
-              hi = -1;
-            }
-          }
-        }
-        if (has_lo && !eof() && peek() == '}') {
-          get();
-          auto r = std::make_shared<RegexAst>();
-          r->kind = RegexAst::Kind::Repeat;
-          r->inner = std::move(atom);
-          r->min_rep = lo;
-          r->max_rep = hi;
-          atom = std::move(r);
-        } else {
-          pos_ = save;
-          break;
-        }
-      } else {
-        break;
-      }
-      if (!eof() && peek() == '?') {
-        get();
-      }
-    }
-    return atom;
-  }
-
-  static void add_escape_to_matcher(char esc, CharMatcher& m) {
-    unsigned char uc = static_cast<unsigned char>(esc);
-    switch (esc) {
-      case 'n':
-        m.ranges.emplace_back('\n', '\n');
-        break;
-      case 'r':
-        m.ranges.emplace_back('\r', '\r');
-        break;
-      case 't':
-        m.ranges.emplace_back('\t', '\t');
-        break;
-      case 'd':
-        m.ranges.emplace_back('0', '9');
-        break;
-      case 'w':
-        m.ranges.emplace_back('a', 'z');
-        m.ranges.emplace_back('A', 'Z');
-        m.ranges.emplace_back('0', '9');
-        m.ranges.emplace_back('_', '_');
-        break;
-      case 's':
-        m.posix_classes.push_back("space");
-        break;
-      case 'D':
-        for (int ci = 0; ci < 256; ++ci) {
-          if (!std::isdigit(ci)) {
-            m.ranges.emplace_back(static_cast<unsigned char>(ci), static_cast<unsigned char>(ci));
-          }
-        }
-        break;
-      case 'W':
-        for (int ci = 0; ci < 256; ++ci) {
-          if (!std::isalnum(ci) && ci != '_') {
-            m.ranges.emplace_back(static_cast<unsigned char>(ci), static_cast<unsigned char>(ci));
-          }
-        }
-        break;
-      case 'S':
-        for (int ci = 0; ci < 256; ++ci) {
-          if (!std::isspace(ci)) {
-            m.ranges.emplace_back(static_cast<unsigned char>(ci), static_cast<unsigned char>(ci));
-          }
-        }
-        break;
-      default:
-        m.ranges.emplace_back(uc, uc);
-        break;
-    }
-  }
-
-  unsigned char parse_class_char() {
-    char c = get();
-    if (c == '\\' && !eof()) {
-      char esc = get();
-      switch (esc) {
-        case 'n':
-          return '\n';
-        case 'r':
-          return '\r';
-        case 't':
-          return '\t';
-        default:
-          return static_cast<unsigned char>(esc);
-      }
-    }
-    return static_cast<unsigned char>(c);
-  }
-
-  RegexAstPtr parse_char_class() {
-    get();
-    auto n = std::make_shared<RegexAst>();
-    n->kind = RegexAst::Kind::Char;
-    if (!eof() && peek() == '^') {
-      get();
-      n->matcher.negated = true;
-    }
-    bool first = true;
-    while (!eof() && (first || peek() != ']')) {
-      first = false;
-      if (pat_.substr(pos_, 2) == "[:") {
-        std::size_t close = pat_.find(":]", pos_ + 2);
-        if (close != std::string_view::npos) {
-          n->matcher.posix_classes.emplace_back(pat_.substr(pos_ + 2, close - (pos_ + 2)));
-          pos_ = close + 2;
-          continue;
-        }
-      }
-      if (peek() == '\\' && pos_ + 1 < pat_.size()) {
-        char next_esc = pat_[pos_ + 1];
-        if (next_esc == 'd' || next_esc == 'w' || next_esc == 's' || next_esc == 'D' ||
-            next_esc == 'W' || next_esc == 'S') {
-          get();
-          get();
-          add_escape_to_matcher(next_esc, n->matcher);
-          continue;
-        }
-      }
-      unsigned char ch = parse_class_char();
-      if (!eof() && peek() == '-' && pos_ + 1 < pat_.size() && pat_[pos_ + 1] != ']') {
-        get();
-        unsigned char ch2 = parse_class_char();
-        if (ch <= ch2) {
-          n->matcher.ranges.emplace_back(ch, ch2);
-        } else {
-          n->matcher.ranges.emplace_back(ch2, ch);
-        }
-      } else {
-        n->matcher.ranges.emplace_back(ch, ch);
-      }
-    }
-    if (!eof() && peek() == ']') {
-      get();
-    }
-    return n;
-  }
-
-  RegexAstPtr parse_atom() {
-    if (eof()) {
-      auto n = std::make_shared<RegexAst>();
-      n->kind = RegexAst::Kind::Empty;
-      return n;
-    }
-    char c = peek();
-    if (c == '(') {
-      get();
-      if (pat_.substr(pos_, 2) == "?:") {
-        pos_ += 2;
-      }
-      auto inner = parse_alt();
-      if (!eof() && peek() == ')') {
-        get();
-      }
-      return inner;
-    }
-    if (c == '[') {
-      return parse_char_class();
-    }
-    if (c == '.') {
-      get();
-      auto n = std::make_shared<RegexAst>();
-      n->kind = RegexAst::Kind::Char;
-      n->matcher.match_any_non_nl = true;
-      return n;
-    }
-    if (c == '\\') {
-      get();
-      auto n = std::make_shared<RegexAst>();
-      n->kind = RegexAst::Kind::Char;
-      if (!eof()) {
-        add_escape_to_matcher(get(), n->matcher);
-      }
-      return n;
-    }
-    get();
-    auto n = std::make_shared<RegexAst>();
-    n->kind = RegexAst::Kind::Char;
-    n->matcher.ranges.emplace_back(static_cast<unsigned char>(c), static_cast<unsigned char>(c));
-    return n;
-  }
-};
+using regex::CharMatcher;
+using regex::RegexAst;
+using regex::RegexAstPtr;
+using regex::RegexParser;
 
 struct CompiledNfaState {
   int kind = 0; // 0 = MATCH, 1 = SPLIT, 2 = CHAR
@@ -814,6 +428,28 @@ inline CTypeInfo analyze_c_types(const ir::Grammar& g) {
 // Header generator (parser.h & include/<mod>_parser.h)
 // ---------------------------------------------------------------------------
 
+inline std::string namespace_c_header(std::string header, const ir::Grammar& g, const std::string& prefix) {
+  std::set<std::string> names = {"ParsleyValueKind", "ParsleyValue", "ParsleyTextList", "ParsleyDoubleList", "ParsleyIntList", "ParsleyBoolList", "ParsleyValueList", "ParsleyError", "ParsleyResult",
+    "PARSLEY_VAL_UNIT", "PARSLEY_VAL_BOOL", "PARSLEY_VAL_NUMBER", "PARSLEY_VAL_STRING", "PARSLEY_VAL_LIST", "PARSLEY_VAL_TUPLE", "PARSLEY_VAL_CTOR"};
+  for (const auto& dd : g.gTypes) {
+    auto name = sanitize_c_ident(dd.name); names.insert(name); names.insert(name+"Tag"); names.insert(name+"List");
+    for (const auto& ctor : dd.constructors) names.insert(to_upper_ascii(dd.name)+"_"+to_upper_ascii(ctor.name));
+  }
+  const std::vector<std::string> functions = {"parsley_parse", "parsley_parse_n", "parsley_result_free", "parsley_format_ast", "parsley_run_examples"};
+  names.insert(functions.begin(),functions.end());
+  std::ostringstream aliases, clean;
+  aliases << "/* Public ABI is module-scoped; generic aliases support one-parser consumers. */\n";
+  for (const auto& name : names) {
+    std::string renamed = prefix + (name.starts_with("parsley_") ? "_parser_" + name.substr(8) : "_" + name);
+    aliases << "#ifdef " << name << "\n#undef " << name << "\n#endif\n#define " << name << " " << renamed << "\n";
+    clean << "#undef " << name << "\n";
+  }
+  auto after_guard = header.find("\n\n",header.find("#define "));
+  header.insert(after_guard+2,aliases.str()+"\n");
+  auto final_guard = header.rfind("#endif");
+  header.insert(final_guard,"#if defined(PARSLEY_NO_COMPAT) && !defined(PARSLEY_INTERNAL)\n"+clean.str()+"#endif\n\n");
+  return header;
+}
 inline std::string generate_c17_header(const ir::Grammar& g,
                                        const analysis::AnalysisResult& analysis,
                                        const CTypeInfo& info,
@@ -821,7 +457,7 @@ inline std::string generate_c17_header(const ir::Grammar& g,
   std::ostringstream out;
   out << "/* Generated by Parsley (ISO C17 backend) for module " << safe_comment(g.module_name)
       << " */\n";
-  out << "/* Strategy: " << analysis::strategy_name(analysis.selected_strategy) << " — "
+  out << "/* Analysis mode: " << analysis::strategy_name(analysis.selected_strategy) << " — "
       << safe_comment(analysis.strategy_reason) << " */\n\n";
   out << "#ifndef PARSLEY_" << mod_upper << "_PARSER_H\n";
   out << "#define PARSLEY_" << mod_upper << "_PARSER_H\n\n";
@@ -831,7 +467,7 @@ inline std::string generate_c17_header(const ir::Grammar& g,
   out << "#ifdef __cplusplus\n";
   out << "extern \"C\" {\n";
   out << "#endif\n\n";
-  out << "#if defined(PARSLEY_STATIC)\n";
+  out << "#ifndef PARSLEY_API\n#if defined(PARSLEY_STATIC)\n";
   out << "#  define PARSLEY_API\n";
   out << "#elif defined(_WIN32) || defined(__CYGWIN__)\n";
   out << "#  if defined(PARSLEY_BUILDING_DLL)\n";
@@ -845,7 +481,7 @@ inline std::string generate_c17_header(const ir::Grammar& g,
   out << "#  else\n";
   out << "#    define PARSLEY_API\n";
   out << "#  endif\n";
-  out << "#endif\n\n";
+  out << "#endif\n#endif /* PARSLEY_API */\n\n";
   out << "#ifdef __cplusplus\n";
   out << "#  define PARSLEY_STATIC_ASSERT(cond, msg) static_assert((cond), msg)\n";
   out << "#else\n";
@@ -867,12 +503,12 @@ inline std::string generate_c17_header(const ir::Grammar& g,
   out << "struct ParsleyValue {\n";
   out << "  ParsleyValueKind kind;\n";
   out << "  bool bool_val;\n";
-  out << "  double number_val;\n";
+  out << "  double number_val;\n  int64_t integer_val;\n";
   out << "  bool is_int;\n";
-  out << "  char* string_val;\n";
+  out << "  char* string_val;\n  size_t string_len;\n";
   out << "  char* ctor_name;\n";
   out << "  ParsleyValue** items;\n";
-  out << "  size_t item_count;\n";
+  out << "  size_t item_count;\n  ParsleyValue* list_head;\n  ParsleyValue* list_tail;\n";
   out << "};\n\n";
 
   out << "typedef struct ParsleyTextList { char** items; size_t len; } ParsleyTextList;\n";
@@ -972,7 +608,8 @@ inline std::string generate_c17_header(const ir::Grammar& g,
   }
 
   // Error and Result structs
-  out << "typedef struct ParsleyError {\n";
+  out << "/* code: 0 syntax, 1 allocation failure, 2 resource limit, 3 invalid number/input */\n";
+  out << "typedef struct ParsleyError {\n  int code;\n";
   out << "  int line;\n";
   out << "  int col;\n";
   out << "  char* expected;\n";
@@ -981,7 +618,7 @@ inline std::string generate_c17_header(const ir::Grammar& g,
   out << "} ParsleyError;\n\n";
 
   out << "typedef struct ParsleyResult {\n";
-  out << "  bool ok;\n";
+  out << "  bool ok;\n  size_t consumed; /* input bytes consumed; use eof for a complete parse */\n";
   if (info.start_data_type) {
     out << "  " << sanitize_c_ident(*info.start_data_type) << "* root;\n";
   }
@@ -1031,7 +668,28 @@ public:
     emit_adt_converters(out);
     emit_public_api(out);
     emit_examples_runner(out);
-    return out.str();
+    std::string source = out.str();
+    // Reference optional helpers portably so strict ISO C17 warning builds stay clean.
+    const auto api = source.find("static ParsleyResult parsley_parse_n_impl(");
+    std::set<std::string> helpers;
+    std::istringstream lines(source.substr(0, api)); std::string line;
+    while (std::getline(lines,line)) if (line.starts_with("static ")) {
+      const auto open = line.find('('), equal = line.find('=');
+      if (open == std::string::npos || (equal != std::string::npos && equal < open)) continue;
+      auto begin = open; while (begin && (std::isalnum(static_cast<unsigned char>(line[begin-1])) || line[begin-1]=='_')) --begin;
+      if (begin < open) helpers.insert(line.substr(begin,open-begin));
+    }
+    std::string references;
+    for (const auto& helper : helpers) references += "  (void)" + helper + ";\n";
+    source.insert(source.find('{',api)+1,"\n"+references);
+    std::istringstream input(source); std::ostringstream clean;
+    while (std::getline(input,line)) {
+      auto colon = line.find(':');
+      if (colon != std::string::npos && colon > 0 && std::all_of(line.begin(),line.begin()+static_cast<std::ptrdiff_t>(colon),[](unsigned char c){return std::isalnum(c)||c=='_';}))
+        line += "; if (0) goto " + line.substr(0,colon) + ";";
+      clean << line << '\n';
+    }
+    return clean.str();
   }
 
 private:
@@ -1088,12 +746,12 @@ private:
   void emit_preamble(std::ostringstream& out) {
     out << "/* Generated by Parsley (ISO C17 backend) for module " << safe_comment(g_.module_name)
         << " */\n";
-    out << "/* Selected strategy: " << analysis::strategy_name(analysis_.selected_strategy) << " ("
+    out << "/* Parser: ordered recursive descent with Pratt tables; analysis mode: " << analysis::strategy_name(analysis_.selected_strategy) << " ("
         << safe_comment(analysis_.strategy_reason) << ") */\n\n";
     out << "#if !defined(PARSLEY_STATIC) && !defined(PARSLEY_BUILDING_DLL)\n";
     out << "#  define PARSLEY_BUILDING_DLL\n";
     out << "#endif\n";
-    out << "#include \"parser.h\"\n\n";
+    out << "#define PARSLEY_INTERNAL 1\n#include \"parser.h\"\n\n";
     out << "#include <ctype.h>\n";
     out << "#include <math.h>\n";
     out << "#include <stdio.h>\n";
@@ -1218,7 +876,7 @@ private:
       const ir::TokenDef& td = *tm.def;
       std::string display = td.id;
       if (!td.is_regex && (td.is_anonymous || td.is_keyword)) {
-        display = "\"" + td.pattern + "\"";
+        display = c17_text::display_string(td.pattern);
       }
       std::string vt = "PARSLEY_TOK_TEXT";
       if (td.type.kind == ir::Type::Kind::Unit) {
@@ -1314,17 +972,8 @@ private:
   }
 
   void emit_runtime_helpers(std::ostringstream& out) {
-    out << R"C17(static void* p_malloc(size_t sz) {
-  void* ptr = malloc(sz == 0 ? 1 : sz);
-  return ptr;
-}
-
-static void* p_calloc(size_t n, size_t sz) {
-  void* ptr = calloc(n == 0 ? 1 : n, sz == 0 ? 1 : sz);
-  return ptr;
-}
-
-static char* p_strdup_n(const char* s, size_t n) {
+    out << c17_runtime::source;
+    out << R"C17(static char* p_strdup_n(const char* s, size_t n) {
   char* out = (char*)p_malloc(n + 1);
   if (!out) return NULL;
   if (n > 0 && s) memcpy(out, s, n);
@@ -1387,13 +1036,22 @@ static ParsleyValue* pv_number(double num, bool is_int) {
   if (v) {
     v->number_val = num;
     v->is_int = is_int;
+    if (is_int) {
+      if (!isfinite(num) || num < -9223372036854775808.0 || num >= 9223372036854775808.0) { p_fatal(3); return NULL; }
+      v->integer_val = (int64_t)num;
+    }
   }
   return v;
 }
 
+static ParsleyValue* pv_integer_literal(const char* text) {
+  int64_t value; if (!p_parse_i64(text,strlen(text),&value)) {p_fatal(3);return NULL;}
+  ParsleyValue* v=pv_number(0,true); v->integer_val=value;v->number_val=(double)value;return v;
+}
+
 static ParsleyValue* pv_string(const char* s, size_t len) {
   ParsleyValue* v = pv_alloc(PARSLEY_VAL_STRING);
-  if (v) v->string_val = p_strdup_n(s, len);
+  if (v) {v->string_val = p_strdup_n(s, len);v->string_len=len;}
   return v;
 }
 
@@ -1408,19 +1066,12 @@ static ParsleyValue* pv_list(ParsleyValue** items, size_t count) {
 }
 
 static ParsleyValue* pv_list_cons(ParsleyValue* head, ParsleyValue* tail) {
-  size_t tail_n = (tail && tail->kind == PARSLEY_VAL_LIST) ? tail->item_count : 0;
+  size_t count = tail && tail->kind == PARSLEY_VAL_LIST ? tail->item_count : 0;
+  if (count == SIZE_MAX) { p_fatal(2); return NULL; }
   ParsleyValue* v = pv_alloc(PARSLEY_VAL_LIST);
-  if (v) {
-    v->item_count = 1 + tail_n;
-    v->items = (ParsleyValue**)p_malloc(sizeof(ParsleyValue*) * v->item_count);
-    v->items[0] = head;
-    for (size_t i = 0; i < tail_n; ++i) {
-      v->items[1 + i] = tail->items[i];
-    }
-  }
+  v->item_count = count + 1; v->list_head = head; v->list_tail = tail;
   return v;
 }
-
 static ParsleyValue* pv_tuple(ParsleyValue** items, size_t count) {
   ParsleyValue* v = pv_alloc(PARSLEY_VAL_TUPLE);
   if (v && count > 0) {
@@ -1457,15 +1108,28 @@ static void pv_free(ParsleyValue* v) {
   free(v);
 }
 
+static ParsleyValue* pv_clone_impl(const ParsleyValue* v);
 static ParsleyValue* pv_clone(const ParsleyValue* v) {
+  p_enter(); ParsleyValue* result = pv_clone_impl(v); p_leave(); return result;
+}
+static ParsleyValue* pv_clone_impl(const ParsleyValue* v) {
   if (!v) return NULL;
   ParsleyValue* c = pv_alloc(v->kind);
   if (!c) return NULL;
   c->bool_val = v->bool_val;
   c->number_val = v->number_val;
+  c->integer_val = v->integer_val;
   c->is_int = v->is_int;
-  if (v->string_val) c->string_val = p_strdup(v->string_val);
+  c->string_len=v->string_len; if (v->string_val) c->string_val = p_strdup_n(v->string_val,v->string_len);
   if (v->ctor_name) c->ctor_name = p_strdup(v->ctor_name);
+  if (v->kind == PARSLEY_VAL_LIST && v->list_head) {
+    c->item_count = v->item_count;
+    c->items = (ParsleyValue**)p_calloc(c->item_count,sizeof(ParsleyValue*));
+    size_t i = 0; const ParsleyValue* cursor = v;
+    while (cursor && cursor->list_head) { p_step(); c->items[i++] = pv_clone(cursor->list_head); cursor = cursor->list_tail; }
+    if (cursor) for (size_t j=0; j<cursor->item_count; ++j) c->items[i++] = pv_clone(cursor->items[j]);
+    return c;
+  }
   if (v->item_count > 0 && v->items) {
     c->item_count = v->item_count;
     c->items = (ParsleyValue**)p_malloc(sizeof(ParsleyValue*) * v->item_count);
@@ -1491,10 +1155,12 @@ static void format_value_buf(const ParsleyValue* v, bool wrap_parens, ParsleyStr
     case PARSLEY_VAL_NUMBER: {
       char num_buf[64];
       double dv = v->number_val;
-      if (v->is_int || (isfinite(dv) && floor(dv) == dv && dv >= -9e15 && dv <= 9e15)) {
+      if (v->is_int) {
+        snprintf(num_buf, sizeof(num_buf), "%lld", (long long)v->integer_val);
+      } else if (isfinite(dv) && floor(dv) == dv && dv >= -9e15 && dv <= 9e15) {
         snprintf(num_buf, sizeof(num_buf), "%lld", (long long)dv);
       } else {
-        snprintf(num_buf, sizeof(num_buf), "%.15g", dv);
+        p_format_double(num_buf, sizeof(num_buf), dv);
       }
       sb_append(sb, num_buf);
       break;
@@ -1502,12 +1168,15 @@ static void format_value_buf(const ParsleyValue* v, bool wrap_parens, ParsleyStr
     case PARSLEY_VAL_STRING: {
       sb_append_ch(sb, '"');
       if (v->string_val) {
-        for (const char* p = v->string_val; *p; ++p) {
+        for (size_t i=0;i<v->string_len;++i) {
+          const char* p=v->string_val+i;
           if (*p == '"') sb_append(sb, "\\\"");
           else if (*p == '\\') sb_append(sb, "\\\\");
           else if (*p == '\n') sb_append(sb, "\\n");
           else if (*p == '\r') sb_append(sb, "\\r");
           else if (*p == '\t') sb_append(sb, "\\t");
+          else if (*p == '\0') sb_append(sb, "\\0");
+          else if ((unsigned char)*p < 32 || (unsigned char)*p == 127) {char escaped[5];snprintf(escaped,sizeof(escaped),"\\x%02x",(unsigned char)*p);sb_append(sb,escaped);}
           else sb_append_ch(sb, *p);
         }
       }
@@ -1553,22 +1222,25 @@ static bool bitmap_test(int bitmap_idx, unsigned char c) {
 }
 
 static void nfa_add_eps(const ParsleyNfa* nfa, int s, int* list, int* list_len, int* seen, int stamp) {
-  if (s < 0 || s >= nfa->state_count || seen[s] == stamp) return;
-  seen[s] = stamp;
-  const ParsleyNfaState* st = &nfa->states[s];
-  if (st->kind == 1) {
-    nfa_add_eps(nfa, st->out1, list, list_len, seen, stamp);
-    nfa_add_eps(nfa, st->out2, list, list_len, seen, stamp);
-  } else {
-    list[(*list_len)++] = s;
+  int top = 0; int* stack = p_scope->nfa_stack;
+  if (s >= 0) stack[top++] = s;
+  while (top) {
+    p_step();
+    int id = stack[--top];
+    if (id < 0 || id >= nfa->state_count || seen[id] == stamp) continue;
+    seen[id] = stamp;
+    const ParsleyNfaState* st = &nfa->states[id];
+    if (st->kind == 1) { if (top + 2 > 8192) p_fatal(2); stack[top++] = st->out1; stack[top++] = st->out2; }
+    else list[(*list_len)++] = id;
   }
 }
-
 static bool nfa_match_prefix(const ParsleyNfa* nfa, const char* input, size_t len, size_t offset, size_t* out_len) {
   int n = nfa->state_count;
-  int* cur = (int*)p_malloc(sizeof(int) * (size_t)n);
-  int* nxt = (int*)p_malloc(sizeof(int) * (size_t)n);
-  int* seen = (int*)p_calloc((size_t)n, sizeof(int));
+  if (n <= 0 || n > 4096) { p_fatal(2); return false; }
+  int* cur = p_scope->nfa_cur;
+  int* nxt = p_scope->nfa_next;
+  int* seen = p_scope->nfa_seen;
+  memset(seen,0,sizeof(int)*(size_t)n);
   int cur_len = 0;
   int mark = 1;
   bool found = false;
@@ -1584,10 +1256,12 @@ static bool nfa_match_prefix(const ParsleyNfa* nfa, const char* input, size_t le
   }
 
   for (size_t pos = offset; pos < len && cur_len > 0; ++pos) {
+    p_step();
     unsigned char ch = (unsigned char)input[pos];
     int nxt_len = 0;
     int step_mark = mark++;
     for (int i = 0; i < cur_len; ++i) {
+      p_step();
       const ParsleyNfaState* st = &nfa->states[cur[i]];
       if (st->kind == 2 && bitmap_test(st->bitmap_idx, ch)) {
         nfa_add_eps(nfa, st->out1, nxt, &nxt_len, seen, step_mark);
@@ -1606,9 +1280,7 @@ static bool nfa_match_prefix(const ParsleyNfa* nfa, const char* input, size_t le
     }
   }
 
-  free(cur);
-  free(nxt);
-  free(seen);
+  /* Scratch buffers belong to the API invocation. */
   if (out_len) *out_len = best;
   return found;
 }
@@ -1662,22 +1334,17 @@ static ParsleyValue* token_to_value(const ParsleyTokenDef* td, const char* lexem
     case PARSLEY_TOK_UNIT:
       return pv_unit();
     case PARSLEY_TOK_BOOL:
-      return pv_bool(lex_len == 4 && memcmp(lexeme, "true", 4) == 0);
+      return pv_bool(lex_len == 4 && (memcmp(lexeme, "true", 4) == 0 || memcmp(lexeme, "True", 4) == 0));
     case PARSLEY_TOK_INT: {
-      char* tmp = p_strdup_n(lexeme, lex_len);
-      long long iv = strtoll(tmp, NULL, 10);
-      free(tmp);
-      return pv_number((double)iv, true);
+      int64_t value;
+      if (!p_parse_i64(lexeme, lex_len, &value)) { p_fatal(3); return NULL; }
+      ParsleyValue* v = pv_number(0, true); v->integer_val = value; v->number_val=(double)value; return v;
     }
     case PARSLEY_TOK_DOUBLE: {
-      char* tmp = p_strdup_n(lexeme, lex_len);
-      double dv = strtod(tmp, NULL);
-      bool is_int = (memchr(tmp, '.', lex_len) == NULL && memchr(tmp, 'e', lex_len) == NULL &&
-                     memchr(tmp, 'E', lex_len) == NULL);
-      free(tmp);
-      return pv_number(dv, is_int);
-    }
-    case PARSLEY_TOK_TEXT:
+      double value;
+      if (!p_parse_double(lexeme, lex_len, &value)) { p_fatal(3); return NULL; }
+      return pv_number(value, false);
+    }    case PARSLEY_TOK_TEXT:
     default:
       return pv_string(lexeme, lex_len);
   }
@@ -1688,7 +1355,7 @@ static void advance_line_col(const char* s, size_t n, int* line, int* col) {
     if (s[i] == '\n') {
       (*line)++;
       *col = 1;
-    } else {
+    } else if (((unsigned char)s[i] & 0xc0) != 0x80 && s[i] != '\r') {
       (*col)++;
     }
   }
@@ -1715,6 +1382,7 @@ typedef struct ParsleyLexedToken {
 typedef struct ParsleyCtxEntry {
   char* name;
   char* value;
+  size_t value_len;
 } ParsleyCtxEntry;
 
 typedef struct ParsleyLrEntry {
@@ -1732,6 +1400,11 @@ typedef struct ParsleyLrEntry {
   size_t end_mode_depth;
 } ParsleyLrEntry;
 
+typedef struct ParsleyMemo {
+  size_t rule, start, end;
+  bool used, complete, ok;
+  ParsleyValue* value;
+} ParsleyMemo;
 typedef struct ParsleyParser {
   const char* input;
   size_t len;
@@ -1768,6 +1441,8 @@ typedef struct ParsleyParser {
   size_t lr_cap;
 
   /* Allocation arena tracking so failed backtracking branches do not leak */
+  ParsleyMemo* memo;
+  size_t memo_cap, memo_count;
   ParsleyValue** allocated;
   size_t allocated_count;
   size_t allocated_cap;
@@ -1855,6 +1530,10 @@ static size_t p_current_offset(const ParsleyParser* p) {
   return p->char_pos;
 }
 
+static char* p_found_text(const char* text,size_t size) {
+  ParsleyValue value;memset(&value,0,sizeof(value));value.kind=PARSLEY_VAL_STRING;value.string_val=(char*)text;value.string_len=size;
+  ParsleyStrBuf buffer={NULL,0,0};format_value_buf(&value,false,&buffer);return buffer.data;
+}
 static void p_current_loc(const ParsleyParser* p, int* out_line, int* out_col, char** out_found) {
   if (!p->scannerless && p->tok_pos < p->token_count) {
     const ParsleyLexedToken* t = &p->tokens[p->tok_pos];
@@ -1863,11 +1542,7 @@ static void p_current_loc(const ParsleyParser* p, int* out_line, int* out_col, c
     if (t->is_eof) {
       *out_found = p_strdup("end of input");
     } else {
-      ParsleyStrBuf sb = {NULL, 0, 0};
-      sb_append_ch(&sb, '"');
-      sb_append_n(&sb, t->lexeme, t->lexeme_len);
-      sb_append_ch(&sb, '"');
-      *out_found = sb.data ? sb.data : p_strdup("\"\"");
+      *out_found = p_found_text(t->lexeme,t->lexeme_len);
     }
     return;
   }
@@ -1876,8 +1551,7 @@ static void p_current_loc(const ParsleyParser* p, int* out_line, int* out_col, c
   if (p->char_pos >= p->len) {
     *out_found = p_strdup("end of input");
   } else {
-    char tmp[4] = {'"', p->input[p->char_pos], '"', '\0'};
-    *out_found = p_strdup(tmp);
+    *out_found = p_found_text(p->input+p->char_pos,p_utf8_width(p->input+p->char_pos,p->len-p->char_pos));
   }
 }
 
@@ -1931,9 +1605,8 @@ static void p_record_failure(ParsleyParser* p, const char* expected_label, bool 
 static void p_apply_mode_action(const ParsleyTokenDef* td, const char* stack[PARSLEY_MAX_MODES], size_t* depth) {
   if (!td) return;
   if (td->action == PARSLEY_LEX_PUSH && td->target_mode && td->target_mode[0] != '\0') {
-    if (*depth < PARSLEY_MAX_MODES) {
-      stack[(*depth)++] = td->target_mode;
-    }
+    if (*depth >= PARSLEY_MAX_MODES) { p_fatal(2); return; }
+    stack[(*depth)++] = td->target_mode;
   } else if (td->action == PARSLEY_LEX_POP && *depth > 1) {
     (*depth)--;
   }
@@ -1953,6 +1626,7 @@ static void p_lex_all(ParsleyParser* p) {
   int cl = 1;
 
   while (pos < p->len) {
+    p_step();
     const ParsleyLexMode* mode = find_lex_mode(modes[mdepth - 1]);
     const ParsleyTokenDef* best_def = NULL;
     size_t best_len = 0;
@@ -1986,15 +1660,16 @@ static void p_lex_all(ParsleyParser* p) {
       ParsleyLexedToken* t = &p->tokens[p->token_count++];
       t->id = "<lex_error>";
       t->def = NULL;
-      t->lexeme = p_strdup_n(p->input + pos, 1);
-      t->lexeme_len = 1;
+      size_t width = p_utf8_width(p->input+pos,p->len-pos);
+      t->lexeme = p_strdup_n(p->input + pos, width);
+      t->lexeme_len = width;
       t->line = ln;
       t->col = cl;
       t->start_offset = pos;
       t->is_eof = false;
       t->is_lex_error = true;
-      advance_line_col(p->input + pos, 1, &ln, &cl);
-      pos++;
+      advance_line_col(p->input + pos, width, &ln, &cl);
+      pos+=width;
       continue;
     }
 
@@ -2106,9 +1781,11 @@ static bool p_match_token(ParsleyParser* p, const char* token_id, ParsleyValue**
   for (size_t i = 0; i < mode->count; ++i) {
     const ParsleyTokenDef* other = &mode->tokens[i];
     if (other == target || other->is_skip) continue;
-    if (other->priority > target->priority) {
+    {
       size_t olen = 0;
-      if (token_match_at(other, p->input, p->len, p->char_pos, &olen) && olen >= mlen) {
+      if (token_match_at(other, p->input, p->len, p->char_pos, &olen) &&
+          (olen > mlen || (olen == mlen && (other->priority > target->priority ||
+           (other->priority == target->priority && other->decl_order < target->decl_order))))) {
         p_record_failure(p, display_token_name(token_id), false);
         return false;
       }
@@ -2124,9 +1801,11 @@ static bool p_match_token(ParsleyParser* p, const char* token_id, ParsleyValue**
 
 static bool p_match_exactly(ParsleyParser* p, const char* var_name, ParsleyValue** out) {
   const char* expected_text = NULL;
+  size_t elen = 0;
   for (size_t i = p->ctx_depth; i > 0; --i) {
     if (strcmp(p->ctx_env[i - 1].name, var_name) == 0) {
       expected_text = p->ctx_env[i - 1].value;
+      elen = p->ctx_env[i - 1].value_len;
       break;
     }
   }
@@ -2134,7 +1813,7 @@ static bool p_match_exactly(ParsleyParser* p, const char* var_name, ParsleyValue
     p_record_failure(p, var_name, false);
     return false;
   }
-  size_t elen = strlen(expected_text);
+  /* Binding length is explicit, including embedded NUL bytes. */
   if (!p->scannerless) {
     if (p->tok_pos < p->token_count && !p->tokens[p->tok_pos].is_eof &&
         p->tokens[p->tok_pos].lexeme_len == elen &&
@@ -2159,9 +1838,11 @@ static bool p_match_exactly(ParsleyParser* p, const char* var_name, ParsleyValue
 }
 
 static void p_push_ctx(ParsleyParser* p, const char* name, const ParsleyValue* val) {
+  if (p->ctx_depth >= PARSLEY_MAX_CTX) { p_fatal(2); return; }
   if (p->ctx_depth < PARSLEY_MAX_CTX && val && val->kind == PARSLEY_VAL_STRING && val->string_val) {
     p->ctx_env[p->ctx_depth].name = p_strdup(name);
-    p->ctx_env[p->ctx_depth].value = p_strdup(val->string_val);
+    p->ctx_env[p->ctx_depth].value = p_strdup_n(val->string_val,val->string_len);
+    p->ctx_env[p->ctx_depth].value_len = val->string_len;
     p->ctx_depth++;
   }
 }
@@ -2176,6 +1857,18 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
   return p_track(p, pv_unit());
 }
 
+static size_t p_memo_hash(size_t rule,size_t start) { return (start*2654435761u) ^ (rule*2246822519u); }
+static ParsleyMemo* p_memo_get(ParsleyParser* p,size_t rule,size_t start) {
+  if (!p->memo_cap || p->memo_count*4u >= p->memo_cap*3u) {
+    size_t cap=p->memo_cap ? p->memo_cap*2u : 128u;
+    ParsleyMemo* next=(ParsleyMemo*)p_calloc(cap,sizeof(ParsleyMemo));
+    for(size_t i=0;i<p->memo_cap;++i)if(p->memo[i].used){size_t k=p_memo_hash(p->memo[i].rule,p->memo[i].start)&(cap-1u);while(next[k].used)k=(k+1u)&(cap-1u);next[k]=p->memo[i];}
+    free(p->memo);p->memo=next;p->memo_cap=cap;
+  }
+  size_t k=p_memo_hash(rule,start)&(p->memo_cap-1u);
+  while(p->memo[k].used){p_step();if(p->memo[k].rule==rule&&p->memo[k].start==start)return &p->memo[k];k=(k+1u)&(p->memo_cap-1u);}
+  p->memo[k].used=true;p->memo[k].rule=rule;p->memo[k].start=start;++p->memo_count;return &p->memo[k];
+}
 )C17";
   }
 
@@ -2200,7 +1893,8 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
         return std::string("p_track(p, pv_bool(") + (act.bool_value ? "true" : "false") + "))";
       case ir::ActionExpr::Kind::IntLit: {
         std::ostringstream s;
-        s << "p_track(p, pv_number(" << static_cast<long long>(act.number_value) << ".0, true))";
+        if (!act.name.empty()) s << "p_track(p, pv_integer_literal(" << c_string_lit(act.name) << "))";
+        else s << "p_track(p, pv_number(" << static_cast<long long>(act.number_value) << ".0, true))";
         return s.str();
       }
       case ir::ActionExpr::Kind::FloatLit: {
@@ -2342,7 +2036,8 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
           out << ind << "ParsleyValue* " << iv << " = NULL;\n";
           emit_prod(out, prod->items[i], iv, prefix_count > 0 ? seq_fail : fail_lbl, indent);
           if (i < prefix_count) {
-            out << ind << "if (p->prefix_depth < PARSLEY_MAX_PREFIX) p->prefix_stack[p->prefix_depth++] = "
+            out << ind << "if (p->prefix_depth >= PARSLEY_MAX_PREFIX) p_fatal(2);\n";
+            out << ind << "p->prefix_stack[p->prefix_depth++] = "
                 << iv << ";\n";
           }
           if (i + 1 == prod->items.size()) {
@@ -2565,7 +2260,9 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
     for (const ir::Prod* pt : prec_tables_) {
       const std::string& fn = prec_fn_names_[pt];
       out << "/* Precedence-climbing parser for operators table */\n";
-      out << "static bool " << fn << "(ParsleyParser* p, int min_prec, ParsleyValue** out) {\n";
+      out << "static bool " << fn << "_impl(ParsleyParser* p, int min_prec, ParsleyValue** out);\n";
+      out << "static bool " << fn << "(ParsleyParser* p, int min_prec, ParsleyValue** out) { p_enter(); bool ok = " << fn << "_impl(p,min_prec,out); p_leave(); return ok; }\n";
+      out << "static bool " << fn << "_impl(ParsleyParser* p, int min_prec, ParsleyValue** out) {\n";
       out << "  size_t start_off = p_current_offset(p);\n";
       out << "  ParsleyValue* lhs = NULL;\n\n";
 
@@ -2731,7 +2428,18 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
 
       const bool may_lr = (ra_it != analysis_.rules.end() && ra_it->second.left_recursive);
       const std::string& fn = rule_c_names_[rid];
-      out << "static bool " << fn << "(ParsleyParser* p, ParsleyValue** out) {\n";
+      out << "static bool " << fn << "_impl(ParsleyParser* p, ParsleyValue** out);\n";
+      const bool memoize = !analysis_.has_context_rules && !rule.is_generated &&
+          std::none_of(analysis_.rules.begin(),analysis_.rules.end(),[](const auto& item){return item.second.left_recursive;});
+      if (memoize) {
+        const auto key = static_cast<std::size_t>(std::distance(g_.gRules.begin(),g_.gRules.find(rid)))+1;
+        out << "static bool " << fn << "(ParsleyParser* p, ParsleyValue** out) {\n  p_enter(); size_t start=p->tok_pos;\n";
+        out << "  ParsleyMemo* memo=p_memo_get(p," << key << ",start);\n";
+        out << "  if(memo->complete){p->tok_pos=memo->end;*out=memo->value;bool ok=memo->ok;p_leave();return ok;}\n";
+        out << "  bool ok=" << fn << "_impl(p,out);memo=p_memo_get(p," << key << ",start);\n";
+        out << "  memo->complete=true;memo->ok=ok;memo->end=p->tok_pos;memo->value=ok?*out:NULL;p_leave();return ok;\n}\n";
+      } else out << "static bool " << fn << "(ParsleyParser* p, ParsleyValue** out) { p_enter(); bool ok = " << fn << "_impl(p,out); p_leave(); return ok; }\n";
+      out << "static bool " << fn << "_impl(ParsleyParser* p, ParsleyValue** out) {\n";
 
       if (may_lr) {
         out << "  size_t start_off = p_current_offset(p);\n";
@@ -2842,7 +2550,7 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
         return;
       }
       if (t.name == "Int") {
-        out << ind << dst << " = (" << src_pv << ") ? (int64_t)" << src_pv << "->number_val : 0;\n";
+        out << ind << dst << " = (" << src_pv << ") ? " << src_pv << "->integer_val : 0;\n";
         return;
       }
       if (t.name == "Bool") {
@@ -3041,7 +2749,7 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
         info_.start_rule ? rule_c_names_[*info_.start_rule] : std::string{};
     const bool scannerless = analysis_.has_context_rules;
 
-    out << "ParsleyResult parsley_parse_n(const char* input, size_t len) {\n";
+    out << "static ParsleyResult parsley_parse_n_impl(const char* input, size_t len) {\n";
     out << "  ParsleyResult res;\n";
     out << "  memset(&res, 0, sizeof(res));\n";
     out << "  if (!input) { input = \"\"; len = 0; }\n\n";
@@ -3064,7 +2772,7 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
     }
 
     out << "  if (ok && raw) {\n";
-    out << "    res.ok = true;\n";
+    out << "    res.ok = true;\n    res.consumed = p_current_offset(&p);\n";
     out << "    res.value = pv_clone(raw);\n";
     if (info_.start_data_type) {
       out << "    res.root = pv_to_" << sanitize_c_ident(*info_.start_data_type) << "(res.value);\n";
@@ -3110,7 +2818,7 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
     out << "    free(p.ctx_env[p.ctx_depth].name);\n";
     out << "    free(p.ctx_env[p.ctx_depth].value);\n";
     out << "  }\n";
-    out << "  free(p.lr_entries);\n";
+    out << "  free(p.lr_entries);\n  free(p.memo);\n";
     out << "  p_free_tracked(&p);\n";
     out << "  return res;\n";
     out << "}\n\n";
@@ -3136,13 +2844,14 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
     out << "  result->error.message = NULL;\n";
     out << "}\n\n";
 
-    out << "int parsley_format_ast(const ParsleyResult* result, char* buf, size_t buf_size) {\n";
+    out << "static int parsley_format_ast_impl(const ParsleyResult* result, char* buf, size_t buf_size) {\n";
     out << "  if (!result || !result->ok || !result->value) {\n";
     out << "    if (buf && buf_size > 0) buf[0] = '\\0';\n";
     out << "    return -1;\n";
     out << "  }\n";
     out << "  ParsleyStrBuf sb = {NULL, 0, 0};\n";
     out << "  format_value_buf(result->value, false, &sb);\n";
+    out << "  if (sb.len > INT_MAX) p_fatal(2);\n";
     out << "  int needed = (int)sb.len;\n";
     out << "  if (buf && buf_size > 0) {\n";
     out << "    size_t copy_n = sb.len < buf_size - 1 ? sb.len : buf_size - 1;\n";
@@ -3152,6 +2861,22 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
     out << "  free(sb.data);\n";
     out << "  return needed;\n";
     out << "}\n\n";
+    out << R"C17(
+ParsleyResult parsley_parse_n(const char* input, size_t len) {
+  ParsleyResult result; memset(&result,0,sizeof(result));
+  if ((!input && len) || len > PARSLEY_MAX_BYTES) { result.error.code = 3; return result; }
+  PAllocationScope* scope = p_begin_scope();
+  if (!scope) { result.error.code = 1; return result; }
+  int failure = setjmp(scope->escape);
+  if (failure) { p_end_scope(scope,false); memset(&result,0,sizeof(result)); result.error.code=failure; result.error.line=1; result.error.col=1; return result; }
+  result = parsley_parse_n_impl(input,len); p_end_scope(scope,true); return result;
+}
+int parsley_format_ast(const ParsleyResult* result, char* buf, size_t size) {
+  PAllocationScope* scope = p_begin_scope(); if (!scope) return -1;
+  if (setjmp(scope->escape)) { p_end_scope(scope,false); if (buf && size) buf[0]='\0'; return -1; }
+  int needed = parsley_format_ast_impl(result,buf,size); p_end_scope(scope,false); return needed;
+}
+)C17";
   }
 
   std::string format_pattern_expected(const ast::AstPattern& pat, bool wrap_parens = false) {
@@ -3159,28 +2884,20 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
       case ast::AstPattern::Kind::Wildcard:
         return "_";
       case ast::AstPattern::Kind::Number: {
+        if (!pat.name.empty() && pat.name.find_first_of(".eE") == std::string::npos) {
+          std::int64_t value=0;auto [end,ec]=std::from_chars(pat.name.data(),pat.name.data()+pat.name.size(),value);
+          if(ec==std::errc{}&&end==pat.name.data()+pat.name.size())return std::to_string(value);
+        }
         std::ostringstream os;
         if (std::isfinite(pat.number_value) && std::floor(pat.number_value) == pat.number_value &&
             pat.number_value >= -9e15 && pat.number_value <= 9e15) {
           os << static_cast<long long>(pat.number_value);
         } else {
-          os << pat.number_value;
+          os << std::setprecision(15) << pat.number_value;
         }
         return os.str();
       }
-      case ast::AstPattern::Kind::String: {
-        std::string out = "\"";
-        for (char c : pat.string_value) {
-          if (c == '"') out += "\\\"";
-          else if (c == '\\') out += "\\\\";
-          else if (c == '\n') out += "\\n";
-          else if (c == '\r') out += "\\r";
-          else if (c == '\t') out += "\\t";
-          else out.push_back(c);
-        }
-        out.push_back('"');
-        return out;
-      }
+      case ast::AstPattern::Kind::String: return c17_text::display_string(pat.string_value);
       case ast::AstPattern::Kind::List: {
         std::string out = "[";
         for (std::size_t i = 0; i < pat.args.size(); ++i) {
@@ -3233,14 +2950,14 @@ static ParsleyValue* p_prefix_get(ParsleyParser* p, int arg_index) {
         if (ex.expected_ast) {
           const std::string expected_str = format_pattern_expected(*ex.expected_ast);
           out << " else {\n";
-          out << "      char buf[4096];\n";
-          out << "      parsley_format_ast(&r, buf, sizeof(buf));\n";
-          out << "      if (strcmp(buf, " << c_string_lit(expected_str) << ") != 0) {\n";
+          out << "      int needed = parsley_format_ast(&r, NULL, 0);\n";
+          out << "      char* buf = needed >= 0 ? (char*)p_malloc((size_t)needed + 1u) : NULL;\n";
+          out << "      if (buf) parsley_format_ast(&r, buf, (size_t)needed + 1u);\n";
+          out << "      if (!buf || strcmp(buf, " << c_string_lit(expected_str) << ") != 0) {\n";
           out << "        fprintf(stderr, \"[FAIL] example %s: expected `%s`, got `%s`\\n\", "
-              << c_string_lit(ex.name) << ", " << c_string_lit(expected_str) << ", buf);\n";
+              << c_string_lit(ex.name) << ", " << c_string_lit(expected_str) << ", buf ? buf : \"<formatting failed>\");\n";
           out << "        failures++;\n";
-          out << "      }\n";
-          out << "    }\n";
+          out << "      }\n      free(buf);\n";          out << "    }\n";
         } else {
           out << "\n";
         }
@@ -3366,6 +3083,9 @@ inline std::string generate_cmake(const std::string& mod_cap,
   out << "if(UNIX AND NOT APPLE)\n";
   out << "  target_link_libraries(" << tgt << "_static PUBLIC m)\n";
   out << "endif()\n\n";
+  out << "set_target_properties(" << tgt << " PROPERTIES EXPORT_NAME parser)\n";
+  out << "set_target_properties(" << tgt << "_static PROPERTIES EXPORT_NAME parser_static)\n";
+  out << "install(EXPORT " << tgt << "_targets FILE " << tgt << "Config.cmake NAMESPACE " << mod_cap << ":: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/" << tgt << ")\n";
   out << "install(TARGETS " << tgt << " " << tgt << "_static\n";
   out << "  EXPORT " << tgt << "_targets\n";
   out << "  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}\n";
@@ -3599,7 +3319,7 @@ inline std::string generate_bazel_module(const std::string& mod_low) {
 inline std::string generate_pkgconfig(const std::string& mod_cap, const std::string& mod_low) {
   const std::string tgt = mod_low + "_parser";
   std::ostringstream out;
-  out << "prefix=/usr/local\n";
+  out << "prefix=${pcfiledir}/../..\n";
   out << "exec_prefix=${prefix}\n";
   out << "libdir=${exec_prefix}/lib\n";
   out << "includedir=${prefix}/include\n\n";
@@ -3618,7 +3338,7 @@ inline std::string generate_project_readme(const std::string& mod_cap,
   const std::string tgt = mod_low + "_parser";
   std::ostringstream out;
   out << "# " << mod_cap << " — Generated ISO C17 Parser\n\n";
-  out << "Generated by Parsley (strategy: `" << analysis::strategy_name(analysis.selected_strategy)
+  out << "Generated by Parsley (C17 ordered recursive descent; analysis mode: `" << analysis::strategy_name(analysis.selected_strategy)
       << "`).\n\n";
   out << "## Files\n\n";
   out << "- `parser.h` and `include/" << tgt << ".h`: Public C17 ABI (`PARSLEY_API`, `extern \"C\"`, tagged union ADTs)\n";
@@ -3686,12 +3406,12 @@ inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
   const std::string raw_mod =
       opts.module_override.empty() ? grammar.module_name : opts.module_override;
   const std::string mod_cap = detail::sanitize_c_ident(raw_mod);
-  const std::string mod_low = detail::to_lower_ascii(raw_mod);
-  const std::string mod_upper = detail::to_upper_ascii(raw_mod);
+  const std::string mod_low = c17_text::module_stem(raw_mod);
+  const std::string mod_upper = detail::to_upper_ascii(mod_low);
 
   const detail::CTypeInfo type_info = detail::analyze_c_types(grammar);
   const std::string header_content =
-      detail::generate_c17_header(grammar, analysis, type_info, mod_upper);
+      detail::namespace_c_header(detail::generate_c17_header(grammar, analysis, type_info, mod_upper), grammar, mod_low);
 
   detail::C17Emitter emitter(grammar, analysis, type_info, opts.emit_tests);
   const std::string source_content = emitter.emit();

@@ -3,9 +3,14 @@ module HtmlContext (program) where
 import Parsley.Prelude (many, eof)
 
 -- Лексика ---------------------------------------------
-skip  ws          = /[[:space:]]+/
-token ident       = /[a-zA-Z_][a-zA-Z0-9_-]*/ :: Text
-token textContent = /[^<]+/                    :: Text
+skip ws = /[[:space:]]+/
+token openTag = "<" -> push tag
+token closeTag = "</" -> push tag
+token textContent = /[^<]+/ :: Text
+
+mode tag where
+  token ident = /[a-zA-Z_][a-zA-Z0-9_-]*/ :: Text
+  token tagEnd = ">" -> pop
 
 -- AST -------------------------------------------------
 data Node
@@ -23,9 +28,9 @@ node
 
 htmlTag :: Node
 htmlTag = context do
-  name <- "<" *> ident <* ">"
+  name <- openTag *> ident <* tagEnd
   body <- many node
-  "</" *> exactly name <* ">"
+  closeTag *> exactly name <* tagEnd
   pure (Elem name body)
 
 -- Примеры ---------------------------------------------

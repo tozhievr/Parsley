@@ -5,20 +5,20 @@ import Parsley.Prelude (sepBy, many, eof)
 -- Лексика ---------------------------------------------
 skip  ws      = /[[:space:]]+/
 skip  comment = /--.*/
-token number  = /[0-9]+([.][0-9]+)?/   :: Double
-token ident   = /[a-z_][a-zA-Z0-9_]*/  :: Text
-keywords      = ["let", "in"]
+token number  = /[0-9]+([.][0-9]+)?/ :: Double
+token ident   = /[a-z_][a-zA-Z0-9_]*/ :: Text
+keywords = ["let", "in"]
 
 -- AST (выводится в целевой язык) ----------------------
 data Op = Add | Sub | Mul | Div | Pow
 
 data Expr
-  = Num  Double
-  | Var  Text
-  | Neg  Expr
-  | Bin  Op Expr Expr
+  = Num Double
+  | Var Text
+  | Neg Expr
+  | Bin Op Expr Expr
   | Call Text [Expr]
-  | Let  Text Expr Expr
+  | Let Text Expr Expr
 
 -- Синтаксис -------------------------------------------
 program :: Expr
@@ -29,14 +29,14 @@ expr = operators atom
   [ infixl 6 ["+" => Bin Add, "-" => Bin Sub]
   , infixl 7 ["*" => Bin Mul, "/" => Bin Div]
   , infixr 8 ["^" => Bin Pow]
-  , prefix  9 ["-" => Neg]
+  , prefix 9 ["-" => Neg]
   ]
 
 atom :: Expr
 atom
-  =  Num  <$> number
+  =  Num <$> number
   |  Call <$> ident <*> parens (expr `sepBy` ",")
-  |  Var  <$> ident
+  |  Var <$> ident
   |  parens expr
   |  letExpr
 

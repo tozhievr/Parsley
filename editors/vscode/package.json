@@ -2,7 +2,7 @@
   "name": "parsley-lang",
   "displayName": "Parsley Grammar DSL",
   "description": "Full IDE support for the Parsley Grammar DSL (.parsley) and Parsley Semantic Layer (.psem): LSP diagnostics, semantic highlighting, type & FIRST/FOLLOW hover, Ormolu formatting, railroad diagrams, live playground, inline grammar debugger, and ISO C17 parser + semantic analyzer codegen.",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "publisher": "parsley-lang",
   "license": "MIT",
   "icon": "media/parsley-icon.png",
@@ -569,5 +569,16 @@
         ]
       }
     ]
+  },
+  "scripts": {
+    "compile": "node scripts/compile_extension.mjs",
+    "check": "tsc --noEmit -p .",
+    "test": "node --test test/*.test.cjs",
+    "package": "npm run compile && node scripts/package_vsix.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/vscode": "1.85.0",
+    "typescript": "^5.7.3"
   }
 }
