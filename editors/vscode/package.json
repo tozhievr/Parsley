@@ -573,7 +573,7 @@
   "scripts": {
     "compile": "node scripts/compile_extension.mjs",
     "check": "tsc --noEmit -p .",
-    "test": "node --test test/*.test.cjs",
+    "test": "node --test test/extension.test.cjs",
     "package": "npm run compile && node scripts/package_vsix.mjs"
   },
   "devDependencies": {

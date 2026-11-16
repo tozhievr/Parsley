@@ -32,8 +32,8 @@ jobs:
             triplet: windows-x86_64
             cxx_compiler: clang++
             c_compiler: clang
-          - name: macOS 14 · Clang 23 · Ninja · CMake 4.5
-            os: macos-14
+          - name: macOS ARM64 · Clang 23 · Ninja · CMake 4.5
+            os: macos-latest
             triplet: macos-arm64
             cxx_compiler: clang++
             c_compiler: clang
