@@ -201,20 +201,20 @@ Or symlink `editors/vscode/` directly to `~/.vscode/extensions/parsley-lang` or 
 
 ### One-Line Installation / Установка одной командой
 
-Run from the directory containing the downloaded package. CLI version: **1.3.0**; extension version: **1.6.1**. Choose the archive for your OS and architecture.
+Run from the directory containing the downloaded package. CLI version: **1.3.1**; extension version: **1.6.1**. Choose the archive for your OS and architecture.
 
-Запускайте из каталога со скачанным пакетом. Версия CLI — **1.3.0**, расширения — **1.6.1**. Выбирайте архив под свою ОС и архитектуру.
+Запускайте из каталога со скачанным пакетом. Версия CLI — **1.3.1**, расширения — **1.6.1**. Выбирайте архив под свою ОС и архитектуру.
 
 **Windows x64 — PowerShell**. Installs for the current user and updates PATH for current and future terminals. Установка в профиль пользователя с добавлением в PATH текущего и будущих терминалов:
 
 ```powershell
-$ErrorActionPreference='Stop'; $d="$env:LOCALAPPDATA\Programs\Parsley"; Expand-Archive ./parsley-1.3.0-win64.zip $d -Force; $b="$d\parsley-1.3.0-win64\bin"; $p=[Environment]::GetEnvironmentVariable('Path','User'); if (($p -split ';') -notcontains $b) { [Environment]::SetEnvironmentVariable('Path',("$p;$b".Trim(';')),'User') }; $env:Path+=";$b"; parsley --version
+$ErrorActionPreference='Stop'; $d="$env:LOCALAPPDATA\Programs\Parsley"; Expand-Archive ./parsley-1.3.1-win64.zip $d -Force; $b="$d\parsley-1.3.1-win64\bin"; $p=[Environment]::GetEnvironmentVariable('Path','User'); if (($p -split ';') -notcontains $b) { [Environment]::SetEnvironmentVariable('Path',("$p;$b".Trim(';')),'User') }; $env:Path+=";$b"; parsley --version
 ```
 
 **Linux — Bash**. Installs to `/usr/local/bin` using `sudo`. Requires a Linux build; the Windows archive cannot run on Linux. Установка через `sudo`; необходим Linux-пакет:
 
 ```bash
-(set -eu; d=$(mktemp -d); trap 'rm -rf -- "$d"' EXIT; tar -xzf ./parsley-1.3.0-Linux.tar.gz -C "$d"; sudo install -m 755 "$d"/parsley-1.3.0-Linux/bin/parsley /usr/local/bin/parsley; parsley --version)
+(set -eu; d=$(mktemp -d); trap 'rm -rf -- "$d"' EXIT; tar -xzf ./parsley-1.3.1-Linux.tar.gz -C "$d"; sudo install -m 755 "$d"/parsley-1.3.1-Linux/bin/parsley /usr/local/bin/parsley; parsley --version)
 ```
 
 For another version, update both the archive name and extracted directory. These commands use local archives; this checkout has no configured public download URL. The toolchain below is needed for building from source; generating shared C17 libraries also requires a C compiler.

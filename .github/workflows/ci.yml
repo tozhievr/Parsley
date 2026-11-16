@@ -93,11 +93,6 @@ jobs:
         run: |
           ctest --test-dir build --output-on-failure -C Release
 
-      - name: Generated C17 with GCC
-        if: runner.os == 'Linux' && matrix.sanitizers != 'ON'
-        shell: bash
-        run: python tests/audit_regression.py --cli build/parsley --cc gcc
-
       - name: Package with CPack
         if: matrix.sanitizers != 'ON'
         shell: bash

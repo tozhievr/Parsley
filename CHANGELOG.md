@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.3.1
+
+- Fix CI toolchain installation, Windows Node 20 test invocation and macOS runner selection.
 
 - Stabilize the C17 backend: byte-preserving literals, exact Int64 parsing, checked allocation transactions, explicit resource failures, reusable NFA scratch buffers, memoization of eligible rules, and module-scoped ABI names.
 - Share strict regex parsing and NFA semantics between interpreter and playground.
