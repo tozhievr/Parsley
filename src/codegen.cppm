@@ -43,6 +43,7 @@ struct CodegenOptions {
   TargetLang target = TargetLang::C23;
   bool emit_tests = true;
   bool emit_nextc = false;
+  std::optional<std::string> native_adapter;
   std::string module_override;
   psl::PslStatus min_status = psl::PslStatus::Draft;
   std::string psl_profile;
@@ -3437,7 +3438,7 @@ inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
     psl_opts.module_override = opts.module_override;
     auto emitted_psl = psl::emit_psl_c23_files(*opts.psl_module, grammar, psl_opts);
     for (auto& file : optimizer::generate(grammar, *opts.psl_module, psl_opts)) emitted_psl.push_back(std::move(file));
-    if (opts.emit_nextc) for (auto& file : native_backend::generate(grammar, *opts.psl_module, psl_opts)) emitted_psl.push_back(std::move(file));
+    if (opts.emit_nextc) for (auto& file : native_backend::generate(grammar, *opts.psl_module, psl_opts, opts.native_adapter)) emitted_psl.push_back(std::move(file));
     for (const auto& pf : emitted_psl) {
       psl_files.push_back(GeneratedFile{pf.relative_path, pf.content});
       if (pf.relative_path.ends_with(".c") && pf.relative_path != "parser.c" && !pf.relative_path.starts_with("tools/")) {
@@ -3499,10 +3500,10 @@ inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
       else if(file.relative_path=="BUILD.bazel"){
         native_backend::detail::replace(file.content,"hdrs = [","hdrs = glob([\"nextc/**/*.h\", \"nextc/**/*.def\"]) + [");
         native_backend::detail::replace(file.content,"srcs = [","srcs = glob([\"nextc/**/*.h\", \"nextc/**/*.def\"]) + [");
-        file.content+="\ncc_binary(name = \""+target+"\", srcs = [\"tools/"+target+".c\"], deps = [\":"+lib+"\"], copts = select({\"@platforms//os:windows\": [\"/std:clatest\"], \"//conditions:default\": [\"-std=c23\"]}))\n";
+        file.content+="\ncc_binary(name = \""+target+"\", srcs = [\"tools/"+target+".c\"] + glob([\"tools/native_adapter.h\"]), deps = [\":"+lib+"\"], copts = select({\"@platforms//os:windows\": [\"/std:clatest\"], \"//conditions:default\": [\"-std=c23\"]}))\n";
       }else if(file.relative_path=="README.md")file.content+=
         "\n## Native compiler\n\nThe "+target+" target parses and validates source, optimizes its AST and lowers semantic equations to nextc MIR. "
-        "Use --run for Windows JIT, or --emit mir|asm|object|exe|flat -o FILE. Default return type is f64; --return bool|i64 selects another ABI. "
+        "Use --run for Windows JIT, or --emit mir|asm|object|exe|flat -o FILE. Use --help for available options and --version for the generator version. "
         "Language lowering hooks and MIR passes are declared in "+mod_low+"_backend.h. The bundled nextc snapshot currently targets x86-64.\n";
     }
   }

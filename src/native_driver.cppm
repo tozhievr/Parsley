@@ -2,8 +2,9 @@ module;
 #include <string>
 #include <string_view>
 export module parsley.native_driver;
+import parsley.version;
 export namespace parsley::native_driver {
-inline std::string generate(std::string_view name){
+inline std::string generate(std::string_view name, bool custom){
  std::string text=R"DRV(/* Generated standalone language compiler backed by nextc. */
 #define _CRT_SECURE_NO_WARNINGS 1
 #include "../@m@_parse.h"
@@ -14,6 +15,23 @@ inline std::string generate(std::string_view name){
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#ifndef PARSLEY_NATIVE_RESULT
+#define PARSLEY_NATIVE_RESULT CG_T_F64
+#define PARSLEY_NATIVE_RETURN "f64"
+#define PARSLEY_NATIVE_OPTIONS NULL
+#endif
+static void usage(FILE *out){
+ fputs("Usage: @m@_compiler SOURCE [options]\n"
+       "  -h, --help                 Show this help\n"
+       "  -V, --version              Show the Parsley generator version\n"
+       "  --run                      Execute with the Windows JIT\n"
+       "  --emit FORMAT              mir, asm, object (default), exe, or flat\n"
+       "  -o FILE                    Required for object, exe and flat output\n"
+       "  --return TYPE              f64, bool, i32, or i64 (default: " PARSLEY_NATIVE_RETURN ")\n"
+       "  --os TARGET                windows, linux, or baremetal\n"
+       "  -O0, -O1                   Select nextc optimization level\n"
+       "  --no-ast-opt               Skip AST optimization\n",out);
+}
 static int errors;
 static void diagnostic(void *user,const psl_diag *diag){
  (void)user;
@@ -42,14 +60,16 @@ static int add_main(cg_module_t *module,cg_type_t result){
  if(result==CG_T_F64)value=cg_build_cast(&b,CG_OP_FPTOSI,CG_T_I32,value);
  else if(result==CG_T_I1)value=cg_build_cast(&b,CG_OP_ZEXT,CG_T_I32,value);
  else if(result==CG_T_I64)value=cg_build_cast(&b,CG_OP_TRUNC,CG_T_I32,value);
- else return 0;
+ else if(result!=CG_T_I32)return 0;
  cg_build_ret(&b,value);return cg_module_ok(module);
 }
 int main(int argc,char **argv){
  const char *input=NULL,*output=NULL,*emit="object";
- int run=0,ast_opt=1;cg_type_t result=CG_T_F64;
+ int run=0,ast_opt=1;cg_type_t result=PARSLEY_NATIVE_RESULT;
  cg_options_t options=cg_default_options();
  for(int i=1;i<argc;++i){
+   if(!strcmp(argv[i],"--help") || !strcmp(argv[i],"-h")){usage(stdout);return 0;}
+   if(!strcmp(argv[i],"--version") || !strcmp(argv[i],"-V")){puts("@m@_compiler (Parsley @version@)");return 0;}
    if(!strcmp(argv[i],"--run"))run=1;
    else if(!strcmp(argv[i],"--no-ast-opt"))ast_opt=0;
    else if(!strcmp(argv[i],"-O0")){options.opt_level=0;options.optimize_ir=false;}
@@ -61,6 +81,7 @@ int main(int argc,char **argv){
      else if(!strcmp(key,"--return")){
        if(!strcmp(value,"f64"))result=CG_T_F64;
        else if(!strcmp(value,"bool"))result=CG_T_I1;
+       else if(!strcmp(value,"i32"))result=CG_T_I32;
        else if(!strcmp(value,"i64"))result=CG_T_I64;
        else{fprintf(stderr,"unknown return type\n");return 2;}
      }else{
@@ -73,7 +94,7 @@ int main(int argc,char **argv){
    else if(input){fprintf(stderr,"only one input file is supported\n");return 2;}
    else input=argv[i];
  }
- if(!input){fprintf(stderr,"usage: @m@_compiler SOURCE [--run | --emit mir|asm|object|exe|flat -o FILE] [--return f64|bool|i64] [-O0|-O1] [--no-ast-opt]\n");return 2;}
+ if(!input){usage(stderr);return 2;}
  if(strcmp(emit,"mir") && strcmp(emit,"asm") && strcmp(emit,"object") && strcmp(emit,"exe") && strcmp(emit,"flat")){
    fprintf(stderr,"unknown emission format\n");return 2;
  }
@@ -94,7 +115,7 @@ int main(int argc,char **argv){
    @m@_opt_result opt=@m@_optimize(&optimized,root,NULL,NULL,0);
    if(opt.status){fprintf(stderr,"AST optimization failed: %d\n",opt.status);goto cleanup;}root=opt.root;
  }
- module=@m@_backend_lower(root,"language_main",result,NULL,0,NULL,&diag);
+ module=@m@_backend_lower(root,"language_main",result,NULL,0,PARSLEY_NATIVE_OPTIONS,&diag);
  if(!module)goto cleanup;
  if(run){
    if(options.os!=CG_OS_WINDOWS){cg_diag_error(&diag,"JIT execution is available only for the Windows host");goto cleanup;}
@@ -102,6 +123,7 @@ int main(int argc,char **argv){
    void *address=cg_jit_symbol(jit,"language_main");if(!address){cg_diag_error(&diag,"entry symbol not found");goto cleanup;}
    if(result==CG_T_F64){double (*f)(void);_Static_assert(sizeof(f)==sizeof(address),"function address width");memcpy(&f,&address,sizeof(f));printf("%.17g\n",f());}
    else if(result==CG_T_I1){bool (*f)(void);memcpy(&f,&address,sizeof(f));printf("%d\n",(int)f());}
+   else if(result==CG_T_I32){int32_t (*f)(void);memcpy(&f,&address,sizeof(f));printf("%" PRId32 "\n",f());}
    else{int64_t (*f)(void);memcpy(&f,&address,sizeof(f));printf("%" PRId64 "\n",f());}
    status=0;goto cleanup;
  }
@@ -124,6 +146,8 @@ cleanup:
 }
 )DRV";
  std::size_t p=0;while((p=text.find("@m@",p))!=std::string::npos){text.replace(p,3,name);p+=name.size();}
+ text.replace(text.find("@version@"),9,parsley::VERSION_STRING);
+ if(custom)text.insert(text.find("#ifndef PARSLEY_NATIVE_RESULT"), "#include \"native_adapter.h\"\n");
  return text;
 }
 }

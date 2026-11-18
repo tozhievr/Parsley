@@ -29,6 +29,18 @@ Known disagreements carry a reason in cases.json. Add --strict to make existing
 disagreements fail the run. Normal mode still fails on unclassified disagreements
 or a failed generation, compilation, or analyzer invocation.
 
+To generate and use the standalone compiler on Windows:
+
+    parsley build tests/kotlin-formal/Kotlin.parsley -o build/kotlin-native --compile-compiler --no-compile-shared
+    build/kotlin-native/kotlin_compiler.exe --help
+    build/kotlin-native/kotlin_compiler.exe --version
+    build/kotlin-native/kotlin_compiler.exe tests/kotlin-formal/integration/test.kt --run
+    build/kotlin-native/kotlin_compiler.exe tests/kotlin-formal/integration/test.kt --emit exe -o build/kotlin-native/test.exe
+
+The standalone adapter supports a parameterless top-level `main` with an
+explicit `Int` result and a single decimal Int literal return. The automated
+test runs that entry with the JIT and as an emitted executable.
+
 ## Coverage boundaries
 
 | Spec area | Executed here | Remaining |

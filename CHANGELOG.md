@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.7.0
+
+- Add help and generator version flags to standalone compilers, plus a signed i32 entry ABI.
+- Load optional project-native adapters and compile the Kotlin conformance fixture through its standalone compiler.
+
 ## 2.6.1
 
 - Run a Kotlin function through the generated C23 frontend, optimizer and nextc backend in the Windows conformance suite.

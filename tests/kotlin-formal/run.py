@@ -1,6 +1,7 @@
 """Build and run the Parsley-generated C23 frontend against Kotlin conformance cases."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -8,8 +9,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parent
 
 
-def run(*args, source=None):
-    result = subprocess.run(args, input=source, capture_output=True, encoding="utf-8", timeout=90)
+def run(*args, source=None, env=None):
+    result = subprocess.run(args, input=source, capture_output=True, encoding="utf-8",
+                            timeout=90, env=env)
     if result.returncode:
         raise RuntimeError(f"{args[0]} exited {result.returncode}\n{result.stdout}{result.stderr}")
     return result.stdout
@@ -75,7 +77,24 @@ def main():
         module_check = out / "module-check"
         module_check.mkdir()
         check_module_failures(args.cli, module_check)
-        run(args.cli, "build", grammar, "-o", out, "--no-compile-shared", "--emit-nextc")
+        run(args.cli, "build", grammar, "-o", out, "--no-compile-shared", "--compile-compiler",
+            env={**os.environ, "PARSLEY_CC": args.cc})
+        compiler = out / "kotlin_compiler.exe"
+        if "--version" not in run(compiler, "--help") or "--emit" not in run(compiler, "-h"):
+            raise RuntimeError("Generated Kotlin compiler help is incomplete")
+        version = run(args.cli, "--version").strip().removeprefix("parsley ")
+        expected_version = f"kotlin_compiler (Parsley {version})"
+        if any(run(compiler, flag).strip() != expected_version for flag in ("--version", "-V")):
+            raise RuntimeError("Generated Kotlin compiler version does not match Parsley")
+        source = ROOT / "integration" / "test.kt"
+        if run(compiler, source, "--run").strip() != "42":
+            raise RuntimeError("Expected the Kotlin JIT entry to return 42")
+        executable = out / "kotlin-test.exe"
+        run(compiler, source, "--emit", "exe", "-o", executable)
+        result = subprocess.run([executable], capture_output=True, timeout=15)
+        if result.returncode != 42:
+            raise RuntimeError(f"Expected Kotlin PE exit code 42, got {result.returncode}: {result.stderr!r}")
+        print("Standalone Kotlin compiler: help, version, JIT and PE exit code verified")
         strict_c = ["-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror",
                     "-DPARSLEY_STATIC", "-I", out]
         frontend = [out / "parser.c", out / "kotlin_parse.c", out / "kotlin_sem.c"]

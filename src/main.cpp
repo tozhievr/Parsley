@@ -265,6 +265,16 @@ int cmd_build(const std::vector<std::string>& args) {
     parsley::codegen::CodegenOptions opts;
     opts.target = parsley::codegen::TargetLang::C23;
     opts.emit_nextc = emit_nextc;
+    if (emit_nextc) {
+      auto adapter_path = fs::path(input_file).replace_extension(".native.h");
+      std::error_code ec;
+      const bool exists = fs::exists(adapter_path, ec);
+      if (exists) opts.native_adapter = read_text_file(adapter_path.string());
+      if (ec || (exists && !opts.native_adapter)) {
+        std::cerr << "error: cannot read native adapter " << adapter_path << "\n";
+        return 1;
+      }
+    }
     opts.emit_tests = true;
     opts.min_status = min_status;
     opts.psl_module = res.psl_module ? &*res.psl_module : nullptr;

@@ -7,6 +7,7 @@ module;
 #include <string_view>
 #include <vector>
 #include <map>
+#include <optional>
 export module parsley.native_backend;
 import parsley.ir;
 import parsley.psl;
@@ -196,12 +197,13 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m){
   return o.str();
 }
 } // namespace detail
-inline std::vector<psl::PslGeneratedFile> generate(const ir::Grammar& g,const psl::PslModule& sem,const psl::PslCodegenOptions& options={}){
+inline std::vector<psl::PslGeneratedFile> generate(const ir::Grammar& g,const psl::PslModule& sem,const psl::PslCodegenOptions& options, const std::optional<std::string>& adapter){
   const std::string m=c23_text::module_stem(options.module_override.empty()?g.module_name:options.module_override);
   const auto up=optimizer::detail::upper(m);
   auto ctors=optimizer::detail::derive(g,sem,up,options.min_status);
   std::vector<psl::PslGeneratedFile> files={{m+"_backend.h",detail::header(m,up)},{m+"_backend.c",detail::source(ctors,m)}};
-  files.push_back({"tools/"+m+"_compiler.c",native_driver::generate(m)});
+  files.push_back({"tools/"+m+"_compiler.c",native_driver::generate(m, adapter.has_value())});
+  if(adapter)files.push_back({"tools/native_adapter.h",*adapter});
   for(const auto& file:nextc_bundle::files)files.push_back({std::string(file.path),detail::bundle_file(file)});
   return files;
 }

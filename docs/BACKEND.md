@@ -18,7 +18,8 @@ generated/language_compiler.exe program.lang --emit exe -o program.exe
 --emit-nextc adds backend resources and compiler targets. --compile-compiler
 also builds the executable using PARSLEY_CC/the configured C compiler and
 implies --emit-nextc. --no-compile-shared independently suppresses the DLL build.
-The input needs an adjacent grammar and PSL. The sole implementation-language
+The input needs an adjacent grammar and PSL. Generated compilers accept
+--help and --version, which reports the Parsley generator version. The sole implementation-language
 generation target remains C23.
 
 Generated CMake, Meson, Make, XMake and Bazel projects include a
@@ -31,7 +32,7 @@ assembly, PE executables, flat images and Windows JIT. Architecture proposals
 in nextc/docs are broader than this implemented snapshot. A PE image uses the
 Windows ABI and imports ExitProcess from kernel32.dll. PE/flat entry adapters
 convert the entry result to an i32 exit status. --return f64 (default), bool,
-or i64 selects the language entry ABI. --os selects the nextc target ABI;
+i32, or i64 selects the language entry ABI. --os selects the nextc target ABI;
 cross-target execution is not implicit. -O0/-O1 select nextc optimization.
 --no-ast-opt disables the earlier inferred AST optimization.
 
@@ -59,6 +60,14 @@ AST/custom adapter instead of reconstructing Int64 from a PSL double.
 Unsupported operations fail rather than producing a placeholder zero value.
 
 ## Extending a language
+
+When the CLI generates a native backend, it copies an optional adjacent
+`<Grammar>.native.h` to `tools/native_adapter.h` and includes it in the
+standalone driver. Define `PARSLEY_NATIVE_RESULT` (a nextc type),
+`PARSLEY_NATIVE_RETURN` (the CLI spelling shown in help), and
+`PARSLEY_NATIVE_OPTIONS` (a pointer to the module's backend options).
+The hook receives the original language's root after validation and optional
+AST optimization. For a complete file the hook can select an entry declaration.
 
 ~~~c
 #include "language_backend.h"
