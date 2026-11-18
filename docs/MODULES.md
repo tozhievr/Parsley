@@ -31,5 +31,4 @@ Inspect the dependency graph:
 
 The combined grammar goes through one resolver, grammar analysis and C23
 generation pipeline. This version does not provide per-module visibility,
-independent binaries or incremental compilation. The in-memory compiler API
-and LSP do not yet load file components.
+independent binaries or incremental compilation. The in-memory compiler API needs a component loader. The LSP uses this loader with open-document overlays for file URIs, updates dependent diagnostics when module buffers change, and resolves cross-file rule definitions. Set parsley.project.entry in VS Code or Cursor to route project commands to the entry file. Parsley: Show Module Graph opens a DOT document.

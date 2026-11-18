@@ -31,6 +31,18 @@ diag W_DEAD_CODE    :: Warning "Unreachable statement after `return`"
 node IntLit _ where
   type = KtInt
 
+{-# SOURCE kotlinSpec "expressions/integer-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node HexLit _ where
+  type = KtInt
+
+{-# SOURCE kotlinSpec "expressions/integer-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node BinaryLit _ where
+  type = KtInt
+
 node FloatLit _ where
   type = KtDouble
 
@@ -72,9 +84,19 @@ node PropDecl isVar name ty init where
   declare Variable name (if ty == "" then KtAny else KtInt)
   type = KtUnit
 
-node FunDecl name params retTy body where
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunDecl name _ functionScope where
   declare Function name KtAny
-  scope body $ pure ()
+  scope functionScope $ pure ()
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunctionParam name ty where
+  declare Variable name (if ty == "Int" then KtInt else if ty == "Double" then KtDouble else if ty == "Boolean" then KtBool else if ty == "String" then KtString else KtAny)
   type = KtUnit
 
 node ClassDecl kw name params members where
@@ -107,7 +129,7 @@ node KtFile pkg decls where
   type = KtUnit
 
 -- Поток управления (CFG) -----------------------------------------
-flow FunDecl _ _ _ body   = chain body
+flow FunctionScope _ body = chain body
 flow IfStmt c t e         = branch c [t, e]
 flow WhenStmt _ branches  = chain branches
 flow WhileStmt c body     = loop c body

@@ -99,8 +99,7 @@
   {
     "id": "backtick",
     "source": "fun `class`(): Int = 1",
-    "parse": true,
-    "gap": "escaped identifiers"
+    "parse": true
   },
   {
     "id": "typealias",
@@ -145,14 +144,12 @@
   {
     "id": "hex",
     "source": "fun f(): Int = 0xFF",
-    "parse": true,
-    "gap": "Kotlin integer literal forms"
+    "parse": true
   },
   {
     "parse": true,
     "diag": "!E_UNDECLARED",
-    "gap": "function parameters are not bound by current PSL",
-    "source": "fun f(x: Int): Int = x",
+    "source": "fun f(x: Int, y: Int): Int = x + y",
     "id": "parameter-scope"
   },
   {
@@ -161,5 +158,31 @@
     "gap": "return type compatibility is not checked by current PSL",
     "source": "fun f(): Int = \"text\"",
     "id": "return-type-mismatch"
+  },
+  {
+    "source": "fun f(): Int = 0b1010_0101",
+    "id": "binary-literal",
+    "parse": true
+  },
+  {
+    "source": "fun f(): Int = 0b102",
+    "id": "bad-binary-digit",
+    "parse": false
+  },
+  {
+    "source": "fun f(): Int = 0xFF_",
+    "id": "bad-hex-separator",
+    "parse": false
+  },
+  {
+    "source": "fun ``(): Int = 1",
+    "id": "empty-escaped-name",
+    "parse": false
+  },
+  {
+    "id": "parameter-scope-does-not-leak",
+    "source": "fun f(x: Int): Int = x; fun g(): Int = x",
+    "diag": "E_UNDECLARED",
+    "parse": true
   }
 ]

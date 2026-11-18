@@ -169,14 +169,14 @@ funDecl = do
   retTy  <- optRetType
   body   <- funBody
   optSemi
-  pure (FunDecl name params retTy body)
+  pure (FunDecl name retTy (FunctionScope params body))
 
 funParam :: KtParam
 funParam = do
   name <- ident
   ":"
   ty   <- typeExpr
-  pure (Param "" name ty)
+  pure (FunctionParam name ty)
 
 optRetType :: Text
 optRetType
@@ -395,6 +395,8 @@ expr = operators atom
 atom :: KtExpr
 atom
   =  FloatLit <$> floatLit
+  |  HexLit <$> hexLit
+  |  BinaryLit <$> binaryLit
   |  IntLit <$> intLit
   |  StrLit <$> strLit
   |  ("true" *> pure (BoolLit True))

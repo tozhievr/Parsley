@@ -22,6 +22,8 @@ data KtUnaryOp = Neg | Not
 
 data KtExpr
   = IntLit Double
+  | HexLit Text
+  | BinaryLit Text
   | FloatLit Double
   | StrLit Text
   | BoolLit Bool
@@ -54,6 +56,10 @@ data KtStmt
 
 data KtParam
   = Param Text Text Text
+  | FunctionParam Text Text
+
+data KtFunctionScope
+  = FunctionScope [KtParam] [KtStmt]
 
 data KtDecl
   = ImportDecl [Text] Text
@@ -61,7 +67,7 @@ data KtDecl
   | ObjectDecl Text [KtDecl]
   | TypeAliasDecl Text Text
   | InterfaceDecl Text [KtDecl]
-  | FunDecl Text [KtParam] Text [KtStmt]
+  | FunDecl Text Text KtFunctionScope
   | PropDecl Bool Text Text [KtExpr]
 
 data KtFile

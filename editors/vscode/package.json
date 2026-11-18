@@ -2,7 +2,7 @@
   "name": "parsley-lang",
   "displayName": "Parsley Grammar DSL",
   "description": "Full IDE support for the Parsley Grammar DSL (.parsley) and Parsley Semantic Layer (.psem): LSP diagnostics, semantic highlighting, type & FIRST/FOLLOW hover, Ormolu formatting, railroad diagrams, live playground, inline grammar debugger, and ISO C23 parser + semantic analyzer codegen.",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "publisher": "parsley-lang",
   "license": "MIT",
   "icon": "media/parsley-icon.png",
@@ -192,6 +192,12 @@
     "configuration": {
       "title": "Parsley Grammar & Semantic DSL",
       "properties": {
+        "parsley.project.entry": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Entry grammar or semantic file for project commands run from any component. Relative paths are resolved in the workspace folder."
+        },
         "parsley.executablePath": {
           "type": "string",
           "default": "parsley",
@@ -518,6 +524,10 @@
         "command": "parsley.format",
         "title": "Parsley: Format Grammar / PSL (Ormolu Style)",
         "icon": "$(wand)"
+      },
+      {
+        "command": "parsley.showModuleGraph",
+        "title": "Parsley: Show Module Graph"
       },
       {
         "command": "parsley.showRailroad",

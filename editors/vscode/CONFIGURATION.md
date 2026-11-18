@@ -112,3 +112,7 @@ and changed editor switches refresh CodeLens/diagnostics.
 Legacy c23.outputDir and fuzzCount remain supported. Use the new build/test
 keys when you want profiles or distinct per-folder settings. The VSIX uses the
 same extension API in VS Code and Cursor.
+
+## Modular projects
+
+Set parsley.project.entry to the workspace-relative entry grammar or PSL file to run Check, Test and Build from any component. Use Parsley: Show Module Graph to open the dependency graph as DOT. The live graph uses open documents and shows the paired semantic layer when it is open. CLI commands read saved files.

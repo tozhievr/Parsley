@@ -185,3 +185,29 @@ test('independent LSP sessions start with each folder executable, environment an
     assert.equal(initialized[1].params.rootUri,h.vscode.Uri.file(two).toString());
   }finally{pool.dispose();}
 });
+
+test('project commands from components use the configured entry file', async () => {
+  const root = path.resolve(__dirname, 'Kotlin project');
+  const entry = path.join(root, 'Kotlin.parsley');
+  const h = harness({roots:[root], docPath:path.join(root, 'Kotlin', 'Syntax.parsley'),
+    settings:{'project.entry':'Kotlin.parsley'}});
+  await h.commands.get('parsley.check')(h.doc.uri);
+  await h.commands.get('parsley.buildC23')(h.doc.uri);
+  assert.deepEqual(h.processCalls.map(call => call.args[1]), [entry, entry]);
+});
+
+test('module graph opens a DOT document from the language server', async () => {
+  const h = harness();
+  const dot = 'digraph modules { "Entry" -> "Piece"; }';
+  const opened = [];
+  h.clientClass.prototype.didOpen=()=>{};
+  h.clientClass.prototype.sendRequest=async method => {
+    assert.equal(method, 'parsley/moduleGraph');
+    return dot;
+  };
+  h.vscode.workspace.openTextDocument=async value => value?.content ? value : h.doc;
+  h.vscode.window.showTextDocument=async value => opened.push(value);
+  await h.commands.get('parsley.showModuleGraph')(h.doc.uri);
+  assert.equal(opened[0].content, dot);
+  assert.equal(opened[0].language, 'dot');
+});

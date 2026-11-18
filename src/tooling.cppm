@@ -44,6 +44,7 @@ import parsley.eval;
 import parsley.regex;
 import parsley.c23_text;
 import parsley.psl;
+import parsley.compiler;
 
 namespace parsley::tooling::detail {
 
@@ -1247,6 +1248,7 @@ public:
         std::string text = td->get("text") ? td->get("text")->as_string() : "";
         if (!uri.empty()) {
           update_document(uri, text);
+          refresh_linked_documents(uri, out);
           out.push_back(build_publish_diagnostics(uri));
           if (uri.ends_with(".parsley")) {
             const std::string sibling = uri.substr(0,uri.size()-8)+".psem";
@@ -1267,6 +1269,7 @@ public:
         if (const auto* txt = changes->arr_val.back().get("text")) {
           if (!uri.empty()) {
             update_document(uri, txt->as_string());
+            refresh_linked_documents(uri, out);
             out.push_back(build_publish_diagnostics(uri));
           if (uri.ends_with(".parsley")) {
             const std::string sibling = uri.substr(0,uri.size()-8)+".psem";
@@ -1281,12 +1284,37 @@ public:
     if (method == "textDocument/didClose" && params) {
       std::string uri = extract_doc_uri(*params);
       docs_.erase(uri); out.push_back(build_publish_diagnostics(uri));
+      refresh_linked_documents(uri, out);
       if (uri.ends_with(".parsley")) {
         std::string sibling = uri.substr(0,uri.size()-8)+".psem";
         if (auto it=docs_.find(sibling);it!=docs_.end()) {
           std::string source=it->second.source; update_document(sibling,std::move(source)); out.push_back(build_publish_diagnostics(sibling));
         }
       }
+      return out;
+    }
+
+    if (method == "parsley/moduleGraph" && params) {
+      const auto uri = extract_doc_uri(*params);
+      const auto doc = docs_.find(uri);
+      if (doc == docs_.end()) {
+        out.push_back(make_response(detail::Json::make_null()));
+        return out;
+      }
+      std::set<std::pair<std::string, std::string>> edges;
+      const auto collect = [&](const DocState& state) {
+        for (const auto& dependency : state.dependencies)
+          edges.emplace(dependency.importer, dependency.imported);
+      };
+      collect(doc->second);
+      const auto suffix = doc->second.is_psl ? ".parsley" : ".psem";
+      const auto sibling = uri.substr(0, uri.find_last_of('.')) + suffix;
+      if (const auto it = docs_.find(sibling); it != docs_.end()) collect(it->second);
+      std::ostringstream graph;
+      graph << "digraph modules {\n";
+      for (const auto& [from, to] : edges) graph << "  \"" << from << "\" -> \"" << to << "\";\n";
+      graph << "}\n";
+      out.push_back(make_response(detail::Json::make_string(graph.str())));
       return out;
     }
 
@@ -1385,6 +1413,7 @@ private:
     ir::Grammar grammar;
     analysis::AnalysisResult analysis;
     psl::PslModule psl_mod;
+    std::vector<compiler::ModuleDependency> dependencies;
   };
 
   std::unordered_map<std::string, DocState> docs_;
@@ -1421,7 +1450,7 @@ private:
     return detail::span_to_lsp_range(adjusted);
   }
 
-  static std::optional<std::string> disk_document(std::string_view uri) {
+  static std::optional<std::filesystem::path> document_path(std::string_view uri) {
     if (!uri.starts_with("file://")) return std::nullopt;
     std::string path(uri.substr(7)), decoded;
     for (size_t i=0;i<path.size();++i) {
@@ -1431,9 +1460,80 @@ private:
 #ifdef _WIN32
     if (decoded.size()>2 && decoded[0]=='/' && decoded[2]==':') decoded.erase(0,1);
 #endif
-    std::ifstream in(std::filesystem::path(std::u8string(decoded.begin(),decoded.end())), std::ios::binary);
+    if (decoded.find('\0') != std::string::npos) return std::nullopt;
+    return std::filesystem::path(std::u8string(decoded.begin(), decoded.end()));
+  }
+
+  static std::optional<std::string> disk_document(std::string_view uri) {
+    const auto path = document_path(uri);
+    if (!path) return std::nullopt;
+    std::ifstream in(*path, std::ios::binary);
     if (!in) return std::nullopt;
     std::ostringstream text; text<<in.rdbuf(); return text.str();
+  }
+
+  static std::string file_uri(const std::filesystem::path& file) {
+    const auto path = file.generic_u8string();
+    std::string uri = "file://";
+#ifdef _WIN32
+    uri += '/';
+#endif
+    constexpr char hex[] = "0123456789ABCDEF";
+    for (unsigned char c : path) {
+      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '/' || c == ':' || c == '-' ||
+          c == '_' || c == '.' || c == '~') uri += static_cast<char>(c);
+      else {
+        uri += '%';
+        uri += hex[c >> 4];
+        uri += hex[c & 15];
+      }
+    }
+    return uri;
+  }
+
+  std::optional<compiler::ComponentSource> read_component(const std::filesystem::path& path) const {
+    for (const auto& [uri, document] : docs_) {
+      const auto candidate = document_path(uri);
+      if (!candidate) continue;
+      std::error_code error;
+      const auto canonical = std::filesystem::weakly_canonical(*candidate, error);
+      if (!error && canonical == path) return compiler::ComponentSource{uri, document.source};
+    }
+    auto uri = file_uri(path);
+    auto text = disk_document(uri);
+    if (!text) return std::nullopt;
+    return compiler::ComponentSource{std::move(uri), std::move(*text)};
+  }
+
+  template<class Link>
+  void link_components(DocState& document, Link link) {
+    const auto path = document_path(document.uri);
+    if (!path || document.diags.has_errors()) return;
+    compiler::CompileResult result;
+    result.filename = path->string();
+    result.psl_filename = result.filename;
+    link(result, [this](const auto& filename) { return read_component(filename); });
+    document.diags.append(result.diagnostics);
+    document.dependencies = std::move(result.module_dependencies);
+  }
+
+  void refresh_linked_documents(const std::string& changed, std::vector<std::string>& out) {
+    if (!document_path(changed)) return;
+    std::vector<std::pair<std::string, std::string>> refresh;
+    for (const auto& [uri, doc] : docs_) {
+      if (uri != changed && std::ranges::any_of(doc.dependencies, [](const auto& dependency) {
+            return !stdlib::find_builtin_module(dependency.imported);
+          })) refresh.emplace_back(uri, doc.source);
+    }
+    // Rebuild grammars before PSL documents that use their AST.
+    std::stable_sort(refresh.begin(), refresh.end(), [](const auto& a, const auto& b) {
+      return a.first.ends_with(".parsley") && !b.first.ends_with(".parsley");
+    });
+    for (auto& [uri, source] : refresh) {
+      update_document(uri, std::move(source));
+      out.push_back(build_publish_diagnostics(uri));
+    }
   }
 
   void update_document(const std::string& uri, std::string text) {
@@ -1452,11 +1552,17 @@ private:
           g_ptr = &st.grammar;
         }
       }
+      link_components(st, [&](auto& result, auto reader) {
+        compiler::compose_semantic_modules(result, st.psl_mod, g_ptr, std::move(reader));
+      });
       psl::PslCheckOptions chk;
       chk.cross_check_grammar = (g_ptr != nullptr);
       psl::check_psl_module(st.psl_mod, g_ptr, st.diags, chk);
     } else {
       st.ast_mod = parser::parse_module(st.source, uri, st.diags);
+      link_components(st, [&](auto& result, auto reader) {
+        compiler::compose_grammar_modules(result, st.ast_mod, std::move(reader));
+      });
       st.resolved = resolve::resolve_module(st.ast_mod, st.diags);
       st.typed = typecheck::check_module(st.ast_mod, st.resolved, st.diags);
       st.grammar = desugar::desugar_module(st.ast_mod, st.resolved, st.typed, st.diags);
@@ -1627,7 +1733,7 @@ private:
 
     if (!target) return detail::Json::make_null();
     return detail::Json::make_object({
-        {"uri", detail::Json::make_string(uri)},
+        {"uri", detail::Json::make_string(target->file.starts_with("file://") ? target->file : uri)},
         {"range", span_range(*target)},
     });
   }

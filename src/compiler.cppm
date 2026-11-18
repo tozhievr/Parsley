@@ -6,6 +6,7 @@ module;
 #include <fstream>
 #include <optional>
 #include <iterator>
+#include <functional>
 #include <map>
 #include <set>
 #include <vector>
@@ -31,7 +32,7 @@ import parsley.eval;
 import parsley.regex;
 import parsley.psl;
 import parsley.codegen;
-import parsley.tooling;
+
 
 export namespace parsley::compiler {
 
@@ -42,6 +43,12 @@ struct CompileOptions {
   std::string psl_source_override;
   std::string psl_filename_override;
 };
+
+struct ComponentSource {
+  std::string origin;
+  std::string text;
+};
+using ComponentReader = std::function<std::optional<ComponentSource>(const std::filesystem::path&)>;
 
 struct ModuleDependency {
   std::string importer;
@@ -80,15 +87,39 @@ inline std::optional<std::string> read_file_bytes(const std::filesystem::path& p
   return ss.str();
 }
 
+inline std::filesystem::path project_root(std::filesystem::path directory,
+                                          const std::filesystem::path& file,
+                                          std::string_view name) {
+  auto relative = std::string(name);
+  for (auto& c : relative) if (c == '.') c = '/';
+  const std::filesystem::path layout(relative);
+  if (layout.filename() != file.stem()) return directory;
+  auto candidate = directory;
+  for (auto parent = layout.parent_path(); !parent.empty(); parent = parent.parent_path()) {
+    if (candidate.filename() != parent.filename()) return directory;
+    candidate = candidate.parent_path();
+  }
+  return candidate;
+}
+
+inline std::optional<ComponentSource> component_source(const std::filesystem::path& path,
+                                                        const ComponentReader& reader) {
+  if (reader) return reader(path);
+  auto text = read_file_bytes(path);
+  if (!text) return std::nullopt;
+  return ComponentSource{path.string(), std::move(*text)};
+}
+
 // File modules are source components of one grammar. Their declarations share
 // the lexer and symbol table, so normal duplicate checks run after composition.
 class FileModules {
  public:
-  explicit FileModules(CompileResult& result)
-      : result_(result), root_(std::filesystem::canonical(
-            std::filesystem::absolute(result.filename)).parent_path()) {}
+  explicit FileModules(CompileResult& result, ComponentReader reader = {})
+      : result_(result), root_(std::filesystem::weakly_canonical(
+            std::filesystem::absolute(result.filename).parent_path())), reader_(std::move(reader)) {}
 
   void load(ast::Module& entry) {
+    root_ = project_root(root_, result_.filename, entry.name);
     active_.insert(entry.name);
     visit_imports(entry);
     active_.erase(entry.name);
@@ -148,20 +179,19 @@ class FileModules {
       return;
     }
     std::error_code ec;
-    const auto path = std::filesystem::canonical(root_ / (relative + ".parsley"), ec);
+    const auto path = std::filesystem::weakly_canonical(root_ / (relative + ".parsley"), ec);
     const auto inside = path.lexically_relative(root_);
     if (ec || inside.empty() || *inside.begin() == "..") {
       error(import, "cannot find source module within project directory");
       return;
     }
-    const auto filename = path.string();
-    auto source = read_file_bytes(path);
+    auto source = component_source(path, reader_);
     if (!source) {
-      error(import, "cannot read source module");
+      error(import, "cannot find source module within project directory");
       return;
     }
-    result_.module_sources.emplace(filename, *source);
-    auto dependency = parser::parse_module(*source, filename, result_.diagnostics);
+    result_.module_sources.emplace(source->origin, source->text);
+    auto dependency = parser::parse_module(source->text, source->origin, result_.diagnostics);
     if (!dependency.has_module_header || dependency.name != name) {
       error(import, "module header does not match import of");
       return;
@@ -185,6 +215,7 @@ class FileModules {
   std::filesystem::path root_;
   std::set<std::string> active_;
   std::set<std::string> loaded_;
+  ComponentReader reader_;
   std::vector<ast::Module> modules_;
 };
 
@@ -264,11 +295,12 @@ inline void verify_lockfile_if_present(const std::filesystem::path& lock_path,
 
 class SemanticComponents {
  public:
-  SemanticComponents(CompileResult& result, const ir::Grammar* grammar)
+  SemanticComponents(CompileResult& result, const ir::Grammar* grammar, ComponentReader reader = {})
       : result_(result), grammar_(grammar),
-        root_(std::filesystem::absolute(result.psl_filename).parent_path()) {}
+        root_(std::filesystem::absolute(result.psl_filename).parent_path()), reader_(std::move(reader)) {}
 
   void load(psl::PslModule& entry) {
+    root_ = project_root(root_, result_.psl_filename, entry.module_name);
     active_.insert(entry.module_name);
     visit(entry);
     for (auto& component : components_) {
@@ -325,17 +357,16 @@ class SemanticComponents {
       std::error_code ec;
       const auto root = std::filesystem::canonical(root_, ec);
       if (ec) { error(import, "cannot resolve project root for"); continue; }
-      const auto path = std::filesystem::canonical(root / (relative + ".psem"), ec);
+      const auto path = std::filesystem::weakly_canonical(root / (relative + ".psem"), ec);
       const auto inside = path.lexically_relative(root);
       if (ec || inside.empty() || *inside.begin() == "..") {
         error(import, "cannot find semantic component within project directory");
         continue;
       }
-      const auto source = read_file_bytes(path);
-      if (!source) { error(import, "cannot read semantic component"); continue; }
-      const auto filename = path.string();
-      result_.module_sources.emplace(filename, *source);
-      auto component = psl::parse_psl_module(*source, filename, result_.diagnostics);
+      const auto source = component_source(path, reader_);
+      if (!source) { error(import, "cannot find semantic component within project directory"); continue; }
+      result_.module_sources.emplace(source->origin, source->text);
+      auto component = psl::parse_psl_module(source->text, source->origin, result_.diagnostics);
       if (component.module_name != name || component.language_version != parent.language_version ||
           component.project) {
         error(import, "semantic component needs a matching header and language version, without project declaration:");
@@ -358,6 +389,7 @@ class SemanticComponents {
   std::filesystem::path root_;
   std::set<std::string> active_;
   std::set<std::string> loaded_;
+  ComponentReader reader_;
   std::vector<psl::PslModule> components_;
 };
 
@@ -390,6 +422,16 @@ inline void attach_psl_to_result(CompileResult& res,
 }
 
 } // namespace detail
+
+inline void compose_grammar_modules(CompileResult& result, ast::Module& entry,
+                                    ComponentReader reader) {
+  detail::FileModules(result, std::move(reader)).load(entry);
+}
+
+inline void compose_semantic_modules(CompileResult& result, psl::PslModule& entry,
+                                     const ir::Grammar* grammar, ComponentReader reader) {
+  detail::SemanticComponents(result, grammar, std::move(reader)).load(entry);
+}
 
 inline CompileResult compile_source_with_options(std::string_view source,
                                                  std::string_view filename,

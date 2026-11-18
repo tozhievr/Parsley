@@ -223,8 +223,16 @@ async function runDocumentCommand(kind, uriArg, compiler = false) {
             await vscode.window.showWarningMessage("Open a .parsley or .psem document.");
             return;
         }
+        const configuredEntry = getConfig(selected).get("project.entry")?.trim();
+        const entry = configuredEntry
+            ? vscode.Uri.file(path.resolve(getWorkspaceRoot(selected), expandSetting(configuredEntry, selected)))
+            : selected;
+        if (entry.scheme === "file" && !/\.(parsley|psem)$/i.test(entry.fsPath)) {
+            throw new Error("parsley.project.entry must point to a .parsley or .psem file");
+        }
         await saveIfDirty(selected);
-        const uri = kind === "build" ? resolveSiblingGrammarUri(selected) : selected;
+        await saveIfDirty(entry);
+        const uri = kind === "build" ? resolveSiblingGrammarUri(entry) : entry;
         const build = kind === "build" ? buildArguments(uri, compiler) : undefined;
         const args = build?.args ?? (kind === "test" ? testArguments(uri) : ["check", uri.fsPath, "--min-status", minimumStatus(uri)]);
         cliOutput.show(true);
@@ -2681,6 +2689,27 @@ function activate(context) {
         }
         else {
             vscode.window.showErrorMessage(cli.stderr || "Formatting failed.");
+        }
+    }), vscode.commands.registerCommand("parsley.showModuleGraph", async (uriArg) => {
+        const selected = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri;
+        if (!selected)
+            return;
+        try {
+            const configuredEntry = getConfig(selected).get("project.entry")?.trim();
+            const target = configuredEntry
+                ? vscode.Uri.file(path.resolve(getWorkspaceRoot(selected), expandSetting(configuredEntry, selected)))
+                : selected;
+            const doc = await vscode.workspace.openTextDocument(target);
+            client.didOpen(doc);
+            const dot = await client.sendRequest("parsley/moduleGraph", { uri: target.toString() });
+            const result = dot ? undefined : await runCliCommand(["graph", target.fsPath, "--format", "modules-dot"], getWorkspaceRoot(target), target);
+            if (result?.code)
+                throw new Error(result.stderr || "Module graph generation failed");
+            const graph = await vscode.workspace.openTextDocument({ content: dot ?? result?.stdout ?? "", language: "dot" });
+            await vscode.window.showTextDocument(graph);
+        }
+        catch (error) {
+            await vscode.window.showErrorMessage("Parsley: " + error.message);
         }
     }), vscode.commands.registerCommand("parsley.showRailroad", async (uriArg) => {
         await railroad.show(coerceUriArg(uriArg));

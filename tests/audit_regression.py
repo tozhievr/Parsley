@@ -174,5 +174,39 @@ int main(void){
         output=self.lsp([{'jsonrpc':'2.0','id':2,'method':'initialize','params':{}}],b'Content-Length: 3\r\n\r\n{xx')
         self.assertIn('error',output[0]);self.assertEqual(output[-1]['id'],2)
 
+    def test_module_lsp_live_overlay_and_navigation(self):
+        entry = self.dir / 'Entry.parsley'
+        piece = self.dir / 'Piece.parsley'
+        source = 'module Entry (start) where\nimport Piece\nstart :: Text\nstart = piece\n'
+        component = 'module Piece where\npiece :: Text\npiece = "disk"\n'
+        entry.write_text(source, encoding='utf-8')
+        piece.write_text(component, encoding='utf-8')
+        root, dependency = entry.as_uri(), piece.as_uri()
+        def message(method, params, ident=None):
+            msg = {'jsonrpc': '2.0', 'method': method, 'params': params}
+            if ident is not None:
+                msg['id'] = ident
+            return msg
+        output = self.lsp([
+            message('initialize', {}, 1),
+            message('textDocument/didOpen', {'textDocument': {'uri': root, 'text': source}}),
+            message('textDocument/definition', {'textDocument': {'uri': root},
+                    'position': {'line': 3, 'character': 10}}, 2),
+            message('parsley/moduleGraph', {'uri': root}, 3),
+            message('textDocument/didOpen', {'textDocument': {'uri': dependency,
+                    'text': component.replace('piece', 'renamed')}}),
+            message('textDocument/didClose', {'textDocument': {'uri': dependency}}),
+        ])
+        definition = next(item['result'] for item in output if item.get('id') == 2)
+        self.assertTrue(definition['uri'].endswith('/Piece.parsley'), definition)
+        graph = next(item['result'] for item in output if item.get('id') == 3)
+        self.assertIn('"Entry" -> "Piece"', graph)
+        diagnostics = [item['params']['diagnostics'] for item in output
+                       if item.get('method') == 'textDocument/publishDiagnostics'
+                       and item['params']['uri'] == root]
+        self.assertFalse(diagnostics[0], diagnostics)
+        self.assertTrue(any(d['code'] == 'E0200' for group in diagnostics for d in group), diagnostics)
+        self.assertFalse(diagnostics[-1], diagnostics)
+
 if __name__=='__main__':
     unittest.main(argv=[sys.argv[0],*remaining])

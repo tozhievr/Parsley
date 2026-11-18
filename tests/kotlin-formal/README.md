@@ -28,10 +28,10 @@ or a failed generation, compilation, or analyzer invocation.
 
 | Spec area | Executed here | Remaining |
 | --- | --- | --- |
-| Lexical grammar | ASCII names, basic literals, flat comments | Unicode identifiers, escaped names, nested comments, full literal and string-template modes |
+| Lexical grammar | ASCII and escaped names, basic literals including binary/hexadecimal syntax, flat comments | Unicode identifiers, escaped/name equivalence, integer suffixes and range typing, nested comments, full string-template modes |
 | Source and declarations | Files, package/import, basic functions/properties/classes/interfaces, simple objects/type aliases | Scripts, annotation/modifier restrictions, complete declaration syntax and preservation of type structure |
 | Expressions and statements | Basic calls, arithmetic, conditionals, loops, when, simple safe navigation and Elvis syntax | Lambdas, chained navigation, nullability semantics, exceptions, destructuring, context-sensitive statement separators |
-| Static semantics | Selected symbol lookups and diagnostics, simple scope and CFG/dataflow rules | Kotlin constraint solving, nominal subtyping, variance, overload resolution, smart casts, exhaustive when, complete initialization and visibility rules |
+| Static semantics | Selected symbol lookups and diagnostics, function parameter scopes, simple CFG/dataflow rules | Kotlin constraint solving, nominal subtyping, variance, overload resolution, smart casts, exhaustive when, complete initialization and visibility rules |
 | Execution | Generated parser and static analyzer | Kotlin runtime, interop, platform semantics and native lowering |
 
 The official specification leaves some semantics to platforms and compiler

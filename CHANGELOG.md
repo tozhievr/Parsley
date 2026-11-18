@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.0
+
+- Resolve file modules in LSP using open-document overlays, enable cross-file definitions and display module graphs in VS Code and Cursor (extension 2.2.0).
+- Port basic escaped names and radix literals in the Kotlin conformance project, and scope function parameters to their bodies.
+
 ## 2.5.0
 
 - Compose grammar and semantic source modules, report module errors and export dependency graphs.

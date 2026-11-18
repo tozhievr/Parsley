@@ -12,11 +12,11 @@ kotlinFile = do
   pure (KtFile pkg decls)
 
 -- Примеры и тесты ----------------------------------------------
-example "fun_expr" : "fun sq(x: Int): Int = x * x" parses-to KtFile [] [FunDecl "sq" [Param "" "x" "Int"] "Int" [ReturnStmt [Bin Mul (Var "x") (Var "x")]]]
-example "val_arith" : "fun main() { val x = 1 + 2 * 3 }" parses-to KtFile [] [FunDecl "main" [] "" [ValStmt False "x" "" [Bin Add (IntLit 1) (Bin Mul (IntLit 2) (IntLit 3))]]]
-example "when_stmt" : "fun f(x: Int): Int { when (x) { 1 -> return 10; else -> return 0 } }" parses-to KtFile [] [FunDecl "f" [Param "" "x" "Int"] "Int" [WhenStmt [Var "x"] [WhenBranch [IntLit 1] [ReturnStmt [IntLit 10]], WhenElse [ReturnStmt [IntLit 0]]]]]
-example "class_and_for" : "class Counter(var n: Int) { fun inc() { for (i in 1..5) { n += i } } }" parses-to KtFile [] [ClassDecl "class" "Counter" [Param "var" "n" "Int"] [FunDecl "inc" [] "" [ForStmt "i" (Bin Range (IntLit 1) (IntLit 5)) [AssignStmt "n" "+=" (Var "i")]]]]
-example "package_import" : "package demo.app\nimport kotlin.math.*\nfun id(x: Int): Int = x" parses-to KtFile ["demo", "app"] [ImportDecl ["kotlin", "math"] "*", FunDecl "id" [Param "" "x" "Int"] "Int" [ReturnStmt [Var "x"]]]
-example "if_while_method" : "fun loop(n: Int): Int { var s = 0; if (n > 0) { while (s < n) { s += 1 } } else { s = -1 }; return s.dec() }" parses-to KtFile [] [FunDecl "loop" [Param "" "n" "Int"] "Int" [ValStmt True "s" "" [IntLit 0], IfStmt (Bin Gt (Var "n") (IntLit 0)) [WhileStmt (Bin Lt (Var "s") (Var "n")) [AssignStmt "s" "+=" (IntLit 1)]] [AssignStmt "s" "=" (Unary Neg (IntLit 1))], ReturnStmt [MethodCall (Var "s") "dec" []]]]
+example "fun_expr" : "fun sq(x: Int): Int = x * x" parses-to KtFile [] [FunDecl "sq" "Int" (FunctionScope [FunctionParam "x" "Int"] [ReturnStmt [Bin Mul (Var "x") (Var "x")]])]
+example "val_arith" : "fun main() { val x = 1 + 2 * 3 }" parses-to KtFile [] [FunDecl "main" "" (FunctionScope [] [ValStmt False "x" "" [Bin Add (IntLit 1) (Bin Mul (IntLit 2) (IntLit 3))]])]
+example "when_stmt" : "fun f(x: Int): Int { when (x) { 1 -> return 10; else -> return 0 } }" parses-to KtFile [] [FunDecl "f" "Int" (FunctionScope [FunctionParam "x" "Int"] [WhenStmt [Var "x"] [WhenBranch [IntLit 1] [ReturnStmt [IntLit 10]], WhenElse [ReturnStmt [IntLit 0]]]])]
+example "class_and_for" : "class Counter(var n: Int) { fun inc() { for (i in 1..5) { n += i } } }" parses-to KtFile [] [ClassDecl "class" "Counter" [Param "var" "n" "Int"] [FunDecl "inc" "" (FunctionScope [] [ForStmt "i" (Bin Range (IntLit 1) (IntLit 5)) [AssignStmt "n" "+=" (Var "i")]])]]
+example "package_import" : "package demo.app\nimport kotlin.math.*\nfun id(x: Int): Int = x" parses-to KtFile ["demo", "app"] [ImportDecl ["kotlin", "math"] "*", FunDecl "id" "Int" (FunctionScope [FunctionParam "x" "Int"] [ReturnStmt [Var "x"]])]
+example "if_while_method" : "fun loop(n: Int): Int { var s = 0; if (n > 0) { while (s < n) { s += 1 } } else { s = -1 }; return s.dec() }" parses-to KtFile [] [FunDecl "loop" "Int" (FunctionScope [FunctionParam "n" "Int"] [ValStmt True "s" "" [IntLit 0], IfStmt (Bin Gt (Var "n") (IntLit 0)) [WhileStmt (Bin Lt (Var "s") (Var "n")) [AssignStmt "s" "+=" (IntLit 1)]] [AssignStmt "s" "=" (Unary Neg (IntLit 1))], ReturnStmt [MethodCall (Var "s") "dec" []]])]
 example "err_expr" : "fun bad(): Int = 1 +" fails-at (1, 21) expecting "expression"
 example "err_rbrace" : "fun bad() { val x = 1" fails-at (1, 22) expecting "}"
