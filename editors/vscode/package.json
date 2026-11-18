@@ -2,7 +2,7 @@
   "name": "parsley-lang",
   "displayName": "Parsley Grammar DSL",
   "description": "Full IDE support for the Parsley Grammar DSL (.parsley) and Parsley Semantic Layer (.psem): LSP diagnostics, semantic highlighting, type & FIRST/FOLLOW hover, Ormolu formatting, railroad diagrams, live playground, inline grammar debugger, and ISO C23 parser + semantic analyzer codegen.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "publisher": "parsley-lang",
   "license": "MIT",
   "icon": "media/parsley-icon.png",
@@ -195,12 +195,14 @@
         "parsley.executablePath": {
           "type": "string",
           "default": "parsley",
-          "description": "Path to the parsley CLI executable (auto-detects workspace build/parsley if set to 'parsley')."
+          "description": "Path to the parsley CLI executable (auto-detects workspace build/parsley if set to 'parsley').",
+          "scope": "resource"
         },
         "parsley.autoFormatOnSave": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically format .parsley and .psem files in Ormolu style when saving."
+          "description": "Automatically format .parsley and .psem files in Ormolu style when saving.",
+          "scope": "resource"
         },
         "parsley.trace.server": {
           "type": "string",
@@ -210,18 +212,289 @@
             "verbose"
           ],
           "default": "off",
-          "description": "Traces communication between VSCode/Cursor and the Parsley Language Server."
+          "description": "Traces communication between VSCode/Cursor and the Parsley Language Server.",
+          "scope": "resource"
         },
         "parsley.c23.outputDir": {
           "type": "string",
           "default": "./generated_parser",
-          "description": "Default output directory for `parsley build` ISO C23 parser and semantic analyzer projects."
+          "description": "Default output directory for `parsley build` ISO C23 parser and semantic analyzer projects.",
+          "scope": "resource"
         },
         "parsley.fuzzCount": {
-          "type": "number",
+          "type": "integer",
           "default": 50,
           "minimum": 0,
-          "description": "Number of generated fuzzer inputs to run with `parsley test --fuzz`."
+          "description": "Number of generated fuzzer inputs to run with `parsley test --fuzz`.",
+          "scope": "resource",
+          "maximum": 1000000
+        },
+        "parsley.activeProfile": {
+          "type": "string",
+          "default": "",
+          "description": "Named profile applied on top of resource-scoped settings. Empty uses defaults.",
+          "scope": "resource"
+        },
+        "parsley.profiles": {
+          "type": "object",
+          "default": {},
+          "description": "Named build/test/toolchain profiles. Select one with Parsley: Select Profile.",
+          "scope": "resource",
+          "additionalProperties": {
+            "properties": {
+              "outputDir": {
+                "type": "string",
+                "description": "Generated project directory; empty falls back to c23.outputDir. Supports fileBasenameNoExtension and path variables."
+              },
+              "emitNextc": {
+                "type": "boolean",
+                "description": "Include the bundled nextc backend and standalone compiler target."
+              },
+              "compileCompiler": {
+                "type": "boolean",
+                "description": "Build the generated native compiler executable; implies emitNextc."
+              },
+              "compileShared": {
+                "type": "boolean",
+                "description": "Compile the generated shared parser/analyzer/backend library."
+              },
+              "minStatus": {
+                "description": "Minimum PSL provenance status for checks, tests and generation.",
+                "type": "string",
+                "enum": [
+                  "draft",
+                  "reviewed",
+                  "verified"
+                ]
+              },
+              "emitIrJson": {
+                "type": "boolean",
+                "description": "Emit the grammar IR JSON inspection artifact."
+              },
+              "emitIrSexpr": {
+                "type": "boolean",
+                "description": "Emit the grammar IR S-expression inspection artifact."
+              },
+              "emitAgentDocs": {
+                "type": "boolean",
+                "description": "Emit generated agent documentation alongside the project."
+              },
+              "extraArgs": {
+                "items": {
+                  "type": "string"
+                },
+                "description": "Additional build argv entries, appended after managed options.",
+                "type": "array"
+              },
+              "executablePath": {
+                "type": "string",
+                "description": "Path to the parsley CLI executable (auto-detects workspace build/parsley if set to 'parsley')."
+              },
+              "cCompiler": {
+                "type": "string",
+                "description": "C23 compiler executable passed as PARSLEY_CC. Relative paths resolve from the workspace folder."
+              },
+              "environment": {
+                "description": "Environment overrides for CLI and LSP. Null deletes an inherited variable; values support path variables.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "timeoutMs": {
+                "maximum": 3600000,
+                "description": "Maximum execution time for a CLI command in milliseconds.",
+                "type": "integer",
+                "minimum": 100
+              },
+              "fuzzCount": {
+                "maximum": 1000000,
+                "description": "Number of generated fuzzer inputs to run with `parsley test --fuzz`.",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "fuzzSeed": {
+                "pattern": "^[0-9]+$",
+                "description": "Unsigned 64-bit decimal fuzz seed; use a string to preserve all digits.",
+                "type": "string"
+              }
+            },
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "parsley.cCompilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "C23 compiler executable passed as PARSLEY_CC. Relative paths resolve from the workspace folder.",
+          "scope": "resource"
+        },
+        "parsley.environment": {
+          "type": "object",
+          "default": {},
+          "description": "Environment overrides for CLI and LSP. Null deletes an inherited variable; values support path variables.",
+          "scope": "resource",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "parsley.cli.cwd": {
+          "type": "string",
+          "default": "${workspaceFolder}",
+          "description": "Working directory for CLI/LSP processes. Supports workspaceFolder, fileDirname, userHome and env variables.",
+          "scope": "resource"
+        },
+        "parsley.cli.arguments": {
+          "type": "array",
+          "default": [],
+          "description": "Additional global CLI arguments, passed as separate argv entries without a shell.",
+          "scope": "resource",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parsley.cli.timeoutMs": {
+          "type": "integer",
+          "default": 120000,
+          "description": "Maximum execution time for a CLI command in milliseconds.",
+          "scope": "resource",
+          "minimum": 100,
+          "maximum": 3600000
+        },
+        "parsley.cli.maxBufferMiB": {
+          "type": "integer",
+          "default": 8,
+          "description": "Maximum captured output size in MiB.",
+          "scope": "resource",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "parsley.build.outputDir": {
+          "type": "string",
+          "default": "",
+          "description": "Generated project directory; empty falls back to c23.outputDir. Supports fileBasenameNoExtension and path variables.",
+          "scope": "resource"
+        },
+        "parsley.build.emitNextc": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include the bundled nextc backend and standalone compiler target.",
+          "scope": "resource"
+        },
+        "parsley.build.compileCompiler": {
+          "type": "boolean",
+          "default": false,
+          "description": "Build the generated native compiler executable; implies emitNextc.",
+          "scope": "resource"
+        },
+        "parsley.build.compileShared": {
+          "type": "boolean",
+          "default": true,
+          "description": "Compile the generated shared parser/analyzer/backend library.",
+          "scope": "resource"
+        },
+        "parsley.build.minStatus": {
+          "type": "string",
+          "default": "draft",
+          "description": "Minimum PSL provenance status for checks, tests and generation.",
+          "scope": "resource",
+          "enum": [
+            "draft",
+            "reviewed",
+            "verified"
+          ]
+        },
+        "parsley.build.emitIrJson": {
+          "type": "boolean",
+          "default": true,
+          "description": "Emit the grammar IR JSON inspection artifact.",
+          "scope": "resource"
+        },
+        "parsley.build.emitIrSexpr": {
+          "type": "boolean",
+          "default": false,
+          "description": "Emit the grammar IR S-expression inspection artifact.",
+          "scope": "resource"
+        },
+        "parsley.build.emitAgentDocs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Emit generated agent documentation alongside the project.",
+          "scope": "resource"
+        },
+        "parsley.build.extraArgs": {
+          "type": "array",
+          "default": [],
+          "description": "Additional build argv entries, appended after managed options.",
+          "scope": "resource",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parsley.test.fuzzCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "description": "Fuzz sample count. Null preserves the legacy fuzzCount setting.",
+          "scope": "resource",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "parsley.test.seed": {
+          "type": "string",
+          "default": "42",
+          "description": "Unsigned 64-bit decimal fuzz seed; use a string to preserve all digits.",
+          "scope": "resource",
+          "pattern": "^[0-9]+$"
+        },
+        "parsley.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the language server for this workspace folder. Local editor fallbacks remain available.",
+          "scope": "resource"
+        },
+        "parsley.lsp.arguments": {
+          "type": "array",
+          "default": [],
+          "description": "Additional LSP process argv entries.",
+          "scope": "resource",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parsley.lsp.requestTimeoutMs": {
+          "type": "integer",
+          "default": 8000,
+          "description": "Language-server request/initialization timeout in milliseconds.",
+          "scope": "resource",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "parsley.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Display language-server diagnostics for this resource.",
+          "scope": "resource"
+        },
+        "parsley.formatting.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Parsley document formatting for this resource.",
+          "scope": "resource"
+        },
+        "parsley.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Parsley action CodeLenses for this resource.",
+          "scope": "resource"
         }
       }
     },
@@ -284,6 +557,26 @@
         "command": "parsley.runSingleExample",
         "title": "Parsley: Run Example",
         "icon": "$(play)"
+      },
+      {
+        "icon": "$(package)",
+        "command": "parsley.buildCompiler",
+        "title": "Parsley: Build Native Language Compiler (nextc)"
+      },
+      {
+        "icon": "$(list-selection)",
+        "command": "parsley.selectProfile",
+        "title": "Parsley: Select Profile"
+      },
+      {
+        "icon": "$(settings)",
+        "command": "parsley.showConfiguration",
+        "title": "Parsley: Show Effective Configuration"
+      },
+      {
+        "icon": "$(settings-gear)",
+        "command": "parsley.openSettings",
+        "title": "Parsley: Open Settings"
       }
     ],
     "menus": {
@@ -312,6 +605,11 @@
           "command": "parsley.buildC23",
           "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "navigation@5"
+        },
+        {
+          "command": "parsley.buildCompiler",
+          "group": "navigation@5",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem"
         }
       ],
       "editor/context": [
@@ -349,6 +647,11 @@
           "command": "parsley.buildC23",
           "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "parsley@7"
+        },
+        {
+          "command": "parsley.buildCompiler",
+          "group": "parsley@7",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem"
         }
       ],
       "explorer/context": [
@@ -376,6 +679,11 @@
           "command": "parsley.openPlayground",
           "when": "resourceExtname == .parsley",
           "group": "parsley@5"
+        },
+        {
+          "command": "parsley.buildCompiler",
+          "group": "parsley@3",
+          "when": "resourceExtname == .parsley || resourceExtname == .psem"
         }
       ],
       "commandPalette": [
@@ -406,6 +714,10 @@
         {
           "command": "parsley.revealLine",
           "when": "false"
+        },
+        {
+          "command": "parsley.buildCompiler",
+          "when": "editorLangId == parsley || editorLangId == parsley-psem"
         }
       ],
       "view/title": [

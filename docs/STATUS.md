@@ -52,7 +52,7 @@ Reserved DSL words are `module where import qualified as hiding data newtype for
 
 The LSP uses full-document synchronization. Changes to an open grammar refresh its loaded `.psem` sibling; opening a semantic document first loads its grammar sibling from disk. JSON-RPC payloads are capped at 8 MiB, header lines at 8 KiB and header count at 64. JSON nesting is capped at 128. Invalid JSON with a trusted frame receives a parse error and the server continues. Invalid/oversized framing that cannot be resynchronized receives an error and closes with a controlled status.
 
-Extension 2.0.x supports compiler/LSP 2.x. Newer per-example assertions use `parsley/runExample`; if unavailable, the extension falls back to the CLI test suite. The extension runs CLI processes with argv rather than a shell, checks save failures, and preserves a replacement LSP process when an older process exits.
+Extension 2.1.x supports compiler/LSP 2.x (native compiler generation needs 2.2+). Newer per-example assertions use `parsley/runExample`; if unavailable, the extension falls back to the CLI test suite. The extension runs CLI processes with argv rather than a shell, checks save failures, and preserves a replacement LSP process when an older process exits.
 
 ## Generated semantic optimization
 
@@ -95,3 +95,5 @@ The automated suites are [core tests](../tests/test_main.cpp), [audit regression
 CI covers Linux/Windows/macOS builds, a Linux Debug ASan/UBSan configuration, and generated C with GCC in addition to Clang. Workflow definitions do not imply that a remote run has already passed. Meson/Make/XMake/Bazel files are generated integration options; use their own toolchains to verify them for a deployment. `find_package(<module>_parser CONFIG)` imports the installed CMake targets.
 
 Native backend generation (2.2+): --emit-nextc / --compile-compiler generate a standalone compiler using the bundled nextc backend. See [backend contracts and extension API](BACKEND.md). Actual machine targets are x86-64; automatic lowering is derived from denotational equations, while language-specific operations use lowering hooks/MIR passes. C23 remains the implementation-language generation target.
+
+VS Code/Cursor configuration (2.3 / extension 2.1): [profiles, toolchains, process limits and multi-root LSP](../editors/vscode/CONFIGURATION.md).

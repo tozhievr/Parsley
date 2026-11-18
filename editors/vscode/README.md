@@ -75,6 +75,9 @@ Reload the window (`Developer: Reload Window`) and open any `.parsley` or `.psem
 
 ## Configuration
 
+Extension 2.1 adds resource-scoped build/test profiles, native nextc compiler generation, environment/toolchain settings, path variables, process limits and independent LSP sessions per workspace folder. Commands: Select Profile, Open Settings, Show Effective Configuration and Build Native Language Compiler (nextc). See [complete settings and examples](CONFIGURATION.md).
+
+
 | Setting | Default | Description |
 | --- | --- | --- |
 | `parsley.executablePath` | `"parsley"` | Path to the `parsley` binary. Auto-detects `<workspace>/build/parsley(.exe)` when left as `"parsley"`. |

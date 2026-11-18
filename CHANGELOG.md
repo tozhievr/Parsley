@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.0
+
+- Release extension 2.1 with resource-scoped build/test profiles, native compiler actions and declarative settings schemas for VS Code/Cursor.
+- Configure toolchain/environment, path variables, CLI limits, artifact choices, semantic status and full uint64 fuzz seeds; preserve legacy output/fuzz settings.
+- Route documents through independent folder-specific LSP sessions and apply tool/profile changes live.
+- Add editor feature switches, profile selection and effective configuration reporting without environment values.
+- Extend behavioral tests to cover command argv, multi-root JSON-RPC startup, scoped settings and invalid configuration.
+- Finish native compiler Make installation directory setup and platform-specific Bazel compiler flags.
+
 ## 2.2.1
 
 - Verify the bundled nextc snapshot with normalized LF hashes while retaining the original upstream byte hashes, so Git CRLF/LF checkout policy does not invalidate provenance checks.

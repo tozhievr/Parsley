@@ -143,11 +143,166 @@ function getConfig(uri?: vscode.Uri) {
   return vscode.workspace.getConfiguration("parsley", uri);
 }
 
+type ParsleyProfile = Record<string, unknown>;
+function activeProfile(uri?: vscode.Uri): ParsleyProfile {
+  const config = getConfig(uri);
+  const name = config.get<string>("activeProfile") || "";
+  if (!name) return {};
+  const profiles = config.get<Record<string, unknown>>("profiles") || {};
+  const profile = Object.prototype.hasOwnProperty.call(profiles, name) ? profiles[name] : undefined;
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) throw new Error("Unknown Parsley profile: " + name);
+  return profile as ParsleyProfile;
+}
+function setting(uri: vscode.Uri | undefined, key: string, fallback: unknown, profileKey?: string): unknown {
+  const profile = profileKey ? activeProfile(uri) : {};
+  if (profileKey && profile[profileKey] !== undefined) return profile[profileKey];
+  return getConfig(uri).get(key) ?? fallback;
+}
+function integerSetting(uri: vscode.Uri | undefined, key: string, fallback: number, min: number, max: number, profileKey?: string): number {
+  const value = setting(uri, key, fallback, profileKey);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("parsley." + key + " must be an integer in [" + min + ", " + max + "]");
+  return value;
+}
+function booleanSetting(uri: vscode.Uri | undefined, key: string, fallback: boolean, profileKey?: string): boolean {
+  const value = setting(uri, key, fallback, profileKey);
+  if (typeof value !== "boolean") throw new Error("parsley." + key + " must be boolean");
+  return value;
+}
+function stringSetting(uri: vscode.Uri | undefined, key: string, fallback: string, profileKey?: string): string {
+  const value = setting(uri, key, fallback, profileKey);
+  if (typeof value !== "string" || value.includes("\0")) throw new Error("parsley." + key + " must be a string without NUL");
+  return value;
+}
+function argumentSetting(uri: vscode.Uri | undefined, key: string, profileKey?: string): string[] {
+  const value = setting(uri, key, [], profileKey);
+  if (!Array.isArray(value) || value.some(item => typeof item !== "string" || item.includes("\0"))) throw new Error("parsley." + key + " must be a string array");
+  return [...value] as string[];
+}
+function expandSetting(value: string, uri?: vscode.Uri, environment: NodeJS.ProcessEnv = process.env): string {
+  const root = getWorkspaceRoot(uri);
+  return value.replace(/\$\{([^}]+)\}/g, (_whole, variable: string) => {
+    if (variable === "workspaceFolder") return root;
+    if (variable === "fileDirname") return uri?.scheme === "file" ? path.dirname(uri.fsPath) : root;
+    if (variable === "fileBasenameNoExtension") return uri ? path.basename(uri.fsPath, path.extname(uri.fsPath)) : "";
+    if (variable === "userHome") return require("os").homedir();
+    if (variable.startsWith("env:")) {
+      const key = Object.keys(environment).find(name => process.platform === "win32" ? name.toLowerCase() === variable.slice(4).toLowerCase() : name === variable.slice(4));
+      if (key && environment[key] !== undefined) return environment[key]!;
+      throw new Error("Environment variable is unset: " + variable.slice(4));
+    }
+    throw new Error("Unknown Parsley path variable: " + variable);
+  });
+}
+function configuredEnvironment(uri?: vscode.Uri): NodeJS.ProcessEnv {
+  const env = {...process.env};
+  const base = getConfig(uri).get<Record<string, string | null>>("environment") || {};
+  if (!base || typeof base !== "object" || Array.isArray(base)) throw new Error("parsley.environment must be an object");
+  const override = activeProfile(uri).environment ?? {};
+  if (!override || typeof override !== "object" || Array.isArray(override)) throw new Error("profile.environment must be an object");
+  for (const [name, value] of Object.entries({...base, ...override})) {
+    if (!name || /[=\0]/.test(name) || (value !== null && (typeof value !== "string" || value.includes("\0")))) throw new Error("Invalid Parsley environment entry: " + name);
+    for (const existing of Object.keys(env)) if (process.platform === "win32" && existing.toLowerCase() === name.toLowerCase()) delete env[existing];
+    if (value === null) delete env[name];
+    else env[name] = expandSetting(value, uri);
+  }
+  const compiler = stringSetting(uri, "cCompilerPath", "", "cCompiler");
+  if (compiler) {
+    let resolved = expandSetting(compiler, uri, env);
+    if (/[\\/]/.test(resolved) && !path.isAbsolute(resolved)) resolved = path.resolve(getWorkspaceRoot(uri), resolved);
+    for (const name of Object.keys(env)) if (process.platform === "win32" && name.toLowerCase() === "parsley_cc") delete env[name];
+    env.PARSLEY_CC = /[\\/]/.test(resolved) ? path.normalize(resolved) : resolved;
+  }
+  return env;
+}
+function processSettings(uri?: vscode.Uri) {
+  const env = configuredEnvironment(uri);
+  const root = getWorkspaceRoot(uri);
+  const cwd = expandSetting(stringSetting(uri, "cli.cwd", "${workspaceFolder}"), uri, env);
+  return {
+    env, cwd: path.isAbsolute(cwd) ? path.normalize(cwd) : path.resolve(root, cwd),
+    timeout: integerSetting(uri, "cli.timeoutMs", 120000, 100, 3600000, "timeoutMs"),
+    maxBuffer: integerSetting(uri, "cli.maxBufferMiB", 8, 1, 512) * 1024 * 1024,
+  };
+}
+function minimumStatus(uri?: vscode.Uri): string {
+  const status = stringSetting(uri, "build.minStatus", "draft", "minStatus");
+  if (!["draft", "reviewed", "verified"].includes(status)) throw new Error("Unknown semantic status: " + status);
+  return status;
+}
+function buildArguments(uri: vscode.Uri, forceCompiler = false): {args: string[]; output: string} {
+  const configured = stringSetting(uri, "build.outputDir", "", "outputDir") || stringSetting(uri, "c23.outputDir", "./generated_parser");
+  const expanded = expandSetting(configured, uri, configuredEnvironment(uri));
+  const output = path.isAbsolute(expanded) ? path.normalize(expanded) : path.resolve(getWorkspaceRoot(uri), expanded);
+  const args = ["build", uri.fsPath, "-o", output, "--min-status", minimumStatus(uri)];
+  const compiler = forceCompiler || booleanSetting(uri, "build.compileCompiler", false, "compileCompiler");
+  if (compiler || booleanSetting(uri, "build.emitNextc", false, "emitNextc")) args.push("--emit-nextc");
+  if (compiler) args.push("--compile-compiler");
+  if (!booleanSetting(uri, "build.compileShared", true, "compileShared")) args.push("--no-compile-shared");
+  for (const [key, flag, fallback, profile] of [
+    ["emitIrJson", "--emit-ir-json", true, "emitIrJson"],
+    ["emitIrSexpr", "--emit-ir-sexpr", false, "emitIrSexpr"],
+    ["emitAgentDocs", "--emit-agent-docs", false, "emitAgentDocs"],
+  ] as const) if (booleanSetting(uri, "build." + key, fallback, profile)) args.push(flag);
+  args.push(...argumentSetting(uri, "build.extraArgs", "extraArgs"));
+  return {args, output};
+}
+function testArguments(uri: vscode.Uri): string[] {
+  const legacy = getConfig(uri).get<number>("fuzzCount") ?? 50;
+  const count = integerSetting(uri, "test.fuzzCount", legacy, 0, 1000000, "fuzzCount");
+  const seed = stringSetting(uri, "test.seed", "42", "fuzzSeed");
+  if (!/^\d+$/.test(seed) || BigInt(seed) > 18446744073709551615n) throw new Error("Fuzz seed must be an unsigned 64-bit decimal string");
+  return ["test", uri.fsPath, "--fuzz", String(count), "--seed", seed, "--min-status", minimumStatus(uri)];
+}
+async function runDocumentCommand(kind: "check" | "test" | "build", uriArg?: unknown, compiler = false): Promise<void> {
+  try {
+    const selected = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri;
+    if (!selected) { await vscode.window.showWarningMessage("Open a .parsley or .psem document."); return; }
+    await saveIfDirty(selected);
+    const uri = kind === "build" ? resolveSiblingGrammarUri(selected) : selected;
+    const build = kind === "build" ? buildArguments(uri, compiler) : undefined;
+    const args = build?.args ?? (kind === "test" ? testArguments(uri) : ["check", uri.fsPath, "--min-status", minimumStatus(uri)]);
+    cliOutput.show(true);
+    cliOutput.appendLine("> parsley " + args.join(" "));
+    const result = await runCliCommand(args, getWorkspaceRoot(uri), uri);
+    if (result.stdout) cliOutput.append(result.stdout);
+    if (result.stderr) cliOutput.append(result.stderr);
+    if (result.code) { await vscode.window.showErrorMessage("Parsley " + kind + " failed (exit " + result.code + "). See Output > Parsley."); return; }
+    const message = build ? "Parsley project built in " + build.output : "Parsley " + kind + " passed.";
+    const choice = await vscode.window.showInformationMessage(message, ...(build ? ["Reveal Folder"] : []));
+    if (build && choice === "Reveal Folder") await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(build.output));
+  } catch (error) {
+    await vscode.window.showErrorMessage("Parsley command cancelled: " + (error as Error).message);
+  }
+}
+async function selectBuildProfile(uriArg?: unknown): Promise<void> {
+  const uri = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+  const config = getConfig(uri);
+  const profiles = config.get<Record<string, ParsleyProfile>>("profiles") || {};
+  const selected = await vscode.window.showQuickPick([
+    {label: "Default settings", description: "Use resource-scoped settings", profile: ""},
+    ...Object.keys(profiles).map(name => ({label: name, description: "Parsley profile", profile: name})),
+  ], {placeHolder: "Choose the active Parsley profile for this workspace folder"});
+  if (selected) await config.update("activeProfile", selected.profile, uri && vscode.workspace.getWorkspaceFolder(uri) ? vscode.ConfigurationTarget.WorkspaceFolder : vscode.ConfigurationTarget.Workspace);
+}
+function showEffectiveConfiguration(uriArg?: unknown): void {
+  const uri = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+  try {
+    const options = processSettings(uri);
+    cliOutput.show(true);
+    cliOutput.appendLine(JSON.stringify({
+      executable: resolveExecutablePath(uri), profile: getConfig(uri).get("activeProfile") || "",
+      cwd: options.cwd, timeoutMs: options.timeout, maxBufferBytes: options.maxBuffer,
+      environmentKeys: Object.keys(options.env).sort(),
+      build: uri ? buildArguments(uri) : undefined,
+    }, null, 2));
+  } catch (error) { void vscode.window.showErrorMessage("Invalid Parsley configuration: " + (error as Error).message); }
+}
 function resolveExecutablePath(documentUri?: vscode.Uri): string {
-  let configured = (getConfig(documentUri).get<string>("executablePath") || "parsley").trim();
+  let configured = expandSetting(stringSetting(documentUri, "executablePath", "parsley", "executablePath"), documentUri, configuredEnvironment(documentUri)).trim();
   if ((configured.startsWith('"') && configured.endsWith('"')) || (configured.startsWith("'") && configured.endsWith("'"))) configured = configured.slice(1,-1);
   if (configured.startsWith("~/") || configured.startsWith("~\\")) configured = path.join(require("os").homedir(), configured.slice(2));
   if (configured !== "parsley" && /[\\/]/.test(configured) && !path.isAbsolute(configured)) configured = path.resolve(getWorkspaceRoot(documentUri),configured);
+  if (/[\\/]/.test(configured)) configured = path.normalize(configured);
   if (configured && configured !== "parsley") {
     return configured;
   }
@@ -166,7 +321,7 @@ function resolveExecutablePath(documentUri?: vscode.Uri): string {
     }
   }
 
-  for (const folder of vscode.workspace.workspaceFolders || []) {
+  for (const folder of documentUri ? [] : vscode.workspace.workspaceFolders || []) {
     candidates.push(
       path.join(folder.uri.fsPath, "build", exeName),
       path.join(folder.uri.fsPath, "build", "Release", exeName),
@@ -201,12 +356,19 @@ function runCliCommand(
   cwd: string,
   uri?: vscode.Uri
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const exe = resolveExecutablePath(uri);
+  let exe: string, options: ReturnType<typeof processSettings>, command: string[];
+  try {
+    exe = resolveExecutablePath(uri);
+    options = processSettings(uri);
+    command = [...argumentSetting(uri, "cli.arguments"), ...args];
+  } catch (error) {
+    return Promise.resolve({code: 2, stdout: "", stderr: "Invalid Parsley configuration: " + (error as Error).message});
+  }
   return new Promise((resolve) => {
     cp.execFile(
       exe,
-      args,
-      { cwd, maxBuffer: 8 * 1024 * 1024, timeout: 120000, windowsHide: true },
+      command,
+      { ...options, windowsHide: true, shell: false },
       (err, stdout, stderr) => {
         if (err && typeof (err as NodeJS.ErrnoException).code === "string" && (err as NodeJS.ErrnoException).code === "ENOENT") {
           resolve({
@@ -222,7 +384,7 @@ function runCliCommand(
             : err
               ? 1
               : 0;
-        resolve({ code: exitCode, stdout: stdout || "", stderr: stderr || "" });
+        resolve({ code: exitCode, stdout: stdout || "", stderr: stderr || err?.message || "" });
       }
     );
   });
@@ -607,7 +769,8 @@ class ParsleyLspClient implements vscode.Disposable {
   constructor(
     diagnostics: vscode.DiagnosticCollection,
     statusBar: vscode.StatusBarItem,
-    onDiagnosticsUpdated: (uri: vscode.Uri) => void
+    onDiagnosticsUpdated: (uri: vscode.Uri) => void,
+    private readonly resourceUri?: vscode.Uri
   ) {
     this.diagnostics = diagnostics;
     this.statusBar = statusBar;
@@ -628,7 +791,7 @@ class ParsleyLspClient implements vscode.Disposable {
   }
 
   public async ensureStarted(): Promise<boolean> {
-    if (this.disposed) {
+    if (this.disposed || !booleanSetting(this.resourceUri, "lsp.enabled", true)) {
       return false;
     }
     if (this.proc && this.initialized) {
@@ -657,7 +820,7 @@ class ParsleyLspClient implements vscode.Disposable {
   }
 
   private async startInternal(): Promise<void> {
-    const exe = resolveExecutablePath();
+    const exe = resolveExecutablePath(this.resourceUri);
     this.statusBar.text = "$(sync~spin) Parsley LSP";
     this.statusBar.tooltip = `Starting ${exe} lsp...`;
     this.statusBar.show();
@@ -665,8 +828,9 @@ class ParsleyLspClient implements vscode.Disposable {
     this.buffer = Buffer.alloc(0);
     this.initialized = false;
 
-    const proc = cp.spawn(exe, ["lsp"], {
-      cwd: getWorkspaceRoot(),
+    const proc = cp.spawn(exe, [...argumentSetting(this.resourceUri, "cli.arguments"), "lsp", ...argumentSetting(this.resourceUri, "lsp.arguments")], {
+      cwd: processSettings(this.resourceUri).cwd,
+      env: configuredEnvironment(this.resourceUri),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -690,7 +854,7 @@ class ParsleyLspClient implements vscode.Disposable {
       this.handleExit(proc, code ?? -1);
     });
 
-    const rootUri = vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? null;
+    const rootUri = (this.resourceUri ? vscode.Uri.file(getWorkspaceRoot(this.resourceUri)) : vscode.workspace.workspaceFolders?.[0]?.uri)?.toString() ?? null;
     const initResult = (await this.sendRequestRaw("initialize", {
       processId: process.pid,
       clientInfo: { name: "parsley-vscode", version: EXTENSION_VERSION },
@@ -731,7 +895,7 @@ class ParsleyLspClient implements vscode.Disposable {
     this.statusBar.show();
 
     for (const doc of vscode.workspace.textDocuments) {
-      if (isParsleyDoc(doc)) {
+      if (isParsleyDoc(doc) && getWorkspaceRoot(doc.uri) === getWorkspaceRoot(this.resourceUri)) {
         this.didOpen(doc);
       }
     }
@@ -793,7 +957,7 @@ class ParsleyLspClient implements vscode.Disposable {
   }
 
   private logTrace(line: string): void {
-    const mode = getConfig().get<string>("trace.server") || "off";
+    const mode = getConfig(this.resourceUri).get<string>("trace.server") || "off";
     if (mode !== "off") {
       lspTraceOutput.appendLine(line);
     }
@@ -805,14 +969,14 @@ class ParsleyLspClient implements vscode.Disposable {
     proc.stdin.write(header + body, "utf8");
   }
 
-  private sendRequestRaw(method: string, params: unknown, timeoutMs = 8000): Promise<unknown> {
+  private sendRequestRaw(method: string, params: unknown, timeoutMs = integerSetting(this.resourceUri, "lsp.requestTimeoutMs", 8000, 100, 600000)): Promise<unknown> {
     if (!this.proc || !this.proc.stdin.writable) {
       return Promise.reject(new Error("Parsley LSP is not running"));
     }
     const id = this.nextId++;
     const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
     this.logTrace(`--> [${id}] ${method}`);
-    if (getConfig().get<string>("trace.server") === "verbose") {
+    if (getConfig(this.resourceUri).get<string>("trace.server") === "verbose") {
       this.logTrace(payload);
     }
 
@@ -845,7 +1009,7 @@ class ParsleyLspClient implements vscode.Disposable {
     }
   }
 
-  public async sendRequest<T = unknown>(method: string, params: unknown, timeoutMs = 8000): Promise<T | null> {
+  public async sendRequest<T = unknown>(method: string, params: unknown, timeoutMs?: number): Promise<T | null> {
     const ready = await this.ensureStarted();
     if (!ready) {
       return null;
@@ -977,6 +1141,7 @@ class ParsleyLspClient implements vscode.Disposable {
     if (msg.method === "textDocument/publishDiagnostics" && msg.params) {
       const params = msg.params as { uri: string; diagnostics: LspDiagnostic[] };
       const uri = vscode.Uri.parse(params.uri);
+      if (!booleanSetting(uri, "diagnostics.enabled", true)) { this.diagnostics.delete(uri); return; }
       const vsDiags = (params.diagnostics || []).map((d) => {
         const sev =
           d.severity === 2
@@ -1003,6 +1168,35 @@ class ParsleyLspClient implements vscode.Disposable {
 // TreeViews: GrammarExplorerProvider & ExamplesViewProvider
 // ---------------------------------------------------------------------------
 
+type ParsleyConnection = Pick<ParsleyLspClient, "getSemanticLegend" | "sendRequest" | "didOpen" | "didChange" | "didClose" | "restart" | "dispose">;
+class ParsleyLspPool implements vscode.Disposable {
+  private servers = new Map<string, ParsleyLspClient>();
+  constructor(private diagnostics: vscode.DiagnosticCollection,
+              private status: vscode.StatusBarItem,
+              private updated: (uri: vscode.Uri) => void) {}
+  private connection(uri?: vscode.Uri): ParsleyLspClient {
+    const resource = uri ?? getActiveParsleyDocument()?.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+    const root = getWorkspaceRoot(resource);
+    const key = process.platform === "win32" ? root.toLowerCase() : root;
+    let server = this.servers.get(key);
+    if (!server) {
+      server = new ParsleyLspClient(this.diagnostics, this.status, this.updated, resource);
+      this.servers.set(key, server);
+    }
+    return server;
+  }
+  getSemanticLegend(): vscode.SemanticTokensLegend { return this.connection().getSemanticLegend(); }
+  sendRequest<T = unknown>(method: string, params: unknown, timeoutMs?: number): Promise<T | null> {
+    const p = params as {uri?: string; textDocument?: {uri?: string}} | null;
+    const value = p?.textDocument?.uri ?? p?.uri;
+    return this.connection(value ? vscode.Uri.parse(value) : undefined).sendRequest<T>(method, params, timeoutMs);
+  }
+  didOpen(doc: vscode.TextDocument): void { this.connection(doc.uri).didOpen(doc); }
+  didChange(doc: vscode.TextDocument): void { this.connection(doc.uri).didChange(doc); }
+  didClose(doc: vscode.TextDocument): void { this.connection(doc.uri).didClose(doc); }
+  async restart(): Promise<void> { await Promise.all([...this.servers.values()].map(server => server.restart())); }
+  dispose(): void { for (const server of this.servers.values()) server.dispose(); this.servers.clear(); }
+}
 class GrammarTreeItem extends vscode.TreeItem {
   constructor(
     label: string,
@@ -1040,9 +1234,9 @@ class GrammarTreeItem extends vscode.TreeItem {
 class GrammarExplorerProvider implements vscode.TreeDataProvider<GrammarTreeItem> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<GrammarTreeItem | undefined>();
   public readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-  private client: ParsleyLspClient;
+  private client: ParsleyConnection;
 
-  constructor(client: ParsleyLspClient) {
+  constructor(client: ParsleyConnection) {
     this.client = client;
   }
 
@@ -1412,7 +1606,7 @@ class ExamplesViewProvider implements vscode.TreeDataProvider<ExampleTreeItem> {
 }
 
 async function fetchRuleHoverDetails(
-  client: ParsleyLspClient,
+  client: ParsleyConnection,
   doc: vscode.TextDocument,
   line: number,
   ruleName: string
@@ -1470,10 +1664,10 @@ class PlaygroundPanelManager {
   private panel: vscode.WebviewPanel | undefined;
   private targetUri: vscode.Uri | undefined;
   private currentInput = "1 + 2 * 3";
-  private client: ParsleyLspClient;
+  private client: ParsleyConnection;
   private debounceTimer: NodeJS.Timeout | undefined;
 
-  constructor(client: ParsleyLspClient) {
+  constructor(client: ParsleyConnection) {
     this.client = client;
   }
 
@@ -1869,10 +2063,10 @@ class PlaygroundPanelManager {
 class RailroadPanelManager {
   private panel: vscode.WebviewPanel | undefined;
   private targetUri: vscode.Uri | undefined;
-  private client: ParsleyLspClient;
+  private client: ParsleyConnection;
   private lastSvg = "";
 
-  constructor(client: ParsleyLspClient) {
+  constructor(client: ParsleyConnection) {
     this.client = client;
   }
 
@@ -2087,7 +2281,7 @@ class ParsleyInlineDebugAdapter implements vscode.DebugAdapter {
   private readonly sendEmitter = new vscode.EventEmitter<vscode.DebugProtocolMessage>();
   public readonly onDidSendMessage = this.sendEmitter.event;
   private seq = 1;
-  private client: ParsleyLspClient;
+  private client: ParsleyConnection;
 
   private programPath = "";
   private programUri: vscode.Uri | undefined;
@@ -2101,7 +2295,7 @@ class ParsleyInlineDebugAdapter implements vscode.DebugAdapter {
   private structure: ParsedGrammarStructure | undefined;
   private ruleFirstFollow = new Map<string, { typeSignature?: string; first?: string; follow?: string }>();
 
-  constructor(client: ParsleyLspClient) {
+  constructor(client: ParsleyConnection) {
     this.client = client;
   }
 
@@ -2516,7 +2710,7 @@ export function activate(context: vscode.ExtensionContext): void {
     examples?: ExamplesViewProvider;
   } = {};
 
-  const client = new ParsleyLspClient(diagnostics, statusBar, () => {
+  const client = new ParsleyLspPool(diagnostics, statusBar, () => {
     treeViews.explorer?.refresh();
     treeViews.examples?.refresh();
   });
@@ -2534,6 +2728,7 @@ export function activate(context: vscode.ExtensionContext): void {
     { language: "parsley-psem", scheme: "file" },
   ];
   const legend = client.getSemanticLegend();
+  const codeLensChanged = new vscode.EventEmitter<void>();
 
   void vscode.workspace.findFiles("**/*.{parsley,psem}", "**/build/**", 1).then((found) => {
     void vscode.commands.executeCommand("setContext", "workspaceHasParsleyFiles", found.length > 0);
@@ -2548,6 +2743,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerTreeDataProvider("parsleyGrammarExplorer", explorerProvider),
     vscode.window.registerTreeDataProvider("parsleyExamplesView", examplesProvider),
 
+    codeLensChanged,
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration("parsley")) return;
+      codeLensChanged.fire();
+      if (["executablePath", "profiles", "activeProfile", "environment", "cCompilerPath", "cli.cwd", "lsp", "diagnostics"].some(key => event.affectsConfiguration("parsley." + key))) {
+        diagnostics.clear();
+        void client.restart().catch(error => cliOutput.appendLine("LSP configuration update failed: " + String(error)));
+      }
+    }),
     // Document Sync
     vscode.workspace.onDidOpenTextDocument((doc) => {
       if (isParsleyDoc(doc)) {
@@ -2582,7 +2786,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.workspace.onWillSaveTextDocument((e) => {
-      if (isParsleyDoc(e.document) && getConfig().get<boolean>("autoFormatOnSave")) {
+      if (isParsleyDoc(e.document) && getConfig(e.document.uri).get<boolean>("autoFormatOnSave") && booleanSetting(e.document.uri, "formatting.enabled", true)) {
         e.waitUntil(
           vscode.commands.executeCommand<vscode.TextEdit[]>(
             "vscode.executeFormatDocumentProvider",
@@ -2692,6 +2896,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // Formatting (Ormolu style)
     vscode.languages.registerDocumentFormattingEditProvider(selector, {
       async provideDocumentFormattingEdits(doc) {
+        if (!booleanSetting(doc.uri, "formatting.enabled", true)) return [];
         const res = await client.sendRequest<LspTextEdit[]>(
           "textDocument/formatting",
           {
@@ -2842,7 +3047,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // CodeLens (Run Examples, Debug, Railroad, Build C23)
     vscode.languages.registerCodeLensProvider(selector, {
+      onDidChangeCodeLenses: codeLensChanged.event,
       async provideCodeLenses(doc) {
+        if (!booleanSetting(doc.uri, "codeLens.enabled", true)) return [];
         const res = await client.sendRequest<
           { range: LspRange; command?: { title: string; command: string; arguments?: unknown[] } }[]
         >("textDocument/codeLens", { textDocument: { uri: doc.uri.toString() } });
@@ -2923,79 +3130,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     // Commands
-    vscode.commands.registerCommand("parsley.check", async (uriArg?: unknown) => {
-      const uri = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri;
-      if (!uri) {
-        vscode.window.showWarningMessage("Open a .parsley file to check.");
-        return;
-      }
-      await saveIfDirty(uri);
-      cliOutput.show(true);
-      cliOutput.appendLine(`> parsley check ${uri.fsPath}`);
-      const res = await runCliCommand(["check", uri.fsPath], getWorkspaceRoot(uri), uri);
-      if (res.stdout) cliOutput.append(res.stdout);
-      if (res.stderr) cliOutput.append(res.stderr);
-      if (res.code === 0) {
-        vscode.window.showInformationMessage(res.stdout.trim() || "Parsley grammar check passed.");
-      } else {
-        vscode.window.showErrorMessage(`Parsley check failed (exit ${res.code}). See Output > Parsley.`);
-      }
-    }),
-
-    vscode.commands.registerCommand("parsley.test", async (uriArg?: unknown) => {
-      const uri = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri;
-      if (!uri) {
-        vscode.window.showWarningMessage("Open a .parsley file to run tests.");
-        return;
-      }
-      await saveIfDirty(uri);
-      const fuzz = getConfig().get<number>("fuzzCount") ?? 50;
-      const args = ["test", uri.fsPath];
-      if (fuzz > 0) {
-        args.push("--fuzz", String(fuzz));
-      }
-      cliOutput.show(true);
-      cliOutput.appendLine(`> parsley ${args.join(" ")}`);
-      const res = await runCliCommand(args, getWorkspaceRoot(uri), uri);
-      if (res.stdout) cliOutput.append(res.stdout);
-      if (res.stderr) cliOutput.append(res.stderr);
-      if (res.code === 0) {
-        vscode.window.showInformationMessage(`Parsley tests passed (${path.basename(uri.fsPath)}).`);
-      } else {
-        vscode.window.showErrorMessage(`Parsley tests failed. See Output > Parsley.`);
-      }
-    }),
-
-    vscode.commands.registerCommand("parsley.buildC23", async (uriArg?: unknown) => {
-      const rawUri = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri;
-      if (!rawUri) {
-        vscode.window.showWarningMessage("Open a .parsley or .psem file to build C23 parser.");
-        return;
-      }
-      await saveIfDirty(rawUri);
-      const uri = resolveSiblingGrammarUri(rawUri);
-      await saveIfDirty(uri);
-      const configuredOut = getConfig().get<string>("c23.outputDir") || "./generated_parser";
-      const root = getWorkspaceRoot(uri);
-      const outDir = path.isAbsolute(configuredOut) ? configuredOut : path.resolve(root, configuredOut);
-      cliOutput.show(true);
-      cliOutput.appendLine(`> parsley build ${uri.fsPath} -o ${outDir} --emit-ir-json`);
-      const res = await runCliCommand(["build", uri.fsPath, "-o", outDir, "--emit-ir-json"], root, uri);
-      if (res.stdout) cliOutput.append(res.stdout);
-      if (res.stderr) cliOutput.append(res.stderr);
-      if (res.code === 0) {
-        const choice = await vscode.window.showInformationMessage(
-          `ISO C23 parser built in ${outDir}`,
-          "Reveal Folder"
-        );
-        if (choice === "Reveal Folder") {
-          void vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(outDir));
-        }
-      } else {
-        vscode.window.showErrorMessage("Parsley C23 build failed. See Output > Parsley.");
-      }
-    }),
-
+    vscode.commands.registerCommand("parsley.check", (arg?: unknown) => runDocumentCommand("check", arg)),
+    vscode.commands.registerCommand("parsley.test", (arg?: unknown) => runDocumentCommand("test", arg)),
+    vscode.commands.registerCommand("parsley.buildC23", (arg?: unknown) => runDocumentCommand("build", arg)),
+    vscode.commands.registerCommand("parsley.buildCompiler", (arg?: unknown) => runDocumentCommand("build", arg, true)),
+    vscode.commands.registerCommand("parsley.selectProfile", selectBuildProfile),
+    vscode.commands.registerCommand("parsley.showConfiguration", showEffectiveConfiguration),
+    vscode.commands.registerCommand("parsley.openSettings", () => vscode.commands.executeCommand("workbench.action.openSettings", "parsley")),
     vscode.commands.registerCommand("parsley.format", async (uriArg?: unknown) => {
       const target = coerceUriArg(uriArg);
       const ed = target ? await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(target)) : vscode.window.activeTextEditor;

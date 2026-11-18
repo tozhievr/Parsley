@@ -3491,13 +3491,13 @@ inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
       else if(file.relative_path=="Makefile")file.content+=
         "\nall: "+target+"$(EXE_EXT)\n"+target+"$(EXE_EXT): tools/"+target+".c lib"+lib+".a\n"
         "\t$(CC) $(CFLAGS) -DPARSLEY_STATIC -I. $< lib"+lib+".a $(LDFLAGS_MATH) -o $@\n"
-        "install: install-nextc\n.PHONY: install-nextc\ninstall-nextc:\n\tcp -R include/nextc $(DESTDIR)$(PREFIX)/include/\n";
+        "install: install-nextc\n.PHONY: install-nextc\ninstall-nextc:\n\tmkdir -p $(DESTDIR)$(PREFIX)/include\n\tcp -R include/nextc $(DESTDIR)$(PREFIX)/include/\n";
       else if(file.relative_path=="xmake.lua")file.content+=
         "\ntarget(\""+target+"\")\n    set_kind(\"binary\")\n    add_files(\"tools/"+target+".c\")\n    add_deps(\""+lib+"_static\")\n    add_includedirs(\".\")\n    add_defines(\"PARSLEY_STATIC\")\n";
       else if(file.relative_path=="BUILD.bazel"){
         native_backend::detail::replace(file.content,"hdrs = [","hdrs = glob([\"nextc/**/*.h\", \"nextc/**/*.def\"]) + [");
         native_backend::detail::replace(file.content,"srcs = [","srcs = glob([\"nextc/**/*.h\", \"nextc/**/*.def\"]) + [");
-        file.content+="\ncc_binary(name = \""+target+"\", srcs = [\"tools/"+target+".c\"], deps = [\":"+lib+"\"], copts = [\"-std=c23\"])\n";
+        file.content+="\ncc_binary(name = \""+target+"\", srcs = [\"tools/"+target+".c\"], deps = [\":"+lib+"\"], copts = select({\"@platforms//os:windows\": [\"/std:clatest\"], \"//conditions:default\": [\"-std=c23\"]}))\n";
       }else if(file.relative_path=="README.md")file.content+=
         "\n## Native compiler\n\nThe "+target+" target parses and validates source, optimizes its AST and lowers semantic equations to nextc MIR. "
         "Use --run for Windows JIT, or --emit mir|asm|object|exe|flat -o FILE. Default return type is f64; --return bool|i64 selects another ABI. "
