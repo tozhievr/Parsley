@@ -1,6 +1,6 @@
 # Implementation status and runtime contracts
 
-Updated: 2026-11-16. This describes the C23 implementation; the older architecture documents are design proposals. Compiler version comes from `VERSION`, and the extension has its own version in `editors/vscode/package.json`.
+Updated: 2026-11-18. This describes the C23 implementation; the older architecture documents are design proposals. Compiler version comes from `VERSION`, and the extension has its own version in `editors/vscode/package.json`.
 
 ## Delivered scope
 
@@ -52,8 +52,23 @@ Reserved DSL words are `module where import qualified as hiding data newtype for
 
 The LSP uses full-document synchronization. Changes to an open grammar refresh its loaded `.psem` sibling; opening a semantic document first loads its grammar sibling from disk. JSON-RPC payloads are capped at 8 MiB, header lines at 8 KiB and header count at 64. JSON nesting is capped at 128. Invalid JSON with a trusted frame receives a parse error and the server continues. Invalid/oversized framing that cannot be resynchronized receives an error and closes with a controlled status.
 
-Extension 1.6.x supports compiler/LSP 1.3.x. Newer per-example assertions use `parsley/runExample`; if unavailable, the extension falls back to the CLI test suite. The extension runs CLI processes with argv rather than a shell, checks save failures, and preserves a replacement LSP process when an older process exits.
+Extension 2.0.x supports compiler/LSP 2.x. Newer per-example assertions use `parsley/runExample`; if unavailable, the extension falls back to the CLI test suite. The extension runs CLI processes with argv rather than a shell, checks save failures, and preserves a replacement LSP process when an older process exits.
 
+## Generated semantic optimization
+
+Version 2.1 adds an inferred C23 optimization layer for languages with PSL.
+Value/effect equations and the grammar AST determine partial evaluation,
+constant propagation/folding, semantic projections and known-branch selection.
+Custom named native passes share the immutable AST, facts, checked builders
+and memoized traversal; analyses are invalidated between passes. Generation
+includes the optimizer in every build template and emits Markdown/JSON plans
+explaining inferred and opaque constructors.
+
+See [OPTIMIZER.md](OPTIMIZER.md) for the denotation/effect contract, pass ABI,
+arena ownership, convergence limits and supported analysis domain. Type-only
+PSL does not imply evaluation semantics. Integer arithmetic, arbitrary calls,
+loops/alias analysis and general theorem proving are not inferred by this
+release. Future nextc generation is a separate backend integration.
 ## Verification and audit mapping
 
 The automated suites are [core tests](../tests/test_main.cpp), [audit regressions](../tests/audit_regression.py), and [extension command tests](../editors/vscode/test/extension.test.cjs). Audit regressions compile generated C with `-std=c23 -Wall -Wextra -pedantic -Werror`, inject allocation failures, link two parser ABIs, exercise Int64 endpoints, long ASTs, nesting limits, malformed CLI/regex/lock inputs and LSP Unicode/framing. PSL examples include positive `fires` and negative `silent` cases. Fuzzing is deterministic with default seed 42; `--seed` overrides it. Fuzz samples are evidence for those inputs, not proof of absence of all parser faults.

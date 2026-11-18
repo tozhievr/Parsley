@@ -1,5 +1,10 @@
 # Parsley — Haskell-Inspired Grammar DSL & ISO C23 Parser Generator
 
+Parsley 2.1 also generates a semantic optimizer from PSL value/effect equations,
+with an extensible native pass interface. The generated C23 layer performs
+constant folding/propagation, known-branch selection and semantic projections,
+and reports its inference decisions. See [optimizer contracts and pass examples](docs/OPTIMIZER.md).
+
 [English](#english) | [Русский](#русский)
 
 ---

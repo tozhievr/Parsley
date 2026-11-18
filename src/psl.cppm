@@ -6299,7 +6299,7 @@ inline std::string emit_sem_source(const PslModule& psem,
   }
 
   bodies << "static void run_lints(" << mod_low << "_ctx *cx, const " << mod_low << "_node *n, int32_t nid) {\n";
-  bodies << "  if (!n) return;\n";
+  bodies << "  (void)cx; (void)nid;\n  if (!n) return;\n";
   bodies << "  switch (n->tag) {\n";
   std::map<std::string, std::vector<std::size_t>> by_ctor;
   std::vector<std::size_t> wildcard_lints;
@@ -6443,7 +6443,7 @@ inline std::string emit_sem_source(const PslModule& psem,
   o << "  if (cap && d && d->def && psl_str_eq(d->def->rule_name, cap->target)) cap->matched = 1;\n";
   o << "}\n\n";
 
-  o << "PARSLEY_API int " << mod_low << "_psl_selftest(void) {\n";
+  o << "PARSLEY_API int " << mod_low << "_psl_selftest(void) {\n  (void)selftest_sink;\n";
   if (selftests.empty()) {
     o << "  uint8_t buf[1024];\n  psl_arena arena;\n  psl_arena_init(&arena, buf, sizeof(buf));\n";
     o << "  " << mod_low << "_ctx *cx = " << mod_low << "_ctx_new(&arena, NULL);\n";

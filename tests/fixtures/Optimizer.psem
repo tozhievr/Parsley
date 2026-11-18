@@ -1,0 +1,116 @@
+{-# LANGUAGE Sem1 #-}
+semantics Optimizer where
+
+type Number = Double
+type Boolean = Bool
+type Other = Text
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Scalar n where
+  type = Number
+  value = n
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Logical b where
+  type = Boolean
+  value = b
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Combine l r where
+  type = Number
+  value = l.value + r.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Divide l r where
+  type = Number
+  value = l.value / r.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Branch c t e where
+  type = Number
+  value = if c.value then t.value else e.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Trace x where
+  type = Number
+  value = x.value
+  effects = ["io"]
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Forward x where
+  type = typeOf x
+  value = x.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Retype x where
+  type = Other
+  value = x.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Opaque x where
+  type = Number
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Both l r where
+  type = Boolean
+  value = l.value && r.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Either l r where
+  type = Boolean
+  value = l.value || r.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Invert x where
+  type = Boolean
+  value = not x.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Equal l r where
+  type = Boolean
+  value = l.value == r.value
+  effects = []
+
+{-# SOURCE language "Optimizer fixture denotational semantics" #-}
+{-# STATUS reviewed #-}
+{-# CONFIDENCE 1.0 #-}
+node Word w where
+  type = Text
+  value = w
+  effects = []

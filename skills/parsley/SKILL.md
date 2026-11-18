@@ -339,3 +339,5 @@ example unreachableStmt
 
 profile default = [unreachableStmt]
 ```
+
+Semantic optimization: see docs/OPTIMIZER.md. Value/effects equations enable inferred C23 optimization; type-only PSL remains opaque. Use generated opt_pass, opt_fact_of, opt_walk and opt_make for language-specific extensions. Validate original programs before optimizing.

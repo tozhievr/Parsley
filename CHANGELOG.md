@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.0
+
+- Generate semantic C23 optimizers automatically from AST schemas and PSL denotational value/effect equations, without handwritten rewrite rules.
+- Infer constant propagation/folding, semantic projections and known-branch selection with semantic type/effect preservation.
+- Expose named native passes, analysis queries, checked builders, memoized immutable traversal, trace/control options and versioned inference plans.
+- Add adaptive DAG caches, phase-local arena scratch, atomic rollback and explicit allocation/work/depth/convergence failures.
+- Add end-to-end generated C23 optimizer/pass regression coverage and document the future nextc integration boundary.
+- Keep generated PSL with no lints/examples warning-clean.
+
 ## 2.0.0
 
 - BREAKING: generate ISO C23 projects, compiler flags and IDE commands; require a C23 compiler and CMake 3.21+ for generated builds.

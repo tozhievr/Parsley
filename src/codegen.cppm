@@ -30,6 +30,7 @@ import parsley.c23_runtime;
 import parsley.c23_text;
 import parsley.analysis;
 import parsley.psl;
+import parsley.optimizer;
 
 export namespace parsley::codegen {
 
@@ -3430,7 +3431,8 @@ inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
     psl_opts.min_status = opts.min_status;
     psl_opts.profile = opts.psl_profile;
     psl_opts.module_override = opts.module_override;
-    const auto emitted_psl = psl::emit_psl_c23_files(*opts.psl_module, grammar, psl_opts);
+    auto emitted_psl = psl::emit_psl_c23_files(*opts.psl_module, grammar, psl_opts);
+    for (auto& file : optimizer::generate(grammar, *opts.psl_module, psl_opts)) emitted_psl.push_back(std::move(file));
     for (const auto& pf : emitted_psl) {
       psl_files.push_back(GeneratedFile{pf.relative_path, pf.content});
       if (pf.relative_path.ends_with(".c") && pf.relative_path != "parser.c") {

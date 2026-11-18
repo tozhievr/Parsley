@@ -1,0 +1,52 @@
+{-# START program #-}
+module Optimizer (program) where
+
+import Parsley.Prelude (eof)
+
+skip  whitespace = /[ \t\r\n]+/
+token number     = /[0-9]+(\.[0-9]+)?/ :: Double
+token word       = /[a-z]+/
+
+data Expr
+  = Scalar Double
+  | Logical Bool
+  | Combine Expr Expr
+  | Divide Expr Expr
+  | Branch Expr Expr Expr
+  | Trace Expr
+  | Forward Expr
+  | Retype Expr
+  | Opaque Expr
+  | Both Expr Expr
+  | Either Expr Expr
+  | Invert Expr
+  | Equal Expr Expr
+  | Word Text
+
+program :: Expr
+program = expr <* eof
+
+expr :: Expr
+expr
+  =  Scalar <$> number
+  |  Logical <$> boolean
+  |  Combine <$> ("add" *> expr) <*> expr
+  |  Divide <$> ("div" *> expr) <*> expr
+  |  Branch <$> ("if" *> expr) <*> expr <*> expr
+  |  Trace <$> ("trace" *> expr)
+  |  Forward <$> ("forward" *> expr)
+  |  Retype <$> ("retype" *> expr)
+  |  Opaque <$> ("opaque" *> expr)
+  |  Both <$> ("both" *> expr) <*> expr
+  |  Either <$> ("either" *> expr) <*> expr
+  |  Invert <$> ("not" *> expr)
+  |  Equal <$> ("eq" *> expr) <*> expr
+  |  Word <$> ("text" *> word)
+
+boolean :: Bool
+boolean
+  =  "true" *> pure True
+  |  "false" *> pure False
+
+example "nested constants" : "add 2 add 3 4" parses-to Combine (Scalar 2) (Combine (Scalar 3) (Scalar 4))
+example "conditional" : "if true 1 trace 2" parses-to Branch (Logical True) (Scalar 1) (Trace (Scalar 2))

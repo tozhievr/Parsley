@@ -389,3 +389,14 @@ Running `parsley build <file> -o <dir>` emits:
    - Annotate rules with `{-# SOURCE ... #-}`, `{-# STATUS ... #-}`, and `{-# CONFIDENCE ... #-}`.
 6. **Use Layout Formatting**:
    - Format grammar and semantic modules using `parsley fmt <file> --write` to maintain clean, unified diffs.
+
+## 7. Semantic optimization generation (2.1+)
+
+See [docs/OPTIMIZER.md](docs/OPTIMIZER.md) for the authoritative denotation,
+effects, ownership and extensible pass ABI contracts. With PSL, build generates
+<module>_opt.h/.c and Markdown/JSON inference plans and links the layer into all
+generated projects. Automatic inference uses value equations, explicit empty
+local effects and the grammar AST, rather than constructor-name heuristics.
+Unknown semantics remain opaque; native custom passes can extend the analysis.
+Always validate the original program before optimizing. Never assume that a
+type equation alone proves a runtime operation pure or gives its evaluation.

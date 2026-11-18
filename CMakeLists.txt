@@ -45,6 +45,8 @@ target_sources(parsley_core
       src/psl.cppm
       src/c23_text.cppm
       src/c23_runtime.cppm
+      src/optimizer_runtime.cppm
+      src/optimizer.cppm
       src/codegen.cppm
       src/tooling.cppm
       src/compiler.cppm
@@ -96,6 +98,12 @@ if(PARSLEY_BUILD_TESTS)
     add_test(NAME parsley_audit_regressions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audit_regression.py" --cli "$<TARGET_FILE:parsley>" --cc "${CMAKE_C_COMPILER}")
     set_tests_properties(parsley_audit_regressions PROPERTIES TIMEOUT 180)
   endif()
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME parsley_optimizer_regressions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/optimizer_regression.py" --cli "$<TARGET_FILE:parsley>" --cc "${CMAKE_C_COMPILER}")
+    set_tests_properties(parsley_optimizer_regressions PROPERTIES TIMEOUT 180)
+  endif()
+  add_test(NAME parsley_cli_check_optimizer COMMAND parsley check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Optimizer.parsley")
+  add_test(NAME parsley_cli_test_optimizer COMMAND parsley test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Optimizer.parsley" --fuzz 30)
   find_program(PARSLEY_NODE_EXECUTABLE node)
   if(PARSLEY_NODE_EXECUTABLE)
     add_test(NAME parsley_extension_commands COMMAND "${PARSLEY_NODE_EXECUTABLE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/editors/vscode/test/extension.test.cjs")
@@ -105,7 +113,7 @@ if(PARSLEY_BUILD_TESTS)
   add_test(NAME parsley_cli_test_mini COMMAND parsley test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Mini.parsley" --fuzz 30)
   get_property(PARSLEY_ALL_TESTS DIRECTORY PROPERTY TESTS)
   foreach(PARSLEY_TEST IN LISTS PARSLEY_ALL_TESTS)
-    if(NOT PARSLEY_TEST STREQUAL "parsley_audit_regressions")
+    if(NOT PARSLEY_TEST MATCHES "^parsley_(audit|optimizer)_regressions$")
       set_tests_properties("${PARSLEY_TEST}" PROPERTIES TIMEOUT 120)
     endif()
   endforeach()
@@ -123,7 +131,7 @@ install(FILES
   DESTINATION share/doc/parsley
 )
 
-install(FILES docs/STATUS.md docs/REGEX.md DESTINATION share/doc/parsley/docs)
+install(FILES docs/STATUS.md docs/REGEX.md docs/OPTIMIZER.md DESTINATION share/doc/parsley/docs)
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/skills"
   DESTINATION share/parsley OPTIONAL
