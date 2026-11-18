@@ -292,6 +292,6 @@ int main(void) {
   parsley_result_free(&err_res);
 
   assert(parsley_run_examples() == 0);
-  printf("Haskell E2E C17 analyzer checks PASSED.\n");
+  printf("Haskell E2E C23 analyzer checks PASSED.\n");
   return 0;
 }

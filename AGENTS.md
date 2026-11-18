@@ -1,4 +1,4 @@
-Current implementation contracts: [docs/STATUS.md](docs/STATUS.md); byte regex dialect: [docs/REGEX.md](docs/REGEX.md). Only C17 is a code-generation target. The following specification is subject to the documented implementation limits.
+Current implementation contracts: [docs/STATUS.md](docs/STATUS.md); byte regex dialect: [docs/REGEX.md](docs/REGEX.md). Only C23 is a code-generation target. The following specification is subject to the documented implementation limits.
 
 # AGENTS.md — Parsley & PSL Guide for AI Coding Agents
 
@@ -8,7 +8,7 @@ This document is the authoritative technical reference for autonomous and assist
 
 ## 1. System Overview & Architecture
 
-Parsley is a high-performance language development toolkit inspired by Haskell syntax and semantics, designed from first principles to compile into **pure, zero-dependency ISO C17** frontends, static analyzers, and shared libraries.
+Parsley is a high-performance language development toolkit inspired by Haskell syntax and semantics, designed from first principles to compile into **pure, zero-dependency ISO C23** frontends, static analyzers, and shared libraries.
 
 The language architecture is strictly bifurcated into two mutually exclusive, complementary module types:
 1. **Grammar Modules (`<Name>.parsley`)**: Defines the surface syntax, lexical modes, AST algebraic data types (`data`), precedence tables (`operators`), and combinator rules.
@@ -46,7 +46,7 @@ The language architecture is strictly bifurcated into two mutually exclusive, co
             |                             |
             +--------------+--------------+
                            |
-                 [ISO C17 Codegen]
+                 [ISO C23 Codegen]
                            |
       +--------------------+--------------------+
       |                    |                    |
@@ -93,7 +93,7 @@ Supported pragmas:
   ```
 
 ### 2.3 Algebraic Data Types (`data`)
-AST nodes are declared directly in the grammar. They are compiled into idiomatic C17 tagged unions (`enum` tag + `union` payload):
+AST nodes are declared directly in the grammar. They are compiled into idiomatic C23 tagged unions (`enum` tag + `union` payload):
 ```haskell
 data Op = Add | Sub | Mul | Div | Pow
 
@@ -297,7 +297,7 @@ The `parsley` binary provides an all-in-one command-line interface:
 
 | Command | Usage | Purpose |
 |---|---|---|
-| `build` | `parsley build <file> [-o dir] [--no-compile-shared]` | Compiles grammar/semantics into C17 project and shared library (`.dll`/`.so`/`.dylib`). |
+| `build` | `parsley build <file> [-o dir] [--no-compile-shared]` | Compiles grammar/semantics into C23 project and shared library (`.dll`/`.so`/`.dylib`). |
 | `check` | `parsley check <file>` | Validates syntax, imports, HM types, and PSL attributes without code generation. |
 | `test` | `parsley test <file> [--fuzz N]` | Runs in-grammar `example` assertions and property-guided grammar fuzzer. |
 | `explain` | `parsley explain <CODE>` | Explains diagnostic codes (supported catalog entries such as `E0001`, `E0600`, `PSL-*`) with bad/good examples and fixes. |
@@ -309,14 +309,14 @@ The `parsley` binary provides an all-in-one command-line interface:
 
 ---
 
-## 5. Generated ISO C17 Architecture & ABI
+## 5. Generated ISO C23 Architecture & ABI
 
-The generated C17 codebase adheres to strict engineering constraints:
-1. **ISO C17 Standard Compliance**: Compiled with `-std=c17 -Wall -Wextra -pedantic` with zero warnings.
+The generated C23 codebase adheres to strict engineering constraints:
+1. **ISO C23 Standard Compliance**: Compiled with `-std=c23 -Wall -Wextra -pedantic` with zero warnings.
 2. **Checked ownership**: Parser allocations use a checked, bounded transaction and are released by `parsley_result_free`; PSL nodes/types use the caller-supplied `psl_arena`. Allocation/resource failures are explicit. See `docs/STATUS.md` for codes and limits.
 3. **Tagged Unions for AST**: Every `data` constructor compiles to an `enum tag` and corresponding `union payload`.
 
-### Public C17 ABI Interface (`parser.h`)
+### Public C23 ABI Interface (`parser.h`)
 ```c
 #ifdef __cplusplus
 extern "C" {
@@ -343,7 +343,7 @@ PARSLEY_API int           parsley_run_examples(void);
 #endif
 ```
 
-### Semantic Layer C17 ABI (`<mod>_sem.h`)
+### Semantic Layer C23 ABI (`<mod>_sem.h`)
 ```c
 typedef struct psl_arena psl_arena;
 typedef struct psl_diag  psl_diag;
@@ -366,8 +366,8 @@ Running `parsley build <file> -o <dir>` emits:
 - `parser.c` & `test_parser.c`
 - `CMakeLists.txt` (with `SHARED`, `STATIC`, and `ALIAS` targets, plus CTest)
 - `meson.build` (with `shared_library`, `static_library`, and `declare_dependency`)
-- `Makefile` (portable POSIX C17 Makefile)
-- `xmake.lua` (XMake C17 project)
+- `Makefile` (portable POSIX C23 Makefile)
+- `xmake.lua` (XMake C23 project)
 - `BUILD.bazel` & `MODULE.bazel` (Bazel rules)
 - `<mod>_parser.pc` (pkg-config descriptor)
 - Compiled shared library (`<mod>_parser.dll` / `lib<mod>_parser.so` / `lib<mod>_parser.dylib`)
@@ -379,8 +379,8 @@ Running `parsley build <file> -o <dir>` emits:
 1. **Always Verify with Both `check` and `test`**:
    - Run `parsley check <file.parsley>` to catch syntax and HM type errors.
    - Run `parsley test <file.parsley> --fuzz 30` to verify all `example` assertions and exercise the sampled inputs (fuzzing does not prove absence of all parser faults).
-2. **Never Edit Generated C17 Code Manually**:
-   - Modify the source `.parsley` or `.psem` files and let `parsley build` re-generate the C17 targets.
+2. **Never Edit Generated C23 Code Manually**:
+   - Modify the source `.parsley` or `.psem` files and let `parsley build` re-generate the C23 targets.
 3. **Maintain Strict Parity Between `.parsley` and `.psem`**:
    - Constructor names and arities used in `node` equations or `lint` match patterns must exactly match the `data` declarations in the imported `.parsley` grammar.
 4. **Always Provide Mandatory `example` Blocks for Lints**:

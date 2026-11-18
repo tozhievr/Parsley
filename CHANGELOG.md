@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0
+
+- BREAKING: generate ISO C23 projects, compiler flags and IDE commands; require a C23 compiler and CMake 3.21+ for generated builds.
+- Rename CLI target to c23 and VS Code command/settings to buildC23/c23.outputDir; reserve new C23 keywords.
+
 ## 1.3.1
 
 - Fix CI toolchain installation, Windows Node 20 test invocation and macOS runner selection.

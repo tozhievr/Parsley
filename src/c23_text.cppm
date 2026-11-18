@@ -1,8 +1,8 @@
 module;
 #include <string>
 #include <string_view>
-export module parsley.c17_text;
-export namespace parsley::c17_text {
+export module parsley.c23_text;
+export namespace parsley::c23_text {
 inline std::size_t utf8_width(std::string_view text,std::size_t offset) {
   if(offset>=text.size())return 0;
   unsigned char c=static_cast<unsigned char>(text[offset]);
@@ -37,7 +37,7 @@ inline std::string display_string(std::string_view text) {
 }
 inline std::string literal(std::string_view text) {
   std::string out;
-  // C17 guarantees only 4095 characters per concatenated string literal.
+  // C23 guarantees only 4095 characters per concatenated string literal.
   if (text.size() > 2048) {
     out="((const char[]){";size_t n=0;
     for(unsigned char c:text){if(n++%64==0)out+='\n';out+="(char)"+std::to_string(c)+",";}

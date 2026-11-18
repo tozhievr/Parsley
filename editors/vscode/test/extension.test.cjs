@@ -41,7 +41,7 @@ test('activation registers every manifest command with real API names',()=>{
 });
 test('check/test/build dispatch executable argv for URI and tree items',async()=>{
   const h=harness();
-  await h.commands.get('parsley.check')({uri:h.doc.uri});await h.commands.get('parsley.test')(h.doc.uri);await h.commands.get('parsley.buildC17')(h.doc.uri);
+  await h.commands.get('parsley.check')({uri:h.doc.uri});await h.commands.get('parsley.test')(h.doc.uri);await h.commands.get('parsley.buildC23')(h.doc.uri);
   for(const command of ['check','test','build'])assert.ok(h.calls.some(c=>c[0]==='cli'&&c[1]===command));
 });
 test('single example accepts LSP string arguments and validates expected AST',async()=>{

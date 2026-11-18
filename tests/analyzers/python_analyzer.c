@@ -1,4 +1,4 @@
-/* ISO C17 Static Analyzer for Python 3 powered by Parsley */
+/* ISO C23 Static Analyzer for Python 3 powered by Parsley */
 #include "parser.h"
 
 #include <assert.h>
@@ -309,6 +309,6 @@ int main(void) {
          bad.error.message ? bad.error.message : "");
   parsley_result_free(&bad);
 
-  printf("All Python C17 static analyzer checks passed!\n");
+  printf("All Python C23 static analyzer checks passed!\n");
   return 0;
 }

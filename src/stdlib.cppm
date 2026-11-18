@@ -361,7 +361,7 @@ keywords =
   , "and", "or", "not", "True", "False", "None"
   ]
 
--- AST (транслируется в ISO C17 структуры) ---------------------------
+-- AST (транслируется в ISO C23 структуры) ---------------------------
 data PyOp
   = PyAdd | PySub | PyMul | PyDiv | PyFloorDiv | PyMod | PyPow
   | PyEq | PyNe | PyLt | PyLe | PyGt | PyGe
@@ -1007,7 +1007,7 @@ keywords =
   , "data", "open", "abstract", "override", "private", "public", "internal"
   ]
 
--- AST (core Kotlin constructs for ISO C17 static analysis) -----
+-- AST (core Kotlin constructs for ISO C23 static analysis) -----
 data KtOp
   = Or | And | Eq | Neq | Lt | Gt | Le | Ge | Range | Add | Sub | Mul | Div | Mod
 
@@ -1517,7 +1517,7 @@ keywords =
   , "data", "type", "if", "then", "else", "let", "in", "case", "of"
   ]
 
--- AST (exported to ISO C17 tagged unions)
+-- AST (exported to ISO C23 tagged unions)
 data HsOp
   = Add | Sub | Mul | Div | Eq | Neq | Lt | Le | Gt | Ge
   | And | Or | Cons | Append | Apply | Compose

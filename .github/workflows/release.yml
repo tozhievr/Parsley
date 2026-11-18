@@ -177,7 +177,7 @@ jobs:
 
             ### Highlights
             - Haskell-style DSL for grammar definitions and parser generation.
-            - Exclusive parser generation backend: **ISO C17** emitting public interface `parser.h`, implementation `parser.c`, and cross-platform dynamic libraries (`.dll`/`.so`/`.dylib`).
+            - Exclusive parser generation backend: **ISO C23** emitting public interface `parser.h`, implementation `parser.c`, and cross-platform dynamic libraries (`.dll`/`.so`/`.dylib`).
             - Static grammar analysis (FIRST/FOLLOW, ambiguity detection, automated left-factoring, precedence climbing).
             - Built with C++26 modules, CMake 4.5, and Clang 23.
 

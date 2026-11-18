@@ -1,8 +1,8 @@
 {
   "name": "parsley-lang",
   "displayName": "Parsley Grammar DSL",
-  "description": "Full IDE support for the Parsley Grammar DSL (.parsley) and Parsley Semantic Layer (.psem): LSP diagnostics, semantic highlighting, type & FIRST/FOLLOW hover, Ormolu formatting, railroad diagrams, live playground, inline grammar debugger, and ISO C17 parser + semantic analyzer codegen.",
-  "version": "1.6.1",
+  "description": "Full IDE support for the Parsley Grammar DSL (.parsley) and Parsley Semantic Layer (.psem): LSP diagnostics, semantic highlighting, type & FIRST/FOLLOW hover, Ormolu formatting, railroad diagrams, live playground, inline grammar debugger, and ISO C23 parser + semantic analyzer codegen.",
+  "version": "2.0.0",
   "publisher": "parsley-lang",
   "license": "MIT",
   "icon": "media/parsley-icon.png",
@@ -26,7 +26,7 @@
     "haskell",
     "lsp",
     "railroad",
-    "c17"
+    "c23"
   ],
   "activationEvents": [
     "onLanguage:parsley",
@@ -212,10 +212,10 @@
           "default": "off",
           "description": "Traces communication between VSCode/Cursor and the Parsley Language Server."
         },
-        "parsley.c17.outputDir": {
+        "parsley.c23.outputDir": {
           "type": "string",
           "default": "./generated_parser",
-          "description": "Default output directory for `parsley build` ISO C17 parser and semantic analyzer projects."
+          "description": "Default output directory for `parsley build` ISO C23 parser and semantic analyzer projects."
         },
         "parsley.fuzzCount": {
           "type": "number",
@@ -237,8 +237,8 @@
         "icon": "$(beaker)"
       },
       {
-        "command": "parsley.buildC17",
-        "title": "Parsley: Build ISO C17 Project & Shared Library",
+        "command": "parsley.buildC23",
+        "title": "Parsley: Build ISO C23 Project & Shared Library",
         "icon": "$(tools)"
       },
       {
@@ -309,7 +309,7 @@
           "group": "navigation@4"
         },
         {
-          "command": "parsley.buildC17",
+          "command": "parsley.buildC23",
           "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "navigation@5"
         }
@@ -346,7 +346,7 @@
           "group": "parsley@6"
         },
         {
-          "command": "parsley.buildC17",
+          "command": "parsley.buildC23",
           "when": "editorLangId == parsley || editorLangId == parsley-psem",
           "group": "parsley@7"
         }
@@ -363,7 +363,7 @@
           "group": "parsley@2"
         },
         {
-          "command": "parsley.buildC17",
+          "command": "parsley.buildC23",
           "when": "resourceExtname == .parsley || resourceExtname == .psem",
           "group": "parsley@3"
         },
@@ -388,7 +388,7 @@
           "when": "editorLangId == parsley || editorLangId == parsley-psem"
         },
         {
-          "command": "parsley.buildC17",
+          "command": "parsley.buildC23",
           "when": "editorLangId == parsley || editorLangId == parsley-psem"
         },
         {
@@ -452,7 +452,7 @@
         "when": "editorLangId == parsley || editorLangId == parsley-psem"
       },
       {
-        "command": "parsley.buildC17",
+        "command": "parsley.buildC23",
         "key": "ctrl+alt+p b",
         "mac": "cmd+alt+p b",
         "when": "editorLangId == parsley || editorLangId == parsley-psem"

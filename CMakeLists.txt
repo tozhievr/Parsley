@@ -6,7 +6,7 @@ string(STRIP "${PARSLEY_VERSION}" PARSLEY_VERSION)
 project(parsley VERSION "${PARSLEY_VERSION}" LANGUAGES C CXX)
 configure_file(src/version.cppm.in "${CMAKE_CURRENT_BINARY_DIR}/generated/version.cppm" @ONLY)
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 23)
-  message(FATAL_ERROR "Parsley requires Clang 23 or newer with C++26 module support; generated parsers require only an ISO C17 compiler.")
+  message(FATAL_ERROR "Parsley requires Clang 23 or newer with C++26 module support; generated parsers require only an ISO C23 compiler.")
 endif()
 option(PARSLEY_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 if(PARSLEY_SANITIZERS)
@@ -43,8 +43,8 @@ target_sources(parsley_core
       src/regex.cppm
       src/eval.cppm
       src/psl.cppm
-      src/c17_text.cppm
-      src/c17_runtime.cppm
+      src/c23_text.cppm
+      src/c23_runtime.cppm
       src/codegen.cppm
       src/tooling.cppm
       src/compiler.cppm
@@ -140,7 +140,7 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/editors/vscode"
 
 set(CPACK_PACKAGE_NAME "parsley")
 set(CPACK_PACKAGE_VENDOR "Parsley Project")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Parsley — Haskell-style DSL for declarative grammar definitions and ISO C17 parser generation")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Parsley — Haskell-style DSL for declarative grammar definitions and ISO C23 parser generation")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_VERSION_MAJOR "${PROJECT_VERSION_MAJOR}")
 set(CPACK_PACKAGE_VERSION_MINOR "${PROJECT_VERSION_MINOR}")

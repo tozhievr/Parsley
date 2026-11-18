@@ -18,4 +18,4 @@ Limits: pattern 8192 bytes, group nesting 64, numeric repetition bound 1024, est
 
 ## Grammar string escapes
 
-DSL quoted strings support `\n \r \t \f \v \b \0 \" \\' \\` and `\xHH`. Unknown escapes are diagnosed. UTF-8 text can be written literally. C17 constants use fixed-width octal escaping and escaped question marks; long constants use byte-array compound literals, avoiding C's hex-escape ambiguity, trigraphs and overlength-string limits.
+DSL quoted strings support `\n \r \t \f \v \b \0 \" \\' \\` and `\xHH`. Unknown escapes are diagnosed. UTF-8 text can be written literally. C23 constants use fixed-width octal escaping and escaped question marks; long constants use byte-array compound literals, avoiding C's hex-escape ambiguity, trigraphs and overlength-string limits.

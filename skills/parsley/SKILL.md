@@ -1,11 +1,11 @@
 ---
 name: parsley
-description: Step-by-step instructions, reference patterns, common pitfalls, and operational workflows for authoring, testing, and building Parsley grammars (.parsley) and Parsley Semantic Layer specifications (.psem). Use when creating new language grammars, defining ASTs, adding static semantics, configuring linters, or compiling ISO C17 parser libraries.
+description: Step-by-step instructions, reference patterns, common pitfalls, and operational workflows for authoring, testing, and building Parsley grammars (.parsley) and Parsley Semantic Layer specifications (.psem). Use when creating new language grammars, defining ASTs, adding static semantics, configuring linters, or compiling ISO C23 parser libraries.
 ---
 
 # Authoring Parsley Grammars & PSL Semantics
 
-Use `docs/STATUS.md` and `docs/REGEX.md` for current implementation limits. Only C17 is generated. `MODE` controls analysis constraints; execution uses ordered recursive descent/Pratt parsing. Parser results own checked allocations; only PSL data uses the caller's arena. Fuzz samples do not prove universal parser safety.
+Use `docs/STATUS.md` and `docs/REGEX.md` for current implementation limits. Only C23 is generated. `MODE` controls analysis constraints; execution uses ordered recursive descent/Pratt parsing. Parser results own checked allocations; only PSL data uses the caller's arena. Fuzz samples do not prove universal parser safety.
 
 This skill guides AI agents through designing, developing, testing, and compiling domain-specific or general-purpose programming languages using the **Parsley** DSL ecosystem.
 
@@ -23,7 +23,7 @@ module MyLang (program) where
 
 import Parsley.Prelude (sepBy, sepEndBy, many, some, optional, between, eof)
 ```
-- Use `{-# MODE PEG #-}` to select PEG-oriented analysis checks; it does not change the C17 runtime algorithm.
+- Use `{-# MODE PEG #-}` to select PEG-oriented analysis checks; it does not change the C23 runtime algorithm.
 - Always import `eof` from `Parsley.Prelude` to ensure the top-level rule consumes the entire input.
 
 ### Step 2: Define Lexical Rules
@@ -42,7 +42,7 @@ keywords = ["let", "in", "if", "then", "else", "true", "false"]
 ```
 
 ### Step 3: Define AST Algebraic Data Types (`data`)
-Structure the AST cleanly. In the generated ISO C17 code, each `data` declaration becomes a tagged union:
+Structure the AST cleanly. In the generated ISO C23 code, each `data` declaration becomes a tagged union:
 ```haskell
 data Op = Add | Sub | Mul | Div | Eq
 
@@ -203,20 +203,20 @@ parsley check MyLang.psem
 
 ---
 
-## 3. Compiling to ISO C17 (`parsley build`)
+## 3. Compiling to ISO C23 (`parsley build`)
 
-To compile the grammar and static semantic layer into production-ready ISO C17:
+To compile the grammar and static semantic layer into production-ready ISO C23:
 
 ```bash
-# Builds complete multi-build-system C17 project and compiles shared library
+# Builds complete multi-build-system C23 project and compiles shared library
 parsley build MyLang.parsley -o ./out_mylang
 ```
 
 This generates:
-- `parser.h` & `include/mylang_parser.h`: Public C17 interface with tagged unions.
+- `parser.h` & `include/mylang_parser.h`: Public C23 interface with tagged unions.
 - `parser.c`: Maximal-munch lexer and recursive-descent parser.
 - `mylang_sem.h` & `mylang_sem.c`: 5-pass static semantic analyzer.
-- `test_parser.c`: Standalone C17 test runner.
+- `test_parser.c`: Standalone C23 test runner.
 - `CMakeLists.txt`, `meson.build`, `Makefile`, `xmake.lua`, `BUILD.bazel`.
 - Compiled dynamic library (`mylang_parser.dll` / `libmylang_parser.so` / `libmylang_parser.dylib`).
 

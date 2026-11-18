@@ -1,4 +1,4 @@
-/* ISO C17 static analyzer for Kotlin using Parsley's generated parser.h */
+/* ISO C23 static analyzer for Kotlin using Parsley's generated parser.h */
 #include "parser.h"
 
 #include <assert.h>

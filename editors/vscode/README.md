@@ -26,8 +26,8 @@ Full IDE support for the **Parsley Grammar DSL** (`*.parsley`) and **Parsley Sem
   - **Examples & Tests** (`parsleyExamplesView`): One-click Run and Debug for `.parsley` `example` assertions and `.psem` `fires` / `silent` assertions.
 - **Inline Grammar Debugger (`parsley-debug`)**:
   - Trace rule derivations step-by-step against sample input, set line breakpoints on rules, inspect Parser State / Token Stream / AST / FIRST-FOLLOW in the Variables pane, and evaluate sample expressions live in the Debug Console.
-- **ISO C17 Codegen Integration**:
-  - Run `Parsley: Build ISO C17 Project & Shared Library` directly from the editor title bar, context menu, or Command Palette (resolving sibling `.parsley` when invoked from a `.psem` file).
+- **ISO C23 Codegen Integration**:
+  - Run `Parsley: Build ISO C23 Project & Shared Library` directly from the editor title bar, context menu, or Command Palette (resolving sibling `.parsley` when invoked from a `.psem` file).
 
 ## Installation (VSCode & Cursor)
 
@@ -80,14 +80,14 @@ Reload the window (`Developer: Reload Window`) and open any `.parsley` or `.psem
 | `parsley.executablePath` | `"parsley"` | Path to the `parsley` binary. Auto-detects `<workspace>/build/parsley(.exe)` when left as `"parsley"`. |
 | `parsley.autoFormatOnSave` | `false` | Automatically format `.parsley` / `.psem` files in Ormolu style on save. |
 | `parsley.trace.server` | `"off"` | LSP JSON-RPC trace level (`"off"`, `"messages"`, `"verbose"`). |
-| `parsley.c17.outputDir` | `"./generated_parser"` | Default output directory for `Parsley: Build ISO C17 Project & Shared Library`. |
+| `parsley.c23.outputDir` | `"./generated_parser"` | Default output directory for `Parsley: Build ISO C23 Project & Shared Library`. |
 | `parsley.fuzzCount` | `50` | Number of generated inputs for `Parsley: Run Examples & Fuzzer`. |
 
 ## Keyboard Shortcuts (when editing `.parsley` or `.psem`)
 
 - `Ctrl+Alt+P C` (`Cmd+Alt+P C` on macOS): Check Grammar
 - `Ctrl+Alt+P T` (`Cmd+Alt+P T` on macOS): Run Examples & Fuzzer
-- `Ctrl+Alt+P B` (`Cmd+Alt+P B` on macOS): Build ISO C17 Project & Shared Library
+- `Ctrl+Alt+P B` (`Cmd+Alt+P B` on macOS): Build ISO C23 Project & Shared Library
 - `Ctrl+Alt+P F` (`Cmd+Alt+P F` on macOS): Format Grammar (Ormolu Style)
 - `Ctrl+Alt+P R` (`Cmd+Alt+P R` on macOS): Show Railroad Diagram
 - `Ctrl+Alt+P P` (`Cmd+Alt+P P` on macOS): Open Live Grammar Playground

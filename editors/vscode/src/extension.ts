@@ -2840,7 +2840,7 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
 
-    // CodeLens (Run Examples, Debug, Railroad, Build C17)
+    // CodeLens (Run Examples, Debug, Railroad, Build C23)
     vscode.languages.registerCodeLensProvider(selector, {
       async provideCodeLenses(doc) {
         const res = await client.sendRequest<
@@ -2870,7 +2870,7 @@ export function activate(context: vscode.ExtensionContext): void {
             const r = new vscode.Range(i, 0, i, 6);
             lenses.push(new vscode.CodeLens(r, { title: "$(play) Playground", command: "parsley.openPlayground", arguments: [doc.uri] }));
             lenses.push(new vscode.CodeLens(r, { title: "$(type-hierarchy) Railroad", command: "parsley.showRailroad", arguments: [doc.uri] }));
-            lenses.push(new vscode.CodeLens(r, { title: "$(tools) Build C17", command: "parsley.buildC17", arguments: [doc.uri] }));
+            lenses.push(new vscode.CodeLens(r, { title: "$(tools) Build C23", command: "parsley.buildC23", arguments: [doc.uri] }));
             break;
           }
         }
@@ -2966,16 +2966,16 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    vscode.commands.registerCommand("parsley.buildC17", async (uriArg?: unknown) => {
+    vscode.commands.registerCommand("parsley.buildC23", async (uriArg?: unknown) => {
       const rawUri = coerceUriArg(uriArg) ?? getActiveParsleyDocument()?.uri;
       if (!rawUri) {
-        vscode.window.showWarningMessage("Open a .parsley or .psem file to build C17 parser.");
+        vscode.window.showWarningMessage("Open a .parsley or .psem file to build C23 parser.");
         return;
       }
       await saveIfDirty(rawUri);
       const uri = resolveSiblingGrammarUri(rawUri);
       await saveIfDirty(uri);
-      const configuredOut = getConfig().get<string>("c17.outputDir") || "./generated_parser";
+      const configuredOut = getConfig().get<string>("c23.outputDir") || "./generated_parser";
       const root = getWorkspaceRoot(uri);
       const outDir = path.isAbsolute(configuredOut) ? configuredOut : path.resolve(root, configuredOut);
       cliOutput.show(true);
@@ -2985,14 +2985,14 @@ export function activate(context: vscode.ExtensionContext): void {
       if (res.stderr) cliOutput.append(res.stderr);
       if (res.code === 0) {
         const choice = await vscode.window.showInformationMessage(
-          `ISO C17 parser built in ${outDir}`,
+          `ISO C23 parser built in ${outDir}`,
           "Reveal Folder"
         );
         if (choice === "Reveal Folder") {
           void vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(outDir));
         }
       } else {
-        vscode.window.showErrorMessage("Parsley C17 build failed. See Output > Parsley.");
+        vscode.window.showErrorMessage("Parsley C23 build failed. See Output > Parsley.");
       }
     }),
 

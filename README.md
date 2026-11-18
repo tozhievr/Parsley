@@ -1,4 +1,4 @@
-# Parsley — Haskell-Inspired Grammar DSL & ISO C17 Parser Generator
+# Parsley — Haskell-Inspired Grammar DSL & ISO C23 Parser Generator
 
 [English](#english) | [Русский](#русский)
 
@@ -7,15 +7,15 @@
 <a name="english"></a>
 ## English
 
-**Parsley** is an expressive, Haskell-inspired domain-specific language (DSL) and compiler for defining formal grammars and compiling them **exclusively into pure ISO C17** standalone parser frontends and shared/dynamic libraries (`.dll` on Windows, `.so` on Linux, `.dylib` on macOS).
+**Parsley** is an expressive, Haskell-inspired domain-specific language (DSL) and compiler for defining formal grammars and compiling them **exclusively into pure ISO C23** standalone parser frontends and shared/dynamic libraries (`.dll` on Windows, `.so` on Linux, `.dylib` on macOS).
 
-With Parsley, your grammar reads like a high-level Haskell module—featuring algebraic data types (`data`), applicative combinators (`<$>`, `<*>`, `<*`, `*>`), `do`-notation, and precedence tables—while compiling directly into high-performance, zero-dependency C17 code.
+With Parsley, your grammar reads like a high-level Haskell module—featuring algebraic data types (`data`), applicative combinators (`<$>`, `<*>`, `<*`, `*>`), `do`-notation, and precedence tables—while compiling directly into high-performance, zero-dependency C23 code.
 
 ---
 
-Current implementation and ABI contracts: [STATUS.md](docs/STATUS.md); accepted regex syntax: [REGEX.md](docs/REGEX.md). Only C17 is generated. The bundled language grammars are subsets; `MODE` selects analysis checks, while the runtime uses ordered recursive descent/Pratt parsing. Regenerate headers and libraries together after the unreleased ABI changes described in STATUS.
+Current implementation and ABI contracts: [STATUS.md](docs/STATUS.md); accepted regex syntax: [REGEX.md](docs/REGEX.md). Only C23 is generated. The bundled language grammars are subsets; `MODE` selects analysis checks, while the runtime uses ordered recursive descent/Pratt parsing. Regenerate headers and libraries together after the unreleased ABI changes described in STATUS.
 
-Актуальные возможности и контракты: [STATUS.md](docs/STATUS.md), [regex-диалект](docs/REGEX.md). Единственный таргет — C17; встроенные грамматики — подмножества языков. `MODE` выбирает проверки, а не отдельный алгоритм исполнения. После изменений ABI заголовки и библиотеки нужно регенерировать вместе.
+Актуальные возможности и контракты: [STATUS.md](docs/STATUS.md), [regex-диалект](docs/REGEX.md). Единственный таргет — C23; встроенные грамматики — подмножества языков. `MODE` выбирает проверки, а не отдельный алгоритм исполнения. После изменений ABI заголовки и библиотеки нужно регенерировать вместе.
 
 ### Core Architecture & Philosophy
 
@@ -25,22 +25,22 @@ Current implementation and ABI contracts: [STATUS.md](docs/STATUS.md); accepted 
    - Automatic Anonymous Tokens: string literals (e.g. `"+"` or `"let"`) automatically become lexer tokens with higher priority than general identifiers.
    - In-grammar Test Assertions (`example "math" : "1 + 2 * 3" parses-to ...` and `example "fail" : "1 +" fails-at (1, 4) expecting "expression"`).
 
-2. **Exclusive ISO C17 Target & Multi-Build-System Project Generation**:
-   - Parsley focuses exclusively on ISO C17 (`-std=c17`).
-   - `parsley build <file.parsley> -o <dir>` generates a **complete, standalone multi-build-system C17 project** ready for instant compilation or direct integration into any existing codebase:
+2. **Exclusive ISO C23 Target & Multi-Build-System Project Generation**:
+   - Parsley focuses exclusively on ISO C23 (`-std=c23`).
+   - `parsley build <file.parsley> -o <dir>` generates a **complete, standalone multi-build-system C23 project** ready for instant compilation or direct integration into any existing codebase:
      - `parser.h` & `include/<module>_parser.h`: Cross-platform public C interface (`PARSLEY_API` symbol export/import, tagged unions `enum` tag + `union` payload for ADTs, `ParsleyResult`, error reporting with line/column/expected tokens).
      - `parser.c`: Maximal-munch lexer with mode stack, recursive-descent parser, Pratt precedence-climbing engine, memory management (`parsley_result_free`), AST formatter (`parsley_format_ast`), and self-test harness (`parsley_run_examples`).
-     - `test_parser.c`: Standalone C17 test executable calling `parsley_run_examples()` and validating parse trees.
-     - `CMakeLists.txt`: Complete C17 CMake project (`SHARED` `<mod>_parser`, `STATIC` `<mod>_parser_static`, and `ALIAS` `<Mod>::parser` for `add_subdirectory`/`FetchContent`, plus CTest).
-     - `meson.build`: Meson C17 project with `shared_library`, `static_library`, `declare_dependency` (`<mod>_parser_dep` for `subproject`), pkg-config generation, and tests.
-     - `Makefile`: Portable C17 Makefile (`all`, `shared`, `static`, `test`, `install`, `clean`).
-     - `xmake.lua`: XMake build script (`set_languages("c17")`).
+     - `test_parser.c`: Standalone C23 test executable calling `parsley_run_examples()` and validating parse trees.
+     - `CMakeLists.txt`: Complete C23 CMake project (`SHARED` `<mod>_parser`, `STATIC` `<mod>_parser_static`, and `ALIAS` `<Mod>::parser` for `add_subdirectory`/`FetchContent`, plus CTest).
+     - `meson.build`: Meson C23 project with `shared_library`, `static_library`, `declare_dependency` (`<mod>_parser_dep` for `subproject`), pkg-config generation, and tests.
+     - `Makefile`: Portable C23 Makefile (`all`, `shared`, `static`, `test`, `install`, `clean`).
+     - `xmake.lua`: XMake build script (`set_languages("c23")`).
      - `BUILD.bazel` & `MODULE.bazel`: Bazel build definitions (`cc_library`, `cc_binary` with `linkshared = True`, `cc_test`).
      - `<module>_parser.pc`: Standard pkg-config metadata file.
      - `README.md`: Integration guide for CMake, Meson, Make, XMake, Bazel, and pkg-config.
      - **Compiled Dynamic Library**: `<module>_parser.dll` (Windows) / `lib<module>_parser.so` (Linux) / `lib<module>_parser.dylib` (macOS) built automatically by default (pass `--no-compile-shared` to generate source project only).
 
-3. **Public C17 ABI (`parser.h`)**:
+3. **Public C23 ABI (`parser.h`)**:
    ```c
    #ifdef __cplusplus
    extern "C" {
@@ -83,7 +83,7 @@ token number  = /[0-9]+([.][0-9]+)?/   :: Double
 token ident   = /[a-z_][a-zA-Z0-9_]*/  :: Text
 keywords      = ["let", "in"]
 
--- AST definitions (derived as C17 tagged unions)
+-- AST definitions (derived as C23 tagged unions)
 data Op = Add | Sub | Mul | Div | Pow
 
 data Expr
@@ -134,29 +134,29 @@ example "ошибка" : "1 +" fails-at (1, 4) expecting "expression"
 
 ---
 
-### ANTLR4-Inspired Language Subsets & ISO C17 Static Analyzers
+### ANTLR4-Inspired Language Subsets & ISO C23 Static Analyzers
 
-Parsley includes representative grammar subsets based on ANTLR4 grammars, each paired with an end-to-end static analyzer written in pure ISO C17 linked against the generated parser dynamic library:
+Parsley includes representative grammar subsets based on ANTLR4 grammars, each paired with an end-to-end static analyzer written in pure ISO C23 linked against the generated parser dynamic library:
 
 1. **Python 3 (`tests/fixtures/Python.parsley` & `tests/analyzers/python_analyzer.c`)**:
    - Translated from `PythonLexer.g4` & `PythonParser.g4`.
    - Supports `import`, `from ... import`, `def` (with type annotations), `class` (with inheritance), `if/elif/else`, `while`, `for...in`, `return/pass/break/continue`, augmented assignments, precedence-climbing expressions, and left-recursive postfix expressions (`PyCall`, `PyIndex`, `PyAttr`).
-   - C17 Static Analyzer computes: function/class counts, assignments, cyclomatic complexity, call graphs, lint checks (division by zero literals, empty `pass`-only functions, duplicate function definitions).
+   - C23 Static Analyzer computes: function/class counts, assignments, cyclomatic complexity, call graphs, lint checks (division by zero literals, empty `pass`-only functions, duplicate function definitions).
 
 2. **Swift 5 (`tests/fixtures/Swift.parsley` & `tests/analyzers/swift_analyzer.c`)**:
    - Translated from `Swift5Lexer.g4` & `Swift5Parser.g4`.
    - Supports `import`, `struct`, `class`, `enum`, `func`, `let`, `var`, `if/else`, `guard...else`, `while`, `for...in`, `return`, and operator precedence.
-   - C17 Static Analyzer computes: struct/class/func counts, `let` vs `var` immutability ratio, `guard` counts, cyclomatic complexity, and warnings (mutable vars, division by zero, duplicate declarations).
+   - C23 Static Analyzer computes: struct/class/func counts, `let` vs `var` immutability ratio, `guard` counts, cyclomatic complexity, and warnings (mutable vars, division by zero, duplicate declarations).
 
 3. **Kotlin (`tests/fixtures/Kotlin.parsley` & `tests/analyzers/kotlin_analyzer.c`)**:
    - Translated from `KotlinLexer.g4` & `KotlinParser.g4`.
    - Supports `package`, `import`, `class`, `interface`, `fun` (block & expression bodies), `val`, `var`, `if/else`, `when` branches, `while`, `for...in`, and expressions.
-   - C17 Static Analyzer computes: package hierarchy, import lists, interface/class/func metrics, `val` vs `var` ratios, `when` branch metrics, and lint checks (division by zero, duplicate declarations).
+   - C23 Static Analyzer computes: package hierarchy, import lists, interface/class/func metrics, `val` vs `var` ratios, `when` branch metrics, and lint checks (division by zero, duplicate declarations).
 
 4. **Haskell 2010 (`tests/fixtures/Haskell.parsley` & `tests/analyzers/haskell_analyzer.c`)**:
    - Translated from `HaskellLexer.g4` & `HaskellParser.g4`.
    - Supports `module ... where`, `import` (qualified/as/hiding), `data` ADTs, `type` synonyms, `::` type signatures, function equations, `if/then/else`, `let/in`, `case/of`, and operators.
-   - C17 Static Analyzer computes: ADTs, constructors, type signatures, function bindings, recursive self-call detection, missing top-level signatures, and division by zero checks.
+   - C23 Static Analyzer computes: ADTs, constructors, type signatures, function bindings, recursive self-call detection, missing top-level signatures, and division by zero checks.
 
 ---
 
@@ -175,7 +175,7 @@ Parsley comes with a full-featured, zero-external-npm-dependency extension for b
   - Ormolu-style code formatting (`textDocument/formatting`).
   - Auto-completion (`textDocument/completion`) for rules, tokens, ADT constructors, and prelude combinators.
   - Quick-fix CodeActions (`textDocument/codeAction`) for `E0301` (add missing type signature) and `E0214` (add `{-# NOFACTOR #-}`).
-  - CodeLenses for building C17, opening railroad diagrams, or debugging grammar examples.
+  - CodeLenses for building C23, opening railroad diagrams, or debugging grammar examples.
 - **Interactive Webviews**:
   - **Live Grammar Playground**: test input strings against any rule in real time, view formatted ASTs, token streams, or syntax errors.
   - **Interactive Railroad Diagrams**: visualize grammar rules as SVG syntax diagrams with pan and zoom.
@@ -217,9 +217,9 @@ $ErrorActionPreference='Stop'; $d="$env:LOCALAPPDATA\Programs\Parsley"; Expand-A
 (set -eu; d=$(mktemp -d); trap 'rm -rf -- "$d"' EXIT; tar -xzf ./parsley-1.3.1-Linux.tar.gz -C "$d"; sudo install -m 755 "$d"/parsley-1.3.1-Linux/bin/parsley /usr/local/bin/parsley; parsley --version)
 ```
 
-For another version, update both the archive name and extracted directory. These commands use local archives; this checkout has no configured public download URL. The toolchain below is needed for building from source; generating shared C17 libraries also requires a C compiler.
+For another version, update both the archive name and extracted directory. These commands use local archives; this checkout has no configured public download URL. The toolchain below is needed for building from source; generating shared C23 libraries also requires a C compiler.
 
-Для другой версии замените номер в имени архива и каталога внутри него. Команды используют локальные архивы: публичный URL скачивания в этом checkout не настроен. Инструменты ниже нужны для сборки из исходников; генерация динамических библиотек C17 также требует компилятора C.
+Для другой версии замените номер в имени архива и каталога внутри него. Команды используют локальные архивы: публичный URL скачивания в этом checkout не настроен. Инструменты ниже нужны для сборки из исходников; генерация динамических библиотек C23 также требует компилятора C.
 
 **VS Code / Cursor — Windows & Linux** (from the directory with the VSIX / из каталога с VSIX):
 
@@ -233,7 +233,7 @@ For Cursor, replace `code` with `cursor`. Для Cursor замените `code` 
 
 - **CMake**: 4.5.0-rc1 or newer (`cmake_minimum_required(VERSION 4.5.0)`)
 - **Ninja**: Build system generator
-- **Compiler**: Clang 23.1.3 (with C++26 modules and ISO C17 support)
+- **Compiler**: Clang 23.1.3 (with C++26 modules and ISO C23 support)
 - **Platforms**: Windows 11/Server (MSVC STL), Linux (libstdc++ / libc++), macOS (Apple Silicon / Intel libc++)
 
 ---
@@ -284,7 +284,7 @@ cpack --config build/CPackConfig.cmake -B dist
 
 | Command | Contract / flags |
 |---|---|
-| `build <file.parsley\|file.psem> [-o dir]` | Generate C17; semantic files use the adjacent grammar. `--no-compile-shared`, `--min-status draft|reviewed|verified`, `--emit-agent-docs`, `--emit-ir-json`, `--emit-ir-sexpr` |
+| `build <file.parsley\|file.psem> [-o dir]` | Generate C23; semantic files use the adjacent grammar. `--no-compile-shared`, `--min-status draft|reviewed|verified`, `--emit-agent-docs`, `--emit-ir-json`, `--emit-ir-sexpr` |
 | `check <file.parsley\|file.psem>` | Validate grammar/PSL; accepts `--min-status` |
 | `test <file.parsley\|file.psem> [--fuzz N] [--seed N]` | Grammar and PSL assertions; `N` is 0–1,000,000, default seed 42; accepts `--min-status` |
 | `fmt <file> [--write\|-w\|--check\|-c]` | Print canonical grammar formatting or PSL whitespace normalization; write/check are mutually exclusive |
@@ -295,7 +295,7 @@ cpack --config build/CPackConfig.cmake -B dist
 | `pkg <list\|show\|init> [name] [directory]` | Inspect bundled modules or scaffold a package; refuses existing files |
 | `--version`, `-V`, `version`; `--help`, `-h`, `help` | Version/help aliases |
 
-`-b/--backend c17` and `c` select the sole code-generation backend. Compatibility values `ir-json`/`ir-sexpr` produce IR dumps, not another executable-language target. `-v/--verbose` includes analysis notes; `--no-color` is accepted and diagnostics are plain text. Exit 0 indicates success; 1 indicates a failed check/test/I/O or ordinary usage error; 2 indicates rejected bounded numeric options or a caught compiler/protocol failure. `PARSLEY_CC` is a path/name of one C compiler executable, without shell syntax or appended flags.
+`-b/--backend c23` and `c` select the sole code-generation backend. Compatibility values `ir-json`/`ir-sexpr` produce IR dumps, not another executable-language target. `-v/--verbose` includes analysis notes; `--no-color` is accepted and diagnostics are plain text. Exit 0 indicates success; 1 indicates a failed check/test/I/O or ordinary usage error; 2 indicates rejected bounded numeric options or a caught compiler/protocol failure. `PARSLEY_CC` is a path/name of one C compiler executable, without shell syntax or appended flags.
 
 `program = expr <* eof` requires a complete parse. Without `eof`, a generated parser may accept a prefix; inspect `result.consumed`. Generic `parsley_*` names in examples are compatibility aliases for the module-prefixed symbols. See [STATUS.md](docs/STATUS.md) for resource/ownership rules and multiple-parser integration.
 
@@ -339,7 +339,7 @@ cmake -DSET_VERSION=1.0.0 -P scripts/bump_semver.cmake
 <a name="русский"></a>
 ## Русский
 
-**Parsley** — это выразительный предметно-ориентированный язык (DSL) в стиле Haskell и компилятор грамматик, ориентированный **исключительно на генерацию парсеров на чистом ISO C17** и компиляцию динамических/разделяемых библиотек (`.dll` на Windows, `.so` на Linux, `.dylib` на macOS).
+**Parsley** — это выразительный предметно-ориентированный язык (DSL) в стиле Haskell и компилятор грамматик, ориентированный **исключительно на генерацию парсеров на чистом ISO C23** и компиляцию динамических/разделяемых библиотек (`.dll` на Windows, `.so` на Linux, `.dylib` на macOS).
 
 Грамматика описывается как обычный Haskell-модуль: с сигнатурами, алгебраическими типами данных (`data`), каррированием, аппликативными комбинаторами (`<$>`, `<*>`, `<*`, `*>`), блоками `do` и таблицами операторов `operators`.
 
@@ -353,16 +353,16 @@ cmake -DSET_VERSION=1.0.0 -P scripts/bump_semver.cmake
    - Автоматические анонимные токены: строковые литералы (`"("`, `"let"`) имеют приоритет над регулярными выражениями идентификаторов.
    - Тесты `example` прямо в грамматике для компиляционной верификации.
 
-2. **Исключительная ориентация на ISO C17 и мульти-сборочные проекты**:
-   - Компилятор генерирует исключительно переносимый ISO C17 (`-std=c17`).
-   - Команда `parsley build <file.parsley> -o <dir>` создаёт **полный готовый C17-проект** для сборки и интеграции в любую экосистему:
+2. **Исключительная ориентация на ISO C23 и мульти-сборочные проекты**:
+   - Компилятор генерирует исключительно переносимый ISO C23 (`-std=c23`).
+   - Команда `parsley build <file.parsley> -o <dir>` создаёт **полный готовый C23-проект** для сборки и интеграции в любую экосистему:
      - `parser.h` и `include/<module>_parser.h`: публичный интерфейс с макросом экспорта `PARSLEY_API`, размеченными объединениями (`tagged unions`), структурой `ParsleyResult` и функциями `parsley_parse`, `parsley_parse_n`, `parsley_result_free`, `parsley_format_ast`, `parsley_run_examples`.
      - `parser.c`: полная реализация лексера, парсера (рекурсивный спуск + precedence climbing), управления памятью и тестов.
-     - `test_parser.c`: автономный тестовый исполняемый файл C17.
-     - `CMakeLists.txt`: C17 проект с целями `SHARED`, `STATIC` и `ALIAS` для бесшовного подключения через `add_subdirectory` или `FetchContent`.
+     - `test_parser.c`: автономный тестовый исполняемый файл C23.
+     - `CMakeLists.txt`: C23 проект с целями `SHARED`, `STATIC` и `ALIAS` для бесшовного подключения через `add_subdirectory` или `FetchContent`.
      - `meson.build`: проект Meson с `shared_library`, `static_library`, зависимостью `subproject` и тестами.
      - `Makefile`: переносимый Makefile (`all`, `shared`, `static`, `test`, `install`, `clean`).
-     - `xmake.lua`: файл сборки для XMake (`set_languages("c17")`).
+     - `xmake.lua`: файл сборки для XMake (`set_languages("c23")`).
      - `BUILD.bazel` и `MODULE.bazel`: цели для сборки в Bazel.
      - `<module>_parser.pc`: файл конфигурации `pkg-config`.
      - `README.md`: руководство по интеграции во все поддерживаемые системы сборки.
@@ -380,25 +380,25 @@ cmake -DSET_VERSION=1.0.0 -P scripts/bump_semver.cmake
 
 ---
 
-### Продакшн-грамматики ANTLR4 и статические анализаторы C17
+### Продакшн-грамматики ANTLR4 и статические анализаторы C23
 
-В поставку Parsley включены 4 грамматики реальных языков программирования, транслированные из ANTLR4, а также соответствующие автономные статические анализаторы на ISO C17:
+В поставку Parsley включены 4 грамматики реальных языков программирования, транслированные из ANTLR4, а также соответствующие автономные статические анализаторы на ISO C23:
 
 1. **Python 3 (`tests/fixtures/Python.parsley` & `tests/analyzers/python_analyzer.c`)**:
    - Полноценная поддержка синтаксиса Python 3: `import`, `from ... import`, `def`, `class`, операторы ветвления и циклов, аннотации типов, операторы с приоритетами.
-   - Анализатор C17: подсчёт функций, классов, присваиваний, цикломатической сложности, граф вызовов и линтинг (деление на ноль, пустые функции с `pass`, дублирующиеся имена).
+   - Анализатор C23: подсчёт функций, классов, присваиваний, цикломатической сложности, граф вызовов и линтинг (деление на ноль, пустые функции с `pass`, дублирующиеся имена).
 
 2. **Swift 5 (`tests/fixtures/Swift.parsley` & `tests/analyzers/swift_analyzer.c`)**:
    - Поддержка `struct`, `class`, `enum`, `func`, `let`/`var`, `guard...else`, циклов и операторов.
-   - Анализатор C17: соотношение иммутабельности `let`/`var`, анализ функций и классов, цикломатическая сложность, предупреждения линтера.
+   - Анализатор C23: соотношение иммутабельности `let`/`var`, анализ функций и классов, цикломатическая сложность, предупреждения линтера.
 
 3. **Kotlin (`tests/fixtures/Kotlin.parsley` & `tests/analyzers/kotlin_analyzer.c`)**:
    - Поддержка пакетов, импортов, классов, интерфейсов, функций, веток `when`, циклов.
-   - Анализатор C17: иерархия пакетов, метрики объявления классов и функций, проверка корректности выражений.
+   - Анализатор C23: иерархия пакетов, метрики объявления классов и функций, проверка корректности выражений.
 
 4. **Haskell 2010 (`tests/fixtures/Haskell.parsley` & `tests/analyzers/haskell_analyzer.c`)**:
    - Поддержка определений модулей, импортов, ADT-типов, уравнений функций, сигнатур типов `::`, `case/of`, `let/in`.
-   - Анализатор C17: обнаружение рекурсивных функций, отсутствующих сигнатур верхнего уровня, деления на ноль.
+   - Анализатор C23: обнаружение рекурсивных функций, отсутствующих сигнатур верхнего уровня, деления на ноль.
 
 ---
 
@@ -462,7 +462,7 @@ cpack --config build/CPackConfig.cmake -B dist
 
 Полная таблица флагов приведена в [CLI Reference](#cli-reference). `build/check/test/fmt` работают с `.parsley` и `.psem`; `graph` требует грамматику. `test --fuzz N --seed S` воспроизводим, `fmt --write` и `--check` несовместимы. `pkg init` создаёт шаблон проекта и не перезаписывает существующие файлы; это не сетевой менеджер зависимостей.
 
-C17 — единственный таргет. IR JSON/S-expression — форматы инспекции. `MODE` задаёт профиль анализа. Для полного разбора добавляйте `<* eof`; правила памяти, ABI и ограничений приведены в [STATUS.md](docs/STATUS.md). Версия компилятора берётся из `VERSION`, расширение версионируется независимо.
+C23 — единственный таргет. IR JSON/S-expression — форматы инспекции. `MODE` задаёт профиль анализа. Для полного разбора добавляйте `<* eof`; правила памяти, ABI и ограничений приведены в [STATUS.md](docs/STATUS.md). Версия компилятора берётся из `VERSION`, расширение версионируется независимо.
 
 ### Управление версиями (SemVer)
 

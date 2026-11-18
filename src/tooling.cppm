@@ -42,7 +42,7 @@ import parsley.typecheck;
 import parsley.desugar;
 import parsley.eval;
 import parsley.regex;
-import parsley.c17_text;
+import parsley.c23_text;
 import parsley.psl;
 
 namespace parsley::tooling::detail {
@@ -1793,12 +1793,12 @@ private:
         if (!std::isspace(static_cast<unsigned char>(input[pos]))) {
           out.push_back(detail::Json::make_object({
               {"id", detail::Json::make_string("<unknown>")},
-              {"lexeme", detail::Json::make_string(std::string(input.substr(pos,c17_text::utf8_width(input,pos))))},
+              {"lexeme", detail::Json::make_string(std::string(input.substr(pos,c23_text::utf8_width(input,pos))))},
               {"line", detail::Json::make_int(line)},
               {"col", detail::Json::make_int(col)},
           }));
         }
-        advance_pos(c17_text::utf8_width(input,pos));
+        advance_pos(c23_text::utf8_width(input,pos));
         continue;
       }
 
@@ -2434,7 +2434,7 @@ private:
       });
     };
 
-    lenses.arr_val.push_back(make_lens(mod_range, "Build ISO C17 Parser", "parsley.buildC17",
+    lenses.arr_val.push_back(make_lens(mod_range, "Build ISO C23 Parser", "parsley.buildC23",
                                        {detail::Json::make_string(uri)}));
     lenses.arr_val.push_back(make_lens(mod_range, "Show Railroad Diagram", "parsley.showRailroad",
                                        {detail::Json::make_string(uri)}));
@@ -2592,7 +2592,7 @@ inline std::string generate_agent_docs_markdown(const ir::Grammar* grammar = nul
   std::ostringstream out;
   out << "# AGENTS.md — Parsley & PSL Guide for AI Coding Agents\n\n";
   out << "Parsley is a Haskell-inspired grammar DSL (`.parsley`) and static semantic layer (`.psem`) "
-      << "that compiles to zero-dependency ISO C17 parsers and static analyzers.\n\n";
+      << "that compiles to zero-dependency ISO C23 parsers and static analyzers.\n\n";
   if (grammar != nullptr) {
     out << "## Module `" << grammar->module_name << "` Schema\n\n";
     out << "### Tokens (" << grammar->gTokens.size() << ")\n";
@@ -2649,7 +2649,7 @@ inline std::string generate_agent_skill_markdown(std::string_view mod_name = "My
   std::ostringstream out;
   out << "---\n"
       << "name: parsley\n"
-      << "description: Author, check, test, and compile Parsley grammars (.parsley) and PSL static semantics (.psem) into ISO C17 parsers and analyzers.\n"
+      << "description: Author, check, test, and compile Parsley grammars (.parsley) and PSL static semantics (.psem) into ISO C23 parsers and analyzers.\n"
       << "---\n\n"
       << "# Parsley & PSL Authoring Skill\n\n"
       << "## Step-by-Step Workflow\n\n"
@@ -2799,7 +2799,7 @@ inline InitPackageResult init_package(std::string_view name, std::string_view ta
   std::string mod=pkg_name;mod[0]=static_cast<char>(std::toupper(static_cast<unsigned char>(mod[0])));
   namespace fs=std::filesystem;fs::path dir(target_dir);std::error_code ec;
   std::map<fs::path,std::string> files;
-  files[dir/"parsley.toml"]="[package]\nname = \""+pkg_name+"\"\nversion = \"0.1.0\"\nentry = \"src/"+mod+".parsley\"\ntarget = \"c17\"\n";
+  files[dir/"parsley.toml"]="[package]\nname = \""+pkg_name+"\"\nversion = \"0.1.0\"\nentry = \"src/"+mod+".parsley\"\ntarget = \"c23\"\n";
   files[dir/"src"/(mod+".parsley")]=
     "module "+mod+" (program) where\n\nimport Parsley.Prelude (eof)\n\nskip ws = /[[:space:]]+/\ntoken ident = /[a-zA-Z_][a-zA-Z0-9_]*/ :: Text\n\ndata Ast = Word Text\n\nprogram :: Ast\nprogram = (Word <$> ident) <* eof\n\nexample \"basic\" : \"hello\" parses-to Word \"hello\"\n";
   files[dir/"src"/(mod+".psem")]=

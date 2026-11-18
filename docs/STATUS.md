@@ -1,10 +1,10 @@
 # Implementation status and runtime contracts
 
-Updated: 2026-11-16. This describes the C17 implementation; the older architecture documents are design proposals. Compiler version comes from `VERSION`, and the extension has its own version in `editors/vscode/package.json`.
+Updated: 2026-11-16. This describes the C23 implementation; the older architecture documents are design proposals. Compiler version comes from `VERSION`, and the extension has its own version in `editors/vscode/package.json`.
 
 ## Delivered scope
 
-- **Only ISO C17 is a code-generation target.** JSON/S-expression IR dumps are inspection formats. Other language targets are outside the current scope.
+- **Only ISO C23 is a code-generation target.** JSON/S-expression IR dumps are inspection formats. Other language targets are outside the current scope.
 - The runtime executes ordered recursive descent, precedence climbing and direct-left-recursion seed growing. `MODE LL1|LLk|LALR|PEG|GLL` selects analysis constraints/labels; it does not select an independent LALR/GLL implementation or return an ambiguity forest.
 - Safe, context-free, non-left-recursive rules use memoization. Context-dependent rules and left-recursive grammars use checked depth/step budgets. Mutual left-recursion cycles and combining context rules with left recursion are diagnosed instead of generating order-dependent results.
 - FIRST/FOLLOW analysis is conservative around predicates and dynamic `exactly` bindings. Prefix overlap is not a proof of ambiguity for ordered choice. `NOFACTOR` deliberately reports overlap as an inspection error; automatic-factoring notes are printed by the CLI only with `--verbose`.
@@ -31,7 +31,7 @@ The header provides the familiar `parsley_parse`/`ParsleyResult` aliases for one
 
 The parser uses an internal checked allocation transaction, **not a caller-supplied PSL arena**. Temporary backtracking/memo values live until the invocation ends. PSL nodes and analysis data instead use the caller's `psl_arena`; `arena.error` distinguishes exhaustion from invalid size/alignment, and analysis/semantic parsing returns a negative status on failure. The semantic parse adapter converts the actual grammar AST into the PSL arena and copies its text before freeing the temporary parser result.
 
-Default C17 limits (overridable at compile time where a macro is named):
+Default C23 limits (overridable at compile time where a macro is named):
 
 | Limit | Default | Behavior |
 |---|---:|---|
@@ -56,7 +56,7 @@ Extension 1.6.x supports compiler/LSP 1.3.x. Newer per-example assertions use `p
 
 ## Verification and audit mapping
 
-The automated suites are [core tests](../tests/test_main.cpp), [audit regressions](../tests/audit_regression.py), and [extension command tests](../editors/vscode/test/extension.test.cjs). Audit regressions compile generated C with `-std=c17 -Wall -Wextra -pedantic -Werror`, inject allocation failures, link two parser ABIs, exercise Int64 endpoints, long ASTs, nesting limits, malformed CLI/regex/lock inputs and LSP Unicode/framing. PSL examples include positive `fires` and negative `silent` cases. Fuzzing is deterministic with default seed 42; `--seed` overrides it. Fuzz samples are evidence for those inputs, not proof of absence of all parser faults.
+The automated suites are [core tests](../tests/test_main.cpp), [audit regressions](../tests/audit_regression.py), and [extension command tests](../editors/vscode/test/extension.test.cjs). Audit regressions compile generated C with `-std=c23 -Wall -Wextra -pedantic -Werror`, inject allocation failures, link two parser ABIs, exercise Int64 endpoints, long ASTs, nesting limits, malformed CLI/regex/lock inputs and LSP Unicode/framing. PSL examples include positive `fires` and negative `silent` cases. Fuzzing is deterministic with default seed 42; `--seed` overrides it. Fuzz samples are evidence for those inputs, not proof of absence of all parser faults.
 
 | Audit findings | Resolution |
 |---|---|
@@ -68,7 +68,7 @@ The automated suites are [core tests](../tests/test_main.cpp), [audit regression
 | F-02 / H-05 | Separate Int64 representation; locale-independent numeric parsing/formatting and exact integer JSON |
 | F-04 | Same maximal-munch length/priority/order in tokenized, scannerless and playground lexing; HTML fixture uses separate text/tag modes |
 | F-07 / H-10 | UTF-16 IDE conversion, codepoint runtime columns and Unicode regression tests |
-| F-11 / H-03 / D-04/D-05/F-21 | Runtime algorithm and analysis profiles separated in UI/docs; design proposals explicitly marked; C17 remains the sole target |
+| F-11 / H-03 / D-04/D-05/F-21 | Runtime algorithm and analysis profiles separated in UI/docs; design proposals explicitly marked; C23 remains the sole target |
 | F-12 | Existing unreadable/malformed lockfiles are errors rather than silently disabling verification |
 | F-14, M-07/M-12 | Module-scoped C ABI, distinct module stems, exported installed CMake targets and relocatable pkg-config prefix |
 | F-15/F-16, M-03/M-04 | Reused C NFA scratch, iterative epsilon traversal, memoization where valid, cons-list materialization at the API boundary, linear diagnostic-string building and append-based FIRST accumulation |

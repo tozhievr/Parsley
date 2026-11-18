@@ -27,7 +27,7 @@ import parsley.ast;
 import parsley.diagnostic;
 import parsley.ir;
 import parsley.regex;
-import parsley.c17_text;
+import parsley.c23_text;
 
 export namespace parsley::eval {
 
@@ -147,7 +147,7 @@ inline std::string format_value(const EvalValue& v, bool wrap_parens = false) {
       }
       return out.str();
     }
-    case EvalValue::Kind::String: return c17_text::display_string(v.string_value);
+    case EvalValue::Kind::String: return c23_text::display_string(v.string_value);
     case EvalValue::Kind::List: {
       std::string out = "[";
       for (std::size_t i = 0; i < v.elements.size(); ++i) {
@@ -387,7 +387,7 @@ inline std::string display_token_name(const ir::Grammar& g, const std::string& i
   }
   if (const auto* td = ir::find_token(g, id)) {
     if (!td->is_regex && (td->is_anonymous || td->is_keyword)) {
-      return c17_text::display_string(td->pattern);
+      return c23_text::display_string(td->pattern);
     }
   }
   return id;

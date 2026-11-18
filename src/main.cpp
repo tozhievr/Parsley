@@ -24,7 +24,7 @@ import parsley.analysis;
 import parsley.eval;
 import parsley.psl;
 import parsley.codegen;
-import parsley.c17_text;
+import parsley.c23_text;
 import parsley.tooling;
 import parsley.compiler;
 
@@ -33,7 +33,7 @@ namespace {
 namespace fs = std::filesystem;
 bool verbose_diagnostics = false;
 
-std::string to_lower(std::string_view name) {return parsley::c17_text::module_stem(name);}
+std::string to_lower(std::string_view name) {return parsley::c23_text::module_stem(name);}
 
 std::optional<std::string> read_text_file(const std::string& path) {
   std::ifstream in(path, std::ios::binary);
@@ -64,7 +64,7 @@ bool write_text_file(const fs::path& path, std::string_view content) {
 void print_help() {
   std::cout
       << "Parsley " << parsley::VERSION_STRING
-      << " — Haskell-style Grammar DSL, PSL Static Semantics & ISO C17 Generator\n\n"
+      << " — Haskell-style Grammar DSL, PSL Static Semantics & ISO C23 Generator\n\n"
       << "Usage:\n"
       << "  parsley build <file.parsley|file.psem> [-o <dir>] [--no-compile-shared] [--min-status draft|reviewed|verified] [--emit-agent-docs] [--emit-ir-json] [--emit-ir-sexpr]\n"
       << "  parsley check <file.parsley|file.psem> [--min-status draft|reviewed|verified]\n"
@@ -113,7 +113,7 @@ bool compile_shared_library(const fs::path& out_dir, const std::string& mod_low,
   out_lib_path = out_dir / ("lib" + tgt + ".so");
 #endif
   for (const auto& cc : candidate_c_compilers()) {
-    std::vector<std::string> args{cc, "-std=c17", "-O2", "-Wall", "-Wextra", "-pedantic", "-DPARSLEY_BUILDING_DLL"};
+    std::vector<std::string> args{cc, "-std=c23", "-O2", "-Wall", "-Wextra", "-pedantic", "-DPARSLEY_BUILDING_DLL"};
 #ifdef __APPLE__
     args.push_back("-dynamiclib");
 #else
@@ -152,7 +152,7 @@ int cmd_build(const std::vector<std::string>& args) {
 
   std::string input_file;
   std::string out_dir_str;
-  std::string backend = "c17";
+  std::string backend = "c23";
   bool compile_shared = true;
   bool emit_ir_json = false;
   bool emit_ir_sexpr = false;
@@ -221,15 +221,15 @@ int cmd_build(const std::vector<std::string>& args) {
     emit_ir_json = true;
   } else if (backend == "ir-sexpr") {
     emit_ir_sexpr = true;
-  } else if (backend != "c17" && backend != "c") {
+  } else if (backend != "c23" && backend != "c") {
     std::cerr << "error: unsupported backend `" << backend
-              << "` (supported: c17, c, ir-json, ir-sexpr)\n";
+              << "` (supported: c23, c, ir-json, ir-sexpr)\n";
     return 1;
   }
 
-  if (backend == "c17" || backend == "c") {
+  if (backend == "c23" || backend == "c") {
     parsley::codegen::CodegenOptions opts;
-    opts.target = parsley::codegen::TargetLang::C17;
+    opts.target = parsley::codegen::TargetLang::C23;
     opts.emit_tests = true;
     opts.min_status = min_status;
     opts.psl_module = res.psl_module ? &*res.psl_module : nullptr;
@@ -255,13 +255,13 @@ int cmd_build(const std::vector<std::string>& args) {
       write_text_file(out_dir / "skills" / "parsley" / "SKILL.md", bundle.skill_md);
     }
 
-    std::cout << "Generated ISO C17 parser project in `" << out_dir.string() << "` ("
+    std::cout << "Generated ISO C23 parser project in `" << out_dir.string() << "` ("
               << files.size() << " files)\n";
 
     if (compile_shared) {
       fs::path lib_path;
       if (!compile_shared_library(out_dir, mod_low, extra_c_files, lib_path)) {
-        std::cerr << "error: failed to compile C17 shared library in `" << out_dir.string()
+        std::cerr << "error: failed to compile C23 shared library in `" << out_dir.string()
                   << "`\n";
         return 1;
       }

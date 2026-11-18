@@ -509,7 +509,7 @@ int run_shell(const std::string& cmd) {
 #endif
 }
 
-void test_codegen_c17() {
+void test_codegen_c23() {
   using namespace parsley;
   namespace fs = std::filesystem;
 
@@ -521,17 +521,17 @@ void test_codegen_c17() {
     auto typed = typecheck::check_module(mod, resolved, diags);
     auto grammar = desugar::desugar_module(mod, resolved, typed, diags);
     auto an = analysis::analyze_grammar(grammar, diags);
-    check(!diags.has_errors(), std::string(name) + " compiled without errors for C17 codegen");
+    check(!diags.has_errors(), std::string(name) + " compiled without errors for C23 codegen");
     return std::pair{grammar, an};
   };
 
-  // 1. Calc.parsley full multi-build-system C17 project + CMake/CTest + shared library consumer
+  // 1. Calc.parsley full multi-build-system C23 project + CMake/CTest + shared library consumer
   {
     auto [grammar, an] = compile_ir("Calc.parsley");
     auto files = codegen::generate_backend(grammar, an, {});
     check(!files.empty(), "generate_backend returns files");
 
-    const fs::path out_dir = fs::temp_directory_path() / "parsley_c17_calc_test";
+    const fs::path out_dir = fs::temp_directory_path() / "parsley_c23_calc_test";
     std::error_code ec;
     fs::remove_all(out_dir, ec);
     fs::create_directories(out_dir, ec);
@@ -563,15 +563,15 @@ void test_codegen_c17() {
     const fs::path cmake_build = out_dir / "cmake_build";
     const std::string cfg_cmd = "cmake -S \"" + out_dir.string() + "\" -B \"" +
                                 cmake_build.string() + "\" -G Ninja -DCMAKE_C_COMPILER=\"" + cc + "\"";
-    check(run_shell(cfg_cmd) == 0, "Generated C17 CMake project configures");
+    check(run_shell(cfg_cmd) == 0, "Generated C23 CMake project configures");
 
     const std::string bld_cmd = "cmake --build \"" + cmake_build.string() + "\"";
-    check(run_shell(bld_cmd) == 0, "Generated C17 CMake project builds");
+    check(run_shell(bld_cmd) == 0, "Generated C23 CMake project builds");
 
     const std::string tst_cmd = "ctest --test-dir \"" + cmake_build.string() + "\" --output-on-failure";
-    check(run_shell(tst_cmd) == 0, "Generated C17 CMake project ctest passes");
+    check(run_shell(tst_cmd) == 0, "Generated C23 CMake project ctest passes");
 
-    // Direct shared library + C17 consumer executable compilation & execution
+    // Direct shared library + C23 consumer executable compilation & execution
     const fs::path consumer_c = out_dir / "consumer.c";
     write_text_file(consumer_c, R"C(
 #include "parser.h"
@@ -617,15 +617,15 @@ int main(void) {
     const fs::path dll_path = shared_dir / "calc_parser.dll";
     const fs::path lib_path = shared_dir / "calc_parser.lib";
     const fs::path exe_path = shared_dir / "consumer.exe";
-    const std::string build_dll = "\"" + cc + "\" -std=c17 -Wall -Wextra -shared \"" +
+    const std::string build_dll = "\"" + cc + "\" -std=c23 -Wall -Wextra -shared \"" +
                                   (out_dir / "parser.c").string() + "\" -o \"" + dll_path.string() + "\"";
-    check(run_shell(build_dll) == 0, "Direct clang -std=c17 -shared builds calc_parser.dll");
-    const std::string build_exe = "\"" + cc + "\" -std=c17 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
+    check(run_shell(build_dll) == 0, "Direct clang -std=c23 -shared builds calc_parser.dll");
+    const std::string build_exe = "\"" + cc + "\" -std=c23 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
                                   consumer_c.string() + "\" \"" + lib_path.string() + "\" -o \"" +
                                   exe_path.string() + "\"";
-    check(run_shell(build_exe) == 0, "Direct clang -std=c17 links consumer.exe against calc_parser.dll");
+    check(run_shell(build_exe) == 0, "Direct clang -std=c23 links consumer.exe against calc_parser.dll");
     check(run_shell("\"" + exe_path.string() + "\"") == 0,
-          "C17 consumer executable passes against calc_parser.dll");
+          "C23 consumer executable passes against calc_parser.dll");
 #else
 #  if defined(__APPLE__)
     const fs::path so_path = shared_dir / "libcalc_parser.dylib";
@@ -633,25 +633,25 @@ int main(void) {
     const fs::path so_path = shared_dir / "libcalc_parser.so";
 #  endif
     const fs::path exe_path = shared_dir / "consumer";
-    const std::string build_so = "\"" + cc + "\" -std=c17 -Wall -Wextra -fPIC -shared \"" +
+    const std::string build_so = "\"" + cc + "\" -std=c23 -Wall -Wextra -fPIC -shared \"" +
                                  (out_dir / "parser.c").string() + "\" -lm -o \"" + so_path.string() + "\"";
-    check(run_shell(build_so) == 0, "Direct clang -std=c17 -shared builds shared library");
-    const std::string build_exe = "\"" + cc + "\" -std=c17 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
+    check(run_shell(build_so) == 0, "Direct clang -std=c23 -shared builds shared library");
+    const std::string build_exe = "\"" + cc + "\" -std=c23 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
                                   consumer_c.string() + "\" \"" + so_path.string() + "\" -Wl,-rpath,\"" +
                                   shared_dir.string() + "\" -lm -o \"" + exe_path.string() + "\"";
-    check(run_shell(build_exe) == 0, "Direct clang -std=c17 links consumer against shared library");
+    check(run_shell(build_exe) == 0, "Direct clang -std=c23 links consumer against shared library");
     check(run_shell("\"" + exe_path.string() + "\"") == 0,
-          "C17 consumer executable passes against shared library");
+          "C23 consumer executable passes against shared library");
 #endif
 
     fs::remove_all(out_dir, ec);
   }
 
-  // 2. LexModes.parsley & HtmlContext.parsley C17 standalone test_parser.c compilation & execution
+  // 2. LexModes.parsley & HtmlContext.parsley C23 standalone test_parser.c compilation & execution
   for (std::string_view fixture : {"LexModes.parsley", "HtmlContext.parsley"}) {
     auto [grammar, an] = compile_ir(fixture);
     auto files = codegen::generate_backend(grammar, an, {});
-    const fs::path out_dir = fs::temp_directory_path() / (std::string("parsley_c17_") + grammar.module_name);
+    const fs::path out_dir = fs::temp_directory_path() / (std::string("parsley_c23_") + grammar.module_name);
     std::error_code ec;
     fs::remove_all(out_dir, ec);
     fs::create_directories(out_dir, ec);
@@ -664,16 +664,16 @@ int main(void) {
 #else
     const fs::path exe_path = out_dir / "test_parser";
 #endif
-    const std::string cmd = "\"" + cc + "\" -std=c17 -DPARSLEY_STATIC -I\"" + out_dir.string() + "\" \"" +
+    const std::string cmd = "\"" + cc + "\" -std=c23 -DPARSLEY_STATIC -I\"" + out_dir.string() + "\" \"" +
                             (out_dir / "parser.c").string() + "\" \"" +
                             (out_dir / "test_parser.c").string() + "\"" +
 #if !defined(_WIN32) && !defined(__APPLE__)
                             " -lm"
 #endif
                             " -o \"" + exe_path.string() + "\"";
-    check(run_shell(cmd) == 0, std::string(fixture) + " C17 test_parser compiles with -std=c17");
+    check(run_shell(cmd) == 0, std::string(fixture) + " C23 test_parser compiles with -std=c23");
     check(run_shell("\"" + exe_path.string() + "\"") == 0,
-          std::string(fixture) + " C17 test_parser runs and passes");
+          std::string(fixture) + " C23 test_parser runs and passes");
     fs::remove_all(out_dir, ec);
   }
 }
@@ -759,7 +759,7 @@ void test_tooling_compiler_cli() {
 
     auto lens_resp = lsp.process_message(
         R"({"jsonrpc":"2.0","id":9,"method":"textDocument/codeLens","params":{"textDocument":{"uri":"file:///T.parsley"}}})");
-    check(lens_resp.size() == 1 && lens_resp[0].find("parsley.buildC17") != std::string::npos &&
+    check(lens_resp.size() == 1 && lens_resp[0].find("parsley.buildC23") != std::string::npos &&
           lens_resp[0].find("parsley.runSingleExample") != std::string::npos,
           "LSP codeLens returns module and example lenses");
 
@@ -879,7 +879,7 @@ void test_e2e_analyzers() {
     const fs::path exe_path = out_dir / (c.lang_lower + "_analyzer.exe");
     check(fs::exists(dll_path), c.lang_lower + "_parser.dll exists");
     check(fs::exists(lib_path), c.lang_lower + "_parser.lib exists");
-    const std::string compile_cmd = "\"" + cc + "\" -std=c17 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
+    const std::string compile_cmd = "\"" + cc + "\" -std=c23 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
                                     analyzer_path + "\" \"" + lib_path.string() + "\" -o \"" +
                                     exe_path.string() + "\"";
 #else
@@ -890,11 +890,11 @@ void test_e2e_analyzers() {
 #  endif
     const fs::path exe_path = out_dir / (c.lang_lower + "_analyzer");
     check(fs::exists(so_path), c.lang_lower + " shared library exists");
-    const std::string compile_cmd = "\"" + cc + "\" -std=c17 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
+    const std::string compile_cmd = "\"" + cc + "\" -std=c23 -Wall -Wextra -I\"" + out_dir.string() + "\" \"" +
                                     analyzer_path + "\" \"" + so_path.string() + "\" -Wl,-rpath,\"" +
                                     out_dir.string() + "\" -lm -o \"" + exe_path.string() + "\"";
 #endif
-    check(run_shell(compile_cmd) == 0, c.analyzer_file + " compiles cleanly with -std=c17 -Wall -Wextra");
+    check(run_shell(compile_cmd) == 0, c.analyzer_file + " compiles cleanly with -std=c23 -Wall -Wextra");
     check(run_shell("\"" + exe_path.string() + "\"") == 0, c.analyzer_file + " E2E analyzer passes (exit 0)");
 
     fs::remove_all(out_dir, ec);
@@ -963,7 +963,7 @@ int main() {
   test_ir_and_desugar();
   test_analysis();
   test_eval();
-  test_codegen_c17();
+  test_codegen_c23();
   test_tooling_compiler_cli();
   test_e2e_analyzers();
   test_vscode_extension();

@@ -1,8 +1,8 @@
 module;
 #include <string_view>
-export module parsley.c17_runtime;
-export namespace parsley::c17_runtime {
-inline constexpr std::string_view source = R"C17(
+export module parsley.c23_runtime;
+export namespace parsley::c23_runtime {
+inline constexpr std::string_view source = R"C23(
 #include <setjmp.h>
 #include <limits.h>
 #include <errno.h>
@@ -138,5 +138,5 @@ static void p_format_double(char* out, size_t size, double value) {
   if (p && strcmp(point,".")) { size_t tail=strlen(p+plen); *p='.'; memmove(p+1,p+plen,tail+1); }
   snprintf(out,size,"%s",local);
 }
-)C17";
+)C23";
 }

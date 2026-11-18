@@ -310,6 +310,6 @@ int main(void) {
   assert(bad_res.error.message != NULL);
   parsley_result_free(&bad_res);
 
-  printf("Swift C17 static analyzer: ALL CHECKS PASSED!\n");
+  printf("Swift C23 static analyzer: ALL CHECKS PASSED!\n");
   return 0;
 }

@@ -39,7 +39,7 @@ class AuditRegression(unittest.TestCase):
         return out
     def compile(self, sources, out='test.exe'):
         exe=self.dir/out
-        command=[CC,'-std=c17','-Wall','-Wextra','-pedantic','-Werror','-DPARSLEY_STATIC',*map(str,sources),'-o',str(exe)]
+        command=[CC,'-std=c23','-Wall','-Wextra','-pedantic','-Werror','-DPARSLEY_STATIC',*map(str,sources),'-o',str(exe)]
         if os.name!='nt': command.append('-lm')
         if os.environ.get('PARSLEY_SANITIZE_GENERATED')=='1': command += ['-fsanitize=address,undefined','-fno-omit-frame-pointer']
         result=subprocess.run(command,capture_output=True,text=True,timeout=60)
