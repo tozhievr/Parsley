@@ -100,8 +100,8 @@ node FunDecl name _ functionScope where
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
-node FunctionParam name ty where
-  declare Variable name (if ty == "Int" then KtInt else if ty == "Double" then KtDouble else if ty == "Boolean" then KtBool else if ty == "String" then KtString else KtAny)
+node FunctionParam name ty variadic _ where
+  declare Variable name (if variadic then KtAny else if ty == "Int" then KtInt else if ty == "Double" then KtDouble else if ty == "Boolean" then KtBool else if ty == "String" then KtString else KtAny)
   type = KtUnit
 
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}

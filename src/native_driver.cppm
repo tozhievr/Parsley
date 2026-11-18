@@ -108,7 +108,13 @@ int main(int argc,char **argv){
  psl_arena arena,analysis,optimized;
  psl_arena_init(&arena,parse_memory,16u*1024u*1024u);psl_arena_init(&analysis,analysis_memory,16u*1024u*1024u);psl_arena_init(&optimized,opt_memory,16u*1024u*1024u);
  const @m@_node *root=NULL;psl_diag parse_error={0};cg_module_t *module=NULL;cg_jit_t *jit=NULL;cg_buffer_t bytes={0};cg_diag_t diag={0};int status=1;
- if(@m@_parse(&arena,psl_str_make(source,length),&root,&parse_error)<0){fprintf(stderr,"source parse failed\n");goto cleanup;}
+ if(@m@_parse(&arena,psl_str_make(source,length),&root,&parse_error)<0){
+   if(parse_error.message.ptr)
+     fprintf(stderr,"%s:%" PRIu32 ":%" PRIu32 ": %.*s\n", input,parse_error.span.line,
+             parse_error.span.col,(int)parse_error.message.len,parse_error.message.ptr);
+   else fprintf(stderr,"source parse failed\n");
+   goto cleanup;
+ }
  @m@_ctx *semantic=@m@_ctx_new(&analysis,NULL);
  if(!semantic || @m@_analyze(semantic,root,diagnostic,NULL)<0 || errors){fprintf(stderr,"semantic validation failed (%d errors)\n",errors);goto cleanup;}
  if(ast_opt){

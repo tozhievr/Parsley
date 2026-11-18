@@ -94,6 +94,12 @@ def main():
         expected_version = f"kotlin_compiler (Parsley {version})"
         if any(run(compiler, flag).strip() != expected_version for flag in ("--version", "-V")):
             raise RuntimeError("Generated Kotlin compiler version does not match Parsley")
+        malformed = out / "malformed.kt"
+        malformed.write_text("fun main(): Int = )", encoding="utf-8")
+        result = subprocess.run([compiler, malformed, "--emit", "mir"], capture_output=True,
+                                encoding="utf-8", timeout=15)
+        if result.returncode != 1 or ":1:" not in result.stderr or "expecting" not in result.stderr:
+            raise RuntimeError(f"Missing generated compiler parse details: {result.stderr!r}")
         source = ROOT / "integration" / "test.kt"
         if run(compiler, source, "--run").strip() != "42":
             raise RuntimeError("Expected the Kotlin JIT entry to return 42")

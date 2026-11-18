@@ -30,7 +30,8 @@ int main(int argc, char **argv) {
     if (kotlin_parse(&parser_arena, psl_str_make(input, length), &root, &error) < 0) {
         if (parser_arena.error || !error.def) return 2;
         puts("reject");
-        fprintf(stderr, "syntax error at %" PRIu32 ":%" PRIu32 "\n", error.span.line, error.span.col);
+        fprintf(stderr, "syntax error at %" PRIu32 ":%" PRIu32 ": %.*s\n",
+                error.span.line, error.span.col, (int)error.message.len, error.message.ptr);
         return 0;
     }
     puts("accept");

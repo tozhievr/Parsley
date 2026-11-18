@@ -4932,7 +4932,7 @@ inline std::string emit_parse_source(const std::string& mod_low,
   o << "  if(!arena || !root || (!source.ptr && source.len))return -1;\n  *root=NULL;\n  if(error)memset(error,0,sizeof(*error));\n";
   o << "  ParsleyResult parsed=parsley_parse_n(source.ptr,source.len);\n";
   o << "  if(!parsed.ok || parsed.consumed!=source.len){\n    int code=parsed.error.code;\n";
-  o << "    if(error){error->size=sizeof(*error);error->def=&parse_error;error->severity=PSL_SEV_ERROR;error->span=(psl_span){(uint32_t)parsed.consumed,0u,(uint32_t)parsed.error.line,(uint32_t)parsed.error.col};error->message=psl_str_lit(\"Invalid or incomplete input\");}\n";
+  o << "    if(error){error->size=sizeof(*error);error->def=&parse_error;error->severity=PSL_SEV_ERROR;error->span=(psl_span){(uint32_t)parsed.consumed,0u,(uint32_t)parsed.error.line,(uint32_t)parsed.error.col};error->message=psl_str_lit(\"Invalid or incomplete input\");\n      if(parsed.error.message && arena->used<=arena->cap){\n        size_t len=strlen(parsed.error.message);\n        if(len<arena->cap-arena->used){\n          char *message=psl_arena_alloc(arena,len+1u,1u);\n          if(message){memcpy(message,parsed.error.message,len+1u);error->message=psl_str_make(message,len);}\n        }\n      }\n    }\n";
   o << "    parsley_result_free(&parsed);return code==1||code==2?-2:-1;\n  }\n";
   o << "  *root=convert_parser_value(arena,parsed.value,0u);parsley_result_free(&parsed);\n  return *root && !arena->error ? 0 : -2;\n}\n";  return o.str();
 }

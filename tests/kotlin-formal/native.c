@@ -93,8 +93,8 @@ int main(void) {
     CHECK(shape(scope, KOTLIN_NODE_FUNCTIONSCOPE, 3));
     const kotlin_node *params = scope->children[1];
     CHECK(shape(params, KOTLIN_NODE_LIST, 2));
-    CHECK(shape(params->children[0], KOTLIN_NODE_FUNCTIONPARAM, 2));
-    CHECK(shape(params->children[1], KOTLIN_NODE_FUNCTIONPARAM, 2));
+    CHECK(shape(params->children[0], KOTLIN_NODE_FUNCTIONPARAM, 4));
+    CHECK(shape(params->children[1], KOTLIN_NODE_FUNCTIONPARAM, 4));
     for (size_t i = 0; i < 2; ++i)
         CHECK(psl_str_eq(params->children[i]->children[1]->text_val, psl_str_lit("Double")));
     CHECK(shape(scope->children[2], KOTLIN_NODE_LIST, 1));

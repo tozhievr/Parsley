@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.7.2
+
+- Preserve detailed syntax errors in the generated PSL adapter and standalone compiler.
+- Preserve Kotlin parameter defaults, varargs and named call arguments in the syntax tree.
+
 ## 2.7.1
 
 - Add bounded Windows probes for locally supplied JetBrains Kotlin PSI, diagnostics and codegen fixtures.

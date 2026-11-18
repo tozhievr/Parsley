@@ -1,6 +1,6 @@
 module Kotlin.Syntax where
 
-import Parsley.Prelude (sepBy, many, optional)
+import Parsley.Prelude (sepBy, many, optional, lookahead)
 import Kotlin.Lexical
 import Kotlin.SyntaxTree
 
@@ -13,7 +13,7 @@ optSemi
 
 packageHeader :: [Text]
 packageHeader
-  =  ("package" *> (ident `sepBy` ".") <* optSemi)
+  =  ("package" *> (identifier `sepBy` ".") <* optSemi)
   |  do
     pure []
 
@@ -66,7 +66,7 @@ topLevelDecl
 objectDecl :: KtDecl
 objectDecl = do
   "object"
-  name    <- ident
+  name    <- identifier
   _       <- optional superClause
   members <- classBody <|> do
   pure []
@@ -76,7 +76,7 @@ objectDecl = do
 typeAliasDecl :: KtDecl
 typeAliasDecl = do
   "typealias"
-  name   <- ident
+  name   <- identifier
   "="
   target <- typeExpr
   optSemi
@@ -85,7 +85,7 @@ typeAliasDecl = do
 importDecl :: KtDecl
 importDecl = do
   "import"
-  path  <- ident `sepBy` "."
+  path  <- identifier `sepBy` "."
   alias <- importTail
   optSemi
   pure (ImportDecl path alias)
@@ -96,14 +96,14 @@ importTail
     "."
     "*"
     pure "*"
-  |  "as" *> ident
+  |  "as" *> identifier
   |  do
     pure ""
 
 classDecl :: KtDecl
 classDecl = do
   kind    <- classKind
-  name    <- ident
+  name    <- identifier
   params  <- classParamList <|> (do
   pure [])
   _       <- superClause <|> (do
@@ -116,9 +116,9 @@ classDecl = do
 superClause :: ()
 superClause = do
   ":"
-  _ <- ident
+  _ <- identifier
   _ <- optTypeArgs
-  _ <- parens (expr `sepBy` ",") <|> (do
+  _ <- parens (callArg `sepBy` ",") <|> (do
   pure [])
   pure ()
 
@@ -140,7 +140,7 @@ classParam :: KtParam
 classParam = do
   _    <- many modifier
   mut  <- classParamMut
-  name <- ident
+  name <- identifier
   ":"
   ty   <- typeExpr
   pure (Param mut name ty)
@@ -149,7 +149,7 @@ interfaceDecl :: KtDecl
 interfaceDecl = do
   _       <- many modifier
   "interface"
-  name    <- ident
+  name    <- identifier
   members <- classBody <|> (do
   pure [])
   optSemi
@@ -164,7 +164,7 @@ memberDecl = many modifier *> (funDecl <|> propDecl <|> classDecl <|> interfaceD
 funDecl :: KtDecl
 funDecl = do
   "fun"
-  name   <- ident
+  name   <- identifier
   params <- parens (funParam `sepBy` ",")
   retTy  <- optRetType
   body   <- funBody
@@ -173,10 +173,12 @@ funDecl = do
 
 funParam :: KtParam
 funParam = do
-  name <- ident
+  variadic <- ("vararg" *> lookahead identifier *> pure True) <|> pure False
+  name     <- identifier
   ":"
-  ty   <- typeExpr
-  pure (FunctionParam name ty)
+  ty       <- typeExpr
+  default_ <- optInit
+  pure (FunctionParam name ty variadic default_)
 
 optRetType :: Text
 optRetType
@@ -206,7 +208,7 @@ isVarKw
 propDecl :: KtDecl
 propDecl = do
   isVar <- isVarKw
-  name  <- ident
+  name  <- identifier
   ty    <- optRetType
   init  <- optInit
   optSemi
@@ -241,7 +243,7 @@ optQuest
 
 typeExpr :: Text
 typeExpr = do
-  base <- ident
+  base <- identifier
   _    <- optTypeArgs
   _    <- optQuest
   pure base
@@ -270,7 +272,7 @@ stmt
 valStmt :: KtStmt
 valStmt = do
   isVar <- isVarKw
-  name  <- ident
+  name  <- identifier
   ty    <- optRetType
   init  <- optInit
   optSemi
@@ -296,7 +298,7 @@ assignOp
 
 assignStmt :: KtStmt
 assignStmt = do
-  target <- ident
+  target <- identifier
   op     <- assignOp
   rhs    <- expr
   optSemi
@@ -360,7 +362,7 @@ forStmt :: KtStmt
 forStmt = do
   "for"
   "("
-  v    <- ident
+  v    <- identifier
   "in"
   iter <- expr
   ")"
@@ -405,34 +407,44 @@ atom
   |  ifExpr
   |  whenExpr
   |  do
-    obj  <- ident
+    obj  <- identifier
     "?."
-    meth <- ident
-    args <- parens (expr `sepBy` ",")
+    meth <- identifier
+    args <- parens (callArg `sepBy` ",")
     pure (SafeMethodCall (Var obj) meth args)
   |  do
-    obj <- ident
+    obj <- identifier
     "?."
-    fld <- ident
+    fld <- identifier
     pure (SafeMember (Var obj) fld)
   |  do
-    obj  <- ident
+    obj  <- identifier
     "."
-    meth <- ident
-    args <- parens (expr `sepBy` ",")
+    meth <- identifier
+    args <- parens (callArg `sepBy` ",")
     pure (MethodCall (Var obj) meth args)
   |  do
-    obj <- ident
+    obj <- identifier
     "."
-    fld <- ident
+    fld <- identifier
     pure (Member (Var obj) fld)
-  |  Call <$> ident <*> parens (expr `sepBy` ",")
+  |  Call <$> identifier <*> parens (callArg `sepBy` ",")
   |  do
-    arr <- ident
+    arr <- identifier
     idx <- brackets expr
     pure (Index (Var arr) idx)
-  |  Var <$> ident
+  |  Var <$> identifier
   |  parens expr
+
+identifier :: Text
+identifier
+  =  ident
+  |  ("vararg" *> pure "vararg")
+
+callArg :: KtExpr
+callArg
+  =  NamedArg <$> (identifier <* "=") <*> expr
+  |  expr
 
 ifExpr :: KtExpr
 ifExpr = do

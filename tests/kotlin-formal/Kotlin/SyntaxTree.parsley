@@ -33,6 +33,7 @@ data KtExpr
   | Bin KtOp KtExpr KtExpr
   | Unary KtUnaryOp KtExpr
   | Call Text [KtExpr]
+  | NamedArg Text KtExpr
   | SafeMember KtExpr Text
   | SafeMethodCall KtExpr Text [KtExpr]
   | Member KtExpr Text
@@ -57,7 +58,7 @@ data KtStmt
 
 data KtParam
   = Param Text Text Text
-  | FunctionParam Text Text
+  | FunctionParam Text Text Bool [KtExpr]
 
 data KtFunctionScope
   = FunctionScope Text [KtParam] [KtStmt]
