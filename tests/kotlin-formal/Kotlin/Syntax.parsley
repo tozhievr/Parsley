@@ -386,7 +386,7 @@ expr = operators atom
   , infixl 3 ["==" => Bin Eq, "!=" => Bin Neq]
   , infixl 4 ["<=" => Bin Le, ">=" => Bin Ge, "<" => Bin Lt, ">" => Bin Gt]
   , infixr 5 ["?:" => Bin Elvis]
-  , infixl 6 [".." => Bin Range]
+  , infixl 6 [".." => Bin Range, "..<" => Bin RangeUntil]
   , infixl 7 ["+" => Bin Add, "-" => Bin Sub]
   , infixl 8 ["*" => Bin Mul, "/" => Bin Div, "%" => Bin Mod]
   , prefix 9 ["-" => Unary Neg, "!" => Unary Not]

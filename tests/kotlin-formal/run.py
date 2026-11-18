@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from jetbrains import sample
+
 ROOT = Path(__file__).resolve().parent
 
 
@@ -56,7 +58,13 @@ def main():
     parser.add_argument("--cli", type=lambda value: Path(value).resolve(), required=True)
     parser.add_argument("--cc", required=True, help="C23 Clang executable")
     parser.add_argument("--strict", action="store_true", help="Fail on every observed conformance gap")
+    parser.add_argument("--jetbrains", action="append", default=[], metavar="PATH",
+                        help="Sample a path relative to integration/ (repeatable)")
+    parser.add_argument("--sample-limit", type=int, default=12,
+                        help="Maximum Kotlin files to open per selected path (default: 12)")
     args = parser.parse_args()
+    if args.sample_limit < 1:
+        parser.error("--sample-limit must be positive")
     cases = json.loads((ROOT / "cases.json").read_text(encoding="utf-8"))
     if len({case["id"] for case in cases}) != len(cases):
         raise ValueError("Duplicate case IDs")
@@ -123,6 +131,8 @@ def main():
             else:
                 print(f"PASS {case['id']}")
         print(f"{len(cases) - failures - gaps} passed, {gaps} known gaps, {failures} regressions")
+        for selection in args.jetbrains:
+            failures += sample(ROOT / "integration", selection, args.sample_limit, probe, compiler)
         return int(bool(failures or (args.strict and gaps)))
 
 

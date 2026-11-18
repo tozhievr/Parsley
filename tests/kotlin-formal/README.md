@@ -41,6 +41,22 @@ The standalone adapter supports a parameterless top-level `main` with an
 explicit `Int` result and a single decimal Int literal return. The automated
 test runs that entry with the JIT and as an emitted executable.
 
+## Local JetBrains test data
+
+Run a bounded sample under `integration/` on Windows:
+
+    python tests/kotlin-formal/run.py --cli build/parsley.exe --cc clang --jetbrains psi/operators --jetbrains diagnostics/tests/arguments --jetbrains codegen/box/basics --sample-limit 6
+
+Each selection can be a directory or an individual `.kt` file. Directories
+are traversed in sorted order, stopping at the limit for each selection.
+The PSI probe compares the syntax verdict with the presence of an error node
+in the adjacent snapshot. The diagnostics probe removes inline expectation
+markers and reports emitted diagnostics. The codegen probe attempts MIR
+emission after parsing. Fixtures with embedded files or modules are reported
+separately. The sample reports syntax differences and MIR rejections, and fails
+on tool errors and timeouts. It does not compare full PSI trees, match diagnostic
+spans or execute `box()` with JetBrains' runtime.
+
 ## Coverage boundaries
 
 | Spec area | Executed here | Remaining |

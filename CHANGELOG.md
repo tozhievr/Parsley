@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.7.1
+
+- Add bounded Windows probes for locally supplied JetBrains Kotlin PSI, diagnostics and codegen fixtures.
+- Parse Kotlin exclusive ranges (`..<`) as a distinct AST operator.
+
 ## 2.7.0
 
 - Add help and generator version flags to standalone compilers, plus a signed i32 entry ABI.

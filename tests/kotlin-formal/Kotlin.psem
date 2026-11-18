@@ -71,7 +71,7 @@ node Bin op l r where
   require ((op /= Div && op /= Mod) || constFold r /= Just 0) `orFail` W_DIV_ZERO
   type = if op == Eq || op == Neq || op == Lt || op == Gt || op == Le || op == Ge || op == And || op == Or
          then KtBool
-         else typeOf l
+         else if op == RangeUntil then KtAny else typeOf l
 
 node Call f args where
   fn <- lookup Function f `orFail` E_UNDECLARED { name = f }
