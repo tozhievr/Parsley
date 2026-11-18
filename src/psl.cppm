@@ -1054,6 +1054,15 @@ public:
       if (peek().kind == PslTokKind::UpperIdent || peek().kind == PslTokKind::Ident) {
         mod.module_name = peek().text;
         advance();
+        while (peek().kind == PslTokKind::Dot) {
+          advance();
+          if (peek().kind != PslTokKind::UpperIdent && peek().kind != PslTokKind::Ident) {
+            error_here("expected component after dot in semantic module name");
+            break;
+          }
+          mod.module_name += "." + peek().text;
+          advance();
+        }
       } else {
         error_here("expected module name after `semantics`");
       }

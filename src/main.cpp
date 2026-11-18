@@ -71,7 +71,7 @@ void print_help() {
       << "  parsley test <file.parsley|file.psem> [--fuzz <N>] [--seed <N>] [--min-status draft|reviewed|verified]\n"
       << "  parsley explain <CODE>\n"
       << "  parsley fmt <file.parsley|file.psem> [--write|--check]\n"
-      << "  parsley graph <file.parsley> [--format dot|svg] [-o <file>]\n"
+      << "  parsley graph <file.parsley> [--format dot|svg|modules-dot] [-o <file>]\n"
       << "  parsley agent-docs [--format markdown|json] [-o <dir_or_file>] [<file.parsley>]\n"
       << "  parsley lsp\n"
       << "  parsley pkg <list|show|init> [name]\n"
@@ -90,7 +90,13 @@ void print_diagnostics(const parsley::DiagnosticBag& diags, std::string_view sou
 }
 
 void print_diagnostics(const parsley::compiler::CompileResult& res) {
-  print_diagnostics(res.diagnostics, res.is_psl_only ? res.psl_source : res.source, res.psl_source);
+  for (const auto& diagnostic : res.diagnostics.items()) {
+    if (diagnostic.severity == parsley::Severity::Note && !verbose_diagnostics) continue;
+    const auto module = res.module_sources.find(diagnostic.span.file);
+    const std::string& source = module != res.module_sources.end() ? module->second
+        : (diagnostic.span.file.ends_with(".psem") && !res.psl_source.empty() ? res.psl_source : res.source);
+    std::cerr << parsley::render_diagnostic(diagnostic, source);
+  }
 }
 
 std::vector<std::string> candidate_c_compilers() {
@@ -640,12 +646,21 @@ int cmd_graph(const std::vector<std::string>& args) {
   }
 
   std::string graph_out;
-  if (format == "dot") {
+  if (format == "modules-dot") {
+    std::ostringstream dot;
+    const auto& entry = res.is_psl_only && res.psl_module ? res.psl_module->module_name : res.ast_module.name;
+    dot << "digraph modules {\n  \"" << entry << "\";\n";
+    for (const auto& dependency : res.module_dependencies) {
+      dot << "  \"" << dependency.importer << "\" -> \"" << dependency.imported << "\";\n";
+    }
+    dot << "}\n";
+    graph_out = dot.str();
+  } else if (format == "dot") {
     graph_out = parsley::tooling::generate_dot(res.grammar);
   } else if (format == "svg") {
     graph_out = parsley::tooling::generate_railroad_svg(res.grammar);
   } else {
-    std::cerr << "error: unknown graph format `" << format << "` (expected dot or svg)\n";
+    std::cerr << "error: unknown graph format `" << format << "` (expected dot, svg or modules-dot)\n";
     return 1;
   }
 

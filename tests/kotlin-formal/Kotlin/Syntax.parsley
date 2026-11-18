@@ -1,0 +1,458 @@
+module Kotlin.Syntax where
+
+import Parsley.Prelude (sepBy, many, optional)
+import Kotlin.Lexical
+import Kotlin.SyntaxTree
+
+optSemi :: ()
+optSemi
+  =  ";" *> (do
+  pure ())
+  |  do
+    pure ()
+
+packageHeader :: [Text]
+packageHeader
+  =  ("package" *> (ident `sepBy` ".") <* optSemi)
+  |  do
+    pure []
+
+modifier :: ()
+modifier
+  =  "data" *> (do
+  pure ())
+  |  "open" *> (do
+  pure ())
+  |  "abstract" *> (do
+  pure ())
+  |  "override" *> (do
+  pure ())
+  |  "private" *> (do
+  pure ())
+  |  "public" *> (do
+  pure ())
+  |  "internal" *> (do
+  pure ())
+
+classKind :: Text
+classKind
+  =  do
+    "data"
+    "class"
+    pure "data"
+  |  do
+    "open"
+    "class"
+    pure "open"
+  |  do
+    "abstract"
+    "class"
+    pure "abstract"
+  |  do
+    "private"
+    "class"
+    pure "private"
+  |  do
+    "class"
+    pure "class"
+
+topLevelDecl :: KtDecl
+topLevelDecl
+  =  importDecl
+  |  classDecl
+  |  interfaceDecl
+  |  (many modifier *> (funDecl <|> propDecl <|> objectDecl <|> typeAliasDecl))
+
+objectDecl :: KtDecl
+objectDecl = do
+  "object"
+  name    <- ident
+  _       <- optional superClause
+  members <- classBody <|> do
+  pure []
+  optSemi
+  pure (ObjectDecl name members)
+
+typeAliasDecl :: KtDecl
+typeAliasDecl = do
+  "typealias"
+  name   <- ident
+  "="
+  target <- typeExpr
+  optSemi
+  pure (TypeAliasDecl name target)
+
+importDecl :: KtDecl
+importDecl = do
+  "import"
+  path  <- ident `sepBy` "."
+  alias <- importTail
+  optSemi
+  pure (ImportDecl path alias)
+
+importTail :: Text
+importTail
+  =  do
+    "."
+    "*"
+    pure "*"
+  |  "as" *> ident
+  |  do
+    pure ""
+
+classDecl :: KtDecl
+classDecl = do
+  kind    <- classKind
+  name    <- ident
+  params  <- classParamList <|> (do
+  pure [])
+  _       <- superClause <|> (do
+  pure ())
+  members <- classBody <|> (do
+  pure [])
+  optSemi
+  pure (ClassDecl kind name params members)
+
+superClause :: ()
+superClause = do
+  ":"
+  _ <- ident
+  _ <- optTypeArgs
+  _ <- parens (expr `sepBy` ",") <|> (do
+  pure [])
+  pure ()
+
+classParamList :: [KtParam]
+classParamList = parens (classParam `sepBy` ",")
+
+classParamMut :: Text
+classParamMut
+  =  do
+    "val"
+    pure "val"
+  |  do
+    "var"
+    pure "var"
+  |  do
+    pure ""
+
+classParam :: KtParam
+classParam = do
+  _    <- many modifier
+  mut  <- classParamMut
+  name <- ident
+  ":"
+  ty   <- typeExpr
+  pure (Param mut name ty)
+
+interfaceDecl :: KtDecl
+interfaceDecl = do
+  _       <- many modifier
+  "interface"
+  name    <- ident
+  members <- classBody <|> (do
+  pure [])
+  optSemi
+  pure (InterfaceDecl name members)
+
+classBody :: [KtDecl]
+classBody = braces (many memberDecl)
+
+memberDecl :: KtDecl
+memberDecl = many modifier *> (funDecl <|> propDecl <|> classDecl <|> interfaceDecl <|> objectDecl <|> typeAliasDecl)
+
+funDecl :: KtDecl
+funDecl = do
+  "fun"
+  name   <- ident
+  params <- parens (funParam `sepBy` ",")
+  retTy  <- optRetType
+  body   <- funBody
+  optSemi
+  pure (FunDecl name params retTy body)
+
+funParam :: KtParam
+funParam = do
+  name <- ident
+  ":"
+  ty   <- typeExpr
+  pure (Param "" name ty)
+
+optRetType :: Text
+optRetType
+  =  ":" *> typeExpr
+  |  do
+    pure ""
+
+funBody :: [KtStmt]
+funBody
+  =  block
+  |  do
+    "="
+    e <- expr
+    pure [ReturnStmt [e]]
+  |  do
+    pure []
+
+isVarKw :: Bool
+isVarKw
+  =  do
+    "var"
+    pure True
+  |  do
+    "val"
+    pure False
+
+propDecl :: KtDecl
+propDecl = do
+  isVar <- isVarKw
+  name  <- ident
+  ty    <- optRetType
+  init  <- optInit
+  optSemi
+  pure (PropDecl isVar name ty init)
+
+optInit :: [KtExpr]
+optInit
+  =  do
+    "="
+    e <- expr
+    pure [e]
+  |  do
+    pure []
+
+optTypeArgs :: ()
+optTypeArgs
+  =  do
+    "<"
+    _ <- typeExpr `sepBy` ","
+    ">"
+    pure ()
+  |  do
+    pure ()
+
+optQuest :: ()
+optQuest
+  =  do
+    "?"
+    pure ()
+  |  do
+    pure ()
+
+typeExpr :: Text
+typeExpr = do
+  base <- ident
+  _    <- optTypeArgs
+  _    <- optQuest
+  pure base
+
+block :: [KtStmt]
+block = braces (many stmt)
+
+blockOrSingleStmt :: [KtStmt]
+blockOrSingleStmt
+  =  block
+  |  do
+    s <- stmt
+    pure [s]
+
+stmt :: KtStmt
+stmt
+  =  valStmt
+  |  ifStmt
+  |  whenStmt
+  |  whileStmt
+  |  forStmt
+  |  returnStmt
+  |  assignStmt
+  |  (ExprStmt <$> expr <* optSemi)
+
+valStmt :: KtStmt
+valStmt = do
+  isVar <- isVarKw
+  name  <- ident
+  ty    <- optRetType
+  init  <- optInit
+  optSemi
+  pure (ValStmt isVar name ty init)
+
+assignOp :: Text
+assignOp
+  =  do
+    "="
+    pure "="
+  |  do
+    "+="
+    pure "+="
+  |  do
+    "-="
+    pure "-="
+  |  do
+    "*="
+    pure "*="
+  |  do
+    "/="
+    pure "/="
+
+assignStmt :: KtStmt
+assignStmt = do
+  target <- ident
+  op     <- assignOp
+  rhs    <- expr
+  optSemi
+  pure (AssignStmt target op rhs)
+
+elseStmtBranch :: [KtStmt]
+elseStmtBranch
+  =  "else" *> blockOrSingleStmt
+  |  do
+    pure []
+
+ifStmt :: KtStmt
+ifStmt = do
+  "if"
+  cond  <- parens expr
+  thenB <- blockOrSingleStmt
+  elseB <- elseStmtBranch
+  optSemi
+  pure (IfStmt cond thenB elseB)
+
+whenSubject :: [KtExpr]
+whenSubject
+  =  do
+    e <- parens expr
+    pure [e]
+  |  do
+    pure []
+
+whenStmt :: KtStmt
+whenStmt = do
+  "when"
+  subj     <- whenSubject
+  branches <- braces (many whenBranch)
+  optSemi
+  pure (WhenStmt subj branches)
+
+whenBranch :: KtWhenBranch
+whenBranch
+  =  do
+    "else"
+    "->"
+    body <- blockOrSingleStmt
+    optSemi
+    pure (WhenElse body)
+  |  do
+    conds <- expr `sepBy` ","
+    "->"
+    body  <- blockOrSingleStmt
+    optSemi
+    pure (WhenBranch conds body)
+
+whileStmt :: KtStmt
+whileStmt = do
+  "while"
+  cond <- parens expr
+  body <- blockOrSingleStmt
+  optSemi
+  pure (WhileStmt cond body)
+
+forStmt :: KtStmt
+forStmt = do
+  "for"
+  "("
+  v    <- ident
+  "in"
+  iter <- expr
+  ")"
+  body <- blockOrSingleStmt
+  optSemi
+  pure (ForStmt v iter body)
+
+returnVal :: [KtExpr]
+returnVal
+  =  do
+    e <- expr
+    pure [e]
+  |  do
+    pure []
+
+returnStmt :: KtStmt
+returnStmt = ReturnStmt <$> ("return" *> returnVal) <* optSemi
+
+expr :: KtExpr
+expr = operators atom
+  [ infixl 1 ["||" => Bin Or]
+  , infixl 2 ["&&" => Bin And]
+  , infixl 3 ["==" => Bin Eq, "!=" => Bin Neq]
+  , infixl 4 ["<=" => Bin Le, ">=" => Bin Ge, "<" => Bin Lt, ">" => Bin Gt]
+  , infixr 5 ["?:" => Bin Elvis]
+  , infixl 6 [".." => Bin Range]
+  , infixl 7 ["+" => Bin Add, "-" => Bin Sub]
+  , infixl 8 ["*" => Bin Mul, "/" => Bin Div, "%" => Bin Mod]
+  , prefix 9 ["-" => Unary Neg, "!" => Unary Not]
+  ]
+
+atom :: KtExpr
+atom
+  =  FloatLit <$> floatLit
+  |  IntLit <$> intLit
+  |  StrLit <$> strLit
+  |  ("true" *> pure (BoolLit True))
+  |  ("false" *> pure (BoolLit False))
+  |  ("null" *> pure NullLit)
+  |  ifExpr
+  |  whenExpr
+  |  do
+    obj  <- ident
+    "?."
+    meth <- ident
+    args <- parens (expr `sepBy` ",")
+    pure (SafeMethodCall (Var obj) meth args)
+  |  do
+    obj <- ident
+    "?."
+    fld <- ident
+    pure (SafeMember (Var obj) fld)
+  |  do
+    obj  <- ident
+    "."
+    meth <- ident
+    args <- parens (expr `sepBy` ",")
+    pure (MethodCall (Var obj) meth args)
+  |  do
+    obj <- ident
+    "."
+    fld <- ident
+    pure (Member (Var obj) fld)
+  |  Call <$> ident <*> parens (expr `sepBy` ",")
+  |  do
+    arr <- ident
+    idx <- brackets expr
+    pure (Index (Var arr) idx)
+  |  Var <$> ident
+  |  parens expr
+
+ifExpr :: KtExpr
+ifExpr = do
+  "if"
+  cond  <- parens expr
+  thenB <- blockOrSingleStmt
+  "else"
+  elseB <- blockOrSingleStmt
+  pure (IfExpr cond thenB elseB)
+
+whenExpr :: KtExpr
+whenExpr = do
+  "when"
+  subj     <- whenSubject
+  branches <- braces (many whenBranch)
+  pure (WhenExpr subj branches)
+
+parens :: Rule a -> Rule a
+parens p = "(" *> p <* ")"
+
+brackets :: Rule a -> Rule a
+brackets p = "[" *> p <* "]"
+
+braces :: Rule a -> Rule a
+braces p = "{" *> p <* "}"

@@ -82,8 +82,7 @@
   {
     "id": "safe-call",
     "source": "fun f(x: String): Int = x?.length ?: 0",
-    "parse": true,
-    "gap": "safe navigation and Elvis"
+    "parse": true
   },
   {
     "id": "nested-comments",

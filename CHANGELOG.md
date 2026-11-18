@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.0
+
+- Compose grammar and semantic source modules, report module errors and export dependency graphs.
+- Split the Kotlin conformance project into syntax, lexical, AST and lint components, and cover simple safe navigation and Elvis syntax.
+
 ## 2.4.1
 
 - Fix generated C23 warnings for discarded parser action results.

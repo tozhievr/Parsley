@@ -142,7 +142,7 @@ install(FILES
   DESTINATION share/doc/parsley
 )
 
-install(FILES docs/STATUS.md docs/REGEX.md docs/OPTIMIZER.md docs/BACKEND.md DESTINATION share/doc/parsley/docs)
+install(FILES docs/STATUS.md docs/REGEX.md docs/OPTIMIZER.md docs/BACKEND.md docs/MODULES.md DESTINATION share/doc/parsley/docs)
 if(WIN32)
   install(FILES install.ps1 update.ps1 install.cmd update.cmd DESTINATION .)
   install(FILES editors/vscode/parsley-lang.vsix DESTINATION share/parsley/editors OPTIONAL)

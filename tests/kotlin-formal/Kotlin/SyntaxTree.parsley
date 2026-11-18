@@ -1,0 +1,68 @@
+module Kotlin.SyntaxTree where
+
+-- AST (core Kotlin constructs for ISO C17 static analysis) -----
+data KtOp
+  = Or
+  | And
+  | Eq
+  | Neq
+  | Lt
+  | Gt
+  | Le
+  | Ge
+  | Elvis
+  | Range
+  | Add
+  | Sub
+  | Mul
+  | Div
+  | Mod
+
+data KtUnaryOp = Neg | Not
+
+data KtExpr
+  = IntLit Double
+  | FloatLit Double
+  | StrLit Text
+  | BoolLit Bool
+  | NullLit
+  | Var Text
+  | Bin KtOp KtExpr KtExpr
+  | Unary KtUnaryOp KtExpr
+  | Call Text [KtExpr]
+  | SafeMember KtExpr Text
+  | SafeMethodCall KtExpr Text [KtExpr]
+  | Member KtExpr Text
+  | MethodCall KtExpr Text [KtExpr]
+  | Index KtExpr KtExpr
+  | IfExpr KtExpr [KtStmt] [KtStmt]
+  | WhenExpr [KtExpr] [KtWhenBranch]
+
+data KtWhenBranch
+  = WhenBranch [KtExpr] [KtStmt]
+  | WhenElse [KtStmt]
+
+data KtStmt
+  = ValStmt Bool Text Text [KtExpr]
+  | AssignStmt Text Text KtExpr
+  | IfStmt KtExpr [KtStmt] [KtStmt]
+  | WhenStmt [KtExpr] [KtWhenBranch]
+  | WhileStmt KtExpr [KtStmt]
+  | ForStmt Text KtExpr [KtStmt]
+  | ReturnStmt [KtExpr]
+  | ExprStmt KtExpr
+
+data KtParam
+  = Param Text Text Text
+
+data KtDecl
+  = ImportDecl [Text] Text
+  | ClassDecl Text Text [KtParam] [KtDecl]
+  | ObjectDecl Text [KtDecl]
+  | TypeAliasDecl Text Text
+  | InterfaceDecl Text [KtDecl]
+  | FunDecl Text [KtParam] Text [KtStmt]
+  | PropDecl Bool Text Text [KtExpr]
+
+data KtFile
+  = KtFile [Text] [KtDecl]

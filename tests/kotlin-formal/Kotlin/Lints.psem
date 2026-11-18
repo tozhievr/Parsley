@@ -1,0 +1,50 @@
+{-# LANGUAGE Sem1 #-}
+semantics Kotlin.Lints where
+
+{-# SOURCE kotlinSpec "expressions/multiplicative" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.99 #-}
+lint divByConstZero :: Warning, Correctness
+  match (Bin Div _ r)
+  when  constFold r == Just 0
+  say   "Division by constant zero"
+
+example divByConstZero
+  fires  "fun f(x: Int): Int = x / 0"
+  silent "fun f(x: Int): Int = x / 2"
+
+{-# SOURCE kotlinSpec "statements/variables" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.96 #-}
+lint valReassign :: Error, Correctness
+  match (AssignStmt target _ _)
+  when  isImmutable target
+  say   "Val `{target}` cannot be reassigned"
+
+example valReassign
+  fires  "fun f() { val x = 1; x = 2 }"
+  silent "fun f() { var x = 1; x = 2 }"
+
+{-# SOURCE kotlinSpec "statements/control-flow" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.94 #-}
+lint unreachableAfterReturn :: Warning, Correctness
+  match (s :: KtStmt)
+  when  not (reachable s)
+  say   "Unreachable code after return"
+
+example unreachableAfterReturn
+  fires  "fun f(): Int { return 1; val y = 2 }"
+  silent "fun f(): Int { val y = 2; return y }"
+
+{-# SOURCE kotlinSpec "expressions/when" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.93 #-}
+lint whenWithoutElse :: Warning, Style
+  match (WhenStmt _ branches)
+  when  not (hasWhenElse branches)
+  say   "`when` expression/statement has no `else` branch"
+
+example whenWithoutElse
+  fires  "fun f(x: Int) { when (x) { 1 -> return 1 } }"
+  silent "fun f(x: Int) { when (x) { 1 -> return 1; else -> return 0 } }"

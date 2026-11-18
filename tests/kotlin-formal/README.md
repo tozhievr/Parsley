@@ -5,7 +5,9 @@ ANTLR grammar files from Kotlin/kotlin-spec revision
 0f762a2314a9304e4b3fc386b1aceef1d56c7e4c, under the accompanying Apache 2.0 license.
 They are reference inputs. The executable Parsley port is Kotlin.parsley and
 Kotlin.psem, based on the existing Kotlin fixture and extended with object and
-type alias declarations. The port is incomplete.
+type alias declarations. The port is incomplete. Its entry loads Kotlin.Syntax, which depends on the
+independent Kotlin.Lexical and Kotlin.SyntaxTree components. Kotlin.psem
+loads Kotlin.Lints. See ../../docs/MODULES.md for file composition.
 
 - [Official grammar](https://kotlinlang.org/grammar/)
 - [Language specification (1.9-rfc+0.1)](https://kotlinlang.org/spec/kotlin-spec.html)
@@ -28,7 +30,7 @@ or a failed generation, compilation, or analyzer invocation.
 | --- | --- | --- |
 | Lexical grammar | ASCII names, basic literals, flat comments | Unicode identifiers, escaped names, nested comments, full literal and string-template modes |
 | Source and declarations | Files, package/import, basic functions/properties/classes/interfaces, simple objects/type aliases | Scripts, annotation/modifier restrictions, complete declaration syntax and preservation of type structure |
-| Expressions and statements | Basic calls, arithmetic, conditionals, loops and when | Lambdas, safe calls and Elvis, exceptions, destructuring, context-sensitive statement separators |
+| Expressions and statements | Basic calls, arithmetic, conditionals, loops, when, simple safe navigation and Elvis syntax | Lambdas, chained navigation, nullability semantics, exceptions, destructuring, context-sensitive statement separators |
 | Static semantics | Selected symbol lookups and diagnostics, simple scope and CFG/dataflow rules | Kotlin constraint solving, nominal subtyping, variance, overload resolution, smart casts, exhaustive when, complete initialization and visibility rules |
 | Execution | Generated parser and static analyzer | Kotlin runtime, interop, platform semantics and native lowering |
 

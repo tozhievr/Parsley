@@ -15,6 +15,40 @@ def run(*args, source=None):
     return result.stdout
 
 
+def check_module_failures(cli, directory):
+    entry = directory / "Entry.parsley"
+    component = directory / "Piece.parsley"
+    entry.write_text(
+        'module Entry (start) where\nimport Piece\nstart :: Text\nstart = piece\n',
+        encoding="utf-8",
+    )
+
+    def expect_error(message):
+        result = subprocess.run(
+            [cli, "check", entry], capture_output=True, encoding="utf-8", timeout=20
+        )
+        if result.returncode == 0 or "E0610" not in result.stderr or message not in result.stderr:
+            raise RuntimeError(f"Expected module error {message!r}\n{result.stdout}{result.stderr}")
+
+    expect_error("cannot find source module")
+    component.write_text('module Other where\npiece :: Text\npiece = "x"\n', encoding="utf-8")
+    expect_error("module header does not match")
+    component.write_text(
+        'module Piece where\nimport Entry\npiece :: Text\npiece = "x"\n',
+        encoding="utf-8",
+    )
+    expect_error("dependency cycle")
+
+    component.write_text('module Piece where\npiece :: Text\npiece = "x"\n', encoding="utf-8")
+    (directory / "Entry.psem").write_text(
+        'semantics Entry where\nimport Piece\n', encoding="utf-8"
+    )
+    (directory / "Piece.psem").write_text('semantics Piece where\nimport EntryCycle\n', encoding="utf-8")
+    (directory / "EntryCycle.psem").write_text('semantics EntryCycle where\nimport Piece\n', encoding="utf-8")
+    # Semantic files are explicitly linked through PSL, independently of syntax.
+    expect_error("semantic dependency cycle")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", type=lambda value: Path(value).resolve(), required=True)
@@ -26,9 +60,21 @@ def main():
         raise ValueError("Duplicate case IDs")
     grammar = ROOT / "Kotlin.parsley"
     print(run(args.cli, "check", grammar), end="")
+    graph = run(args.cli, "graph", grammar, "--format", "modules-dot")
+    for edge in (
+        '"Kotlin" -> "Kotlin.Syntax"',
+        '"Kotlin.Syntax" -> "Kotlin.Lexical"',
+        '"Kotlin.Syntax" -> "Kotlin.SyntaxTree"',
+        '"Kotlin" -> "Kotlin.Lints"',
+    ):
+        if edge not in graph:
+            raise RuntimeError(f"Missing module dependency: {edge}\n{graph}")
     print(run(args.cli, "test", grammar, "--fuzz", "30"), end="")
     with tempfile.TemporaryDirectory(prefix="parsley kotlin formal ") as directory:
         out = Path(directory)
+        module_check = out / "module-check"
+        module_check.mkdir()
+        check_module_failures(args.cli, module_check)
         run(args.cli, "build", grammar, "-o", out, "--no-compile-shared")
         probe = out / "probe.exe"
         run(args.cc, "-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror",
