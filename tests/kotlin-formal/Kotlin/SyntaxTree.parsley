@@ -59,7 +59,7 @@ data KtParam
   | FunctionParam Text Text
 
 data KtFunctionScope
-  = FunctionScope [KtParam] [KtStmt]
+  = FunctionScope Text [KtParam] [KtStmt]
 
 data KtDecl
   = ImportDecl [Text] Text

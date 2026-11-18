@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.1
+
+- Run a Kotlin function through the generated C23 frontend, optimizer and nextc backend in the Windows conformance suite.
+- Diagnose a known String result returned from a single-return function declared as Int.
+
 ## 2.6.0
 
 - Resolve file modules in LSP using open-document overlays, enable cross-file definitions and display module graphs in VS Code and Cursor (extension 2.2.0).

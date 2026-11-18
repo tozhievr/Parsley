@@ -75,11 +75,16 @@ def main():
         module_check = out / "module-check"
         module_check.mkdir()
         check_module_failures(args.cli, module_check)
-        run(args.cli, "build", grammar, "-o", out, "--no-compile-shared")
+        run(args.cli, "build", grammar, "-o", out, "--no-compile-shared", "--emit-nextc")
+        strict_c = ["-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror",
+                    "-DPARSLEY_STATIC", "-I", out]
+        frontend = [out / "parser.c", out / "kotlin_parse.c", out / "kotlin_sem.c"]
+        native = out / "native.exe"
+        run(args.cc, *strict_c, *frontend, out / "kotlin_opt.c", out / "kotlin_backend.c",
+            *sorted((out / "nextc").rglob("*.c")), ROOT / "native.c", "-o", native)
+        print(run(native), end="")
         probe = out / "probe.exe"
-        run(args.cc, "-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror",
-            "-DPARSLEY_STATIC", "-I", out, out / "parser.c",
-            out / "kotlin_parse.c", out / "kotlin_sem.c", ROOT / "probe.c", "-o", probe)
+        run(args.cc, *strict_c, *frontend, ROOT / "probe.c", "-o", probe)
         failures = gaps = 0
         for case in cases:
             verdict, *messages = run(probe, source=case["source"]).splitlines()

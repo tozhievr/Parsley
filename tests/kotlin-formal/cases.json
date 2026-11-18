@@ -155,9 +155,20 @@
   {
     "parse": true,
     "diag": "E_TYPE",
-    "gap": "return type compatibility is not checked by current PSL",
     "source": "fun f(): Int = \"text\"",
     "id": "return-type-mismatch"
+  },
+  {
+    "id": "return-parameter-type-mismatch",
+    "parse": true,
+    "diag": "E_TYPE",
+    "source": "fun f(x: String): Int { return x }"
+  },
+  {
+    "id": "return-string-parameter",
+    "parse": true,
+    "diag": "!E_TYPE",
+    "source": "fun f(x: String): String = x"
   },
   {
     "source": "fun f(): Int = 0b1010_0101",

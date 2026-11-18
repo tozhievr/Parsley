@@ -169,7 +169,7 @@ funDecl = do
   retTy  <- optRetType
   body   <- funBody
   optSemi
-  pure (FunDecl name retTy (FunctionScope params body))
+  pure (FunDecl name retTy (FunctionScope retTy params body))
 
 funParam :: KtParam
 funParam = do

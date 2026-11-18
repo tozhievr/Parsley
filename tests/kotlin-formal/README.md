@@ -20,6 +20,11 @@ Run from the Parsley root on Windows:
 The runner checks and tests the grammar, generates the C23 frontend, compiles it
 with warnings as errors, and runs the corpus through the generated parser and
 semantic analyzer. Cases distinguish syntax rejection from semantic diagnostics.
+The Windows native test also generates the nextc bridge, checks a Kotlin
+function with PSL and the optimizer, and lowers its Double arithmetic using
+Kotlin-specific lowering hooks plus the generated literal lowering. It emits a
+Win64 COFF object and checks the MIR interpreter and JIT against the expected
+results at optimization levels 0 and 1.
 Known disagreements carry a reason in cases.json. Add --strict to make existing
 disagreements fail the run. Normal mode still fails on unclassified disagreements
 or a failed generation, compilation, or analyzer invocation.
@@ -32,7 +37,7 @@ or a failed generation, compilation, or analyzer invocation.
 | Source and declarations | Files, package/import, basic functions/properties/classes/interfaces, simple objects/type aliases | Scripts, annotation/modifier restrictions, complete declaration syntax and preservation of type structure |
 | Expressions and statements | Basic calls, arithmetic, conditionals, loops, when, simple safe navigation and Elvis syntax | Lambdas, chained navigation, nullability semantics, exceptions, destructuring, context-sensitive statement separators |
 | Static semantics | Selected symbol lookups and diagnostics, function parameter scopes, simple CFG/dataflow rules | Kotlin constraint solving, nominal subtyping, variance, overload resolution, smart casts, exhaustive when, complete initialization and visibility rules |
-| Execution | Generated parser and static analyzer | Kotlin runtime, interop, platform semantics and native lowering |
+| Execution | Win64 native compilation and JIT execution of one Double arithmetic function | General Kotlin lowering, runtime, interop and platform semantics |
 
 The official specification leaves some semantics to platforms and compiler
 implementations. A complete conformance claim would need an explicit Kotlin

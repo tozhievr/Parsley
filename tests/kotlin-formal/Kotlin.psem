@@ -43,8 +43,13 @@ node HexLit _ where
 node BinaryLit _ where
   type = KtInt
 
-node FloatLit _ where
+{-# SOURCE kotlinSpec "expressions/real-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FloatLit n where
   type = KtDouble
+  value = n
+  effects = []
 
 node StrLit _ where
   type = KtString
@@ -99,6 +104,13 @@ node FunctionParam name ty where
   declare Variable name (if ty == "Int" then KtInt else if ty == "Double" then KtDouble else if ty == "Boolean" then KtBool else if ty == "String" then KtString else KtAny)
   type = KtUnit
 
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunctionScope ty _ [ReturnStmt [result]] where
+  require (ty /= "Int" || typeOf result /= KtString) `orFail` E_TYPE { expected = ty, actual = "String" }
+  type = KtUnit
+
 node ClassDecl kw name params members where
   declare TypeName name KtAny
   scope members $ pure ()
@@ -129,7 +141,7 @@ node KtFile pkg decls where
   type = KtUnit
 
 -- Поток управления (CFG) -----------------------------------------
-flow FunctionScope _ body = chain body
+flow FunctionScope _ _ body = chain body
 flow IfStmt c t e         = branch c [t, e]
 flow WhenStmt _ branches  = chain branches
 flow WhileStmt c body     = loop c body
