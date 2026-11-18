@@ -195,10 +195,10 @@ Parsley comes with a full-featured, zero-external-npm-dependency extension for b
 
 ```bash
 # In VS Code
-code --install-extension ./parsley-lang-1.6.1.vsix --force
+code --install-extension ./parsley-lang-2.1.0.vsix --force
 
 # In Cursor
-cursor --install-extension ./parsley-lang-1.6.1.vsix --force
+cursor --install-extension ./parsley-lang-2.1.0.vsix --force
 ```
 Or symlink `editors/vscode/` directly to `~/.vscode/extensions/parsley-lang` or `~/.cursor/extensions/parsley-lang`.
 
@@ -206,15 +206,15 @@ Or symlink `editors/vscode/` directly to `~/.vscode/extensions/parsley-lang` or 
 
 ### One-Line Installation / Установка одной командой
 
-Run from the directory containing the downloaded package. CLI version: **1.3.1**; extension version: **1.6.1**. Choose the archive for your OS and architecture.
+Windows x64 (PowerShell or CMD), from the checkout with release archives in dist:
 
-Запускайте из каталога со скачанным пакетом. Версия CLI — **1.3.1**, расширения — **1.6.1**. Выбирайте архив под свою ОС и архитектуру.
+    .\install.cmd -Source .\dist
 
-**Windows x64 — PowerShell**. Installs for the current user and updates PATH for current and future terminals. Установка в профиль пользователя с добавлением в PATH текущего и будущих терминалов:
-
-```powershell
-$ErrorActionPreference='Stop'; $d="$env:LOCALAPPDATA\Programs\Parsley"; Expand-Archive ./parsley-1.3.1-win64.zip $d -Force; $b="$d\parsley-1.3.1-win64\bin"; $p=[Environment]::GetEnvironmentVariable('Path','User'); if (($p -split ';') -notcontains $b) { [Environment]::SetEnvironmentVariable('Path',("$p;$b".Trim(';')),'User') }; $env:Path+=";$b"; parsley --version
-```
+Run the same command again to update, or use .\update.cmd -Source .\dist.
+From an extracted Windows package, run .\install.cmd. The installer updates
+the current user's PATH, VS Code and Cursor. Use -Editors None for CLI only.
+For a published GitHub release, run .\update.cmd -FromRelease from the
+checkout or the installation directory.
 
 **Linux — Bash**. Installs to `/usr/local/bin` using `sudo`. Requires a Linux build; the Windows archive cannot run on Linux. Установка через `sudo`; необходим Linux-пакет:
 
@@ -222,14 +222,10 @@ $ErrorActionPreference='Stop'; $d="$env:LOCALAPPDATA\Programs\Parsley"; Expand-A
 (set -eu; d=$(mktemp -d); trap 'rm -rf -- "$d"' EXIT; tar -xzf ./parsley-1.3.1-Linux.tar.gz -C "$d"; sudo install -m 755 "$d"/parsley-1.3.1-Linux/bin/parsley /usr/local/bin/parsley; parsley --version)
 ```
 
-For another version, update both the archive name and extracted directory. These commands use local archives; this checkout has no configured public download URL. The toolchain below is needed for building from source; generating shared C23 libraries also requires a C compiler.
-
-Для другой версии замените номер в имени архива и каталога внутри него. Команды используют локальные архивы: публичный URL скачивания в этом checkout не настроен. Инструменты ниже нужны для сборки из исходников; генерация динамических библиотек C23 также требует компилятора C.
-
 **VS Code / Cursor — Windows & Linux** (from the directory with the VSIX / из каталога с VSIX):
 
 ```sh
-code --install-extension ./parsley-lang-1.6.1.vsix --force
+code --install-extension ./parsley-lang-2.1.0.vsix --force
 ```
 
 For Cursor, replace `code` with `cursor`. Для Cursor замените `code` на `cursor`.

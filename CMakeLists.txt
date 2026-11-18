@@ -141,6 +141,10 @@ install(FILES
 )
 
 install(FILES docs/STATUS.md docs/REGEX.md docs/OPTIMIZER.md docs/BACKEND.md DESTINATION share/doc/parsley/docs)
+if(WIN32)
+  install(FILES install.ps1 update.ps1 install.cmd update.cmd DESTINATION .)
+  install(FILES editors/vscode/parsley-lang.vsix DESTINATION share/parsley/editors OPTIONAL)
+endif()
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/skills"
   DESTINATION share/parsley OPTIONAL

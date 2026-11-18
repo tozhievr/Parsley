@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.0
+
+- Add Windows one-command installation and updates for Parsley, VS Code and Cursor.
+- Verify release archives and use a stable per-user executable path.
+
 ## 2.3.0
 
 - Release extension 2.1 with resource-scoped build/test profiles, native compiler actions and declarative settings schemas for VS Code/Cursor.
