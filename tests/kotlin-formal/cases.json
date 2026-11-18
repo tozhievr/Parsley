@@ -1,0 +1,166 @@
+[
+  {
+    "id": "arithmetic",
+    "source": "fun f(): Int = 1 + 2 * 3",
+    "parse": true
+  },
+  {
+    "id": "package-import",
+    "source": "package demo.app\nimport kotlin.math.*\nfun f(): Int = 1",
+    "parse": true
+  },
+  {
+    "id": "class-loop",
+    "source": "class Counter(var n: Int) { fun inc() { for (i in 1..5) { n += i } } }",
+    "parse": true
+  },
+  {
+    "id": "control-flow",
+    "source": "fun f(): Int { var x = 1; while (x < 3) { x += 1 }; return x }",
+    "parse": true
+  },
+  {
+    "id": "when",
+    "source": "fun f(x: Int): Int { when (x) { 1 -> return 2; else -> return 3 } }",
+    "parse": true
+  },
+  {
+    "id": "missing-brace",
+    "source": "fun f() { val x = 1",
+    "parse": false
+  },
+  {
+    "id": "dangling-operator",
+    "source": "fun f(): Int = 1 +",
+    "parse": false
+  },
+  {
+    "id": "missing-name",
+    "source": "fun (): Int = 1",
+    "parse": false
+  },
+  {
+    "id": "trailing-junk",
+    "source": "fun f(): Int = 1 ###",
+    "parse": false
+  },
+  {
+    "id": "effectively-constant",
+    "source": "fun f(): Int = 1 / 0",
+    "parse": true,
+    "diag": "PSL-divByConstZero"
+  },
+  {
+    "id": "mutable-local",
+    "source": "fun f() { var x = 1; x = 2 }",
+    "parse": true,
+    "diag": "!PSL-valReassign"
+  },
+  {
+    "id": "immutable-local",
+    "source": "fun f() { val x = 1; x = 2 }",
+    "parse": true,
+    "diag": "PSL-valReassign"
+  },
+  {
+    "id": "unresolved-variable",
+    "source": "fun f(): Int = missing",
+    "parse": true,
+    "diag": "E_UNDECLARED"
+  },
+  {
+    "id": "variance",
+    "source": "interface Box<out T> { fun get(): T }",
+    "parse": true,
+    "gap": "generic declarations and variance"
+  },
+  {
+    "id": "nullable",
+    "source": "fun f(x: String?): Int = 1",
+    "parse": true
+  },
+  {
+    "id": "safe-call",
+    "source": "fun f(x: String): Int = x?.length ?: 0",
+    "parse": true,
+    "gap": "safe navigation and Elvis"
+  },
+  {
+    "id": "nested-comments",
+    "source": "/* outer /* inner */ outer */ fun f(): Int = 1",
+    "parse": true,
+    "gap": "recursive lexical trivia"
+  },
+  {
+    "id": "unicode",
+    "source": "fun привет(): Int = 1",
+    "parse": true,
+    "gap": "Unicode identifier classes"
+  },
+  {
+    "id": "backtick",
+    "source": "fun `class`(): Int = 1",
+    "parse": true,
+    "gap": "escaped identifiers"
+  },
+  {
+    "id": "typealias",
+    "source": "typealias Names = List<String>",
+    "parse": true
+  },
+  {
+    "id": "object",
+    "source": "object Singleton {}",
+    "parse": true
+  },
+  {
+    "id": "annotation",
+    "source": "@Deprecated(\"old\") fun f() {}",
+    "parse": true,
+    "gap": "annotations"
+  },
+  {
+    "id": "exception",
+    "source": "fun f() { try { throw IllegalStateException() } catch (e: Exception) {} }",
+    "parse": true,
+    "gap": "try/catch/throw"
+  },
+  {
+    "id": "lambda",
+    "source": "fun f() { val fn = { x: Int -> x + 1 } }",
+    "parse": true,
+    "gap": "lambda literals"
+  },
+  {
+    "id": "destructuring",
+    "source": "fun f() { val (x, y) = pair() }",
+    "parse": true,
+    "gap": "destructuring"
+  },
+  {
+    "id": "same-line-statements",
+    "source": "fun f() { val x = 1 val y = 2 }",
+    "parse": false,
+    "gap": "significant newline and statement separators"
+  },
+  {
+    "id": "hex",
+    "source": "fun f(): Int = 0xFF",
+    "parse": true,
+    "gap": "Kotlin integer literal forms"
+  },
+  {
+    "parse": true,
+    "diag": "!E_UNDECLARED",
+    "gap": "function parameters are not bound by current PSL",
+    "source": "fun f(x: Int): Int = x",
+    "id": "parameter-scope"
+  },
+  {
+    "parse": true,
+    "diag": "E_TYPE",
+    "gap": "return type compatibility is not checked by current PSL",
+    "source": "fun f(): Int = \"text\"",
+    "id": "return-type-mismatch"
+  }
+]

@@ -2170,6 +2170,7 @@ static ParsleyMemo* p_memo_get(ParsleyParser* p,size_t rule,size_t start) {
           emit_prod(out, prod->items[i], cv, fail_lbl, indent);
           child_vars.push_back(cv);
         }
+        for (const auto& child : child_vars) out << ind << "(void)" << child << ";\n";
         std::string built = emit_action_expr(out, prod->action, child_vars);
         out << ind << res_var << " = " << built << ";\n";
         break;
@@ -2195,6 +2196,7 @@ static ParsleyMemo* p_memo_get(ParsleyParser* p,size_t rule,size_t start) {
           }
           step_vars.push_back(sv);
         }
+        for (const auto& step : step_vars) out << ind << "(void)" << step << ";\n";
         std::string built = emit_action_expr(out, prod->action, step_vars);
         out << ind << res_var << " = " << built << ";\n";
         out << ind << "while (p->ctx_depth > " << csave << ".ctx_depth) { "

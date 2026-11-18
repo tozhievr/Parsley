@@ -112,6 +112,8 @@ if(PARSLEY_BUILD_TESTS)
   if(WIN32 AND Python3_Interpreter_FOUND)
     add_test(NAME parsley_native_backend_regressions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_backend_regression.py" --cli "$<TARGET_FILE:parsley>" --cc "${CMAKE_C_COMPILER}")
     set_tests_properties(parsley_native_backend_regressions PROPERTIES TIMEOUT 240)
+    add_test(NAME parsley_kotlin_formal COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/kotlin-formal/run.py" --cli "$<TARGET_FILE:parsley>" --cc "${CMAKE_C_COMPILER}")
+
   endif()
   find_program(PARSLEY_NODE_EXECUTABLE node)
   if(PARSLEY_NODE_EXECUTABLE)

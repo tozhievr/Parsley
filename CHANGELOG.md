@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.1
+
+- Fix generated C23 warnings for discarded parser action results.
+- Add a Kotlin conformance project with the pinned reference grammar and executable Windows tests.
+
 ## 2.4.0
 
 - Add Windows one-command installation and updates for Parsley, VS Code and Cursor.

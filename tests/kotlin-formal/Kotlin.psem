@@ -1,0 +1,176 @@
+{-# LANGUAGE Sem1 #-}
+semantics Kotlin where
+
+import Kotlin
+import Parsley.Sem.Prelude
+
+source kotlinSpec = manual "Kotlin Language Specification" rev "1.9-rfc+0.1"
+
+-- Типы и символы -------------------------------------------------
+type KtTy = KtInt | KtDouble | KtString | KtBool | KtUnit | KtNull | KtAny | KtErr
+
+kind Variable where shadowing = Warn
+kind Function
+kind TypeName
+
+{-# SOURCE kotlinSpec "builtins/stdlib" "2026-01-15" #-}
+builtin println :: Function (KtAny -> KtUnit)
+{-# SOURCE kotlinSpec "builtins/stdlib" "2026-01-15" #-}
+builtin readln  :: Function (KtUnit -> KtString)
+
+-- Диагностики ----------------------------------------------------
+diag E_UNDECLARED   :: Error "Unresolved reference: `{name}`"
+diag E_REDECLARED   :: Error "Conflicting declarations: `{name}`"
+diag E_TYPE         :: Error "Type mismatch: expected `{expected}`, got `{actual}`"
+diag E_VAL_REASSIGN :: Error "`val` `{name}` cannot be reassigned"
+diag W_DIV_ZERO     :: Warning "Division or modulo by constant zero"
+diag W_DEAD_CODE    :: Warning "Unreachable statement after `return`"
+
+-- Правила для узлов AST ------------------------------------------
+node IntLit _ where
+  type = KtInt
+
+node FloatLit _ where
+  type = KtDouble
+
+node StrLit _ where
+  type = KtString
+
+node BoolLit _ where
+  type = KtBool
+
+node NullLit where
+  type = KtNull
+
+node Var x where
+  sym  <- lookup Variable x `orFail` E_UNDECLARED { name = x }
+  type =  typeOf sym
+
+node Unary op e where
+  type = if op == Not then KtBool else typeOf e
+
+node Bin op l r where
+  require ((op /= Div && op /= Mod) || constFold r /= Just 0) `orFail` W_DIV_ZERO
+  type = if op == Eq || op == Neq || op == Lt || op == Gt || op == Le || op == Ge || op == And || op == Or
+         then KtBool
+         else typeOf l
+
+node Call f args where
+  fn <- lookup Function f `orFail` E_UNDECLARED { name = f }
+  type = typeOf fn
+
+node ValStmt isVar name ty init where
+  declare Variable name (if ty == "" then KtAny else KtInt)
+  type = KtUnit
+
+node AssignStmt target op rhs where
+  sym <- lookup Variable target `orFail` E_UNDECLARED { name = target }
+  type = KtUnit
+
+node PropDecl isVar name ty init where
+  declare Variable name (if ty == "" then KtAny else KtInt)
+  type = KtUnit
+
+node FunDecl name params retTy body where
+  declare Function name KtAny
+  scope body $ pure ()
+  type = KtUnit
+
+node ClassDecl kw name params members where
+  declare TypeName name KtAny
+  scope members $ pure ()
+  type = KtUnit
+
+node InterfaceDecl name members where
+  declare TypeName name KtAny
+  scope members $ pure ()
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "declarations/object-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node ObjectDecl name members where
+  declare TypeName name KtAny
+  scope members $ pure ()
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "declarations/type-alias" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node TypeAliasDecl name _ where
+  declare TypeName name KtAny
+  type = KtUnit
+
+node KtFile pkg decls where
+  scope decls $ pure ()
+  type = KtUnit
+
+-- Поток управления (CFG) -----------------------------------------
+flow FunDecl _ _ _ body   = chain body
+flow IfStmt c t e         = branch c [t, e]
+flow WhenStmt _ branches  = chain branches
+flow WhileStmt c body     = loop c body
+flow ForStmt _ range body = loop range body
+flow ReturnStmt _         = jump Empty Exit
+
+-- Анализ потока данных (gen/kill) --------------------------------
+analysis Initialized :: Forward, Must (Set Var)
+  gen (ValStmt _ x _ [_]) = [x]
+  gen (AssignStmt x _ _)  = [x]
+  gen (PropDecl _ x _ [_]) = [x]
+
+analysis Live :: Backward, May (Set Var)
+  gen  (Var x)              = [x]
+  kill (AssignStmt x "=" _) = [x]
+
+-- Линты и обязательные примеры -----------------------------------
+{-# SOURCE kotlinSpec "expressions/multiplicative" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.99 #-}
+lint divByConstZero :: Warning, Correctness
+  match (Bin Div _ r)
+  when  constFold r == Just 0
+  say   "Division by constant zero"
+
+example divByConstZero
+  fires  "fun f(x: Int): Int = x / 0"
+  silent "fun f(x: Int): Int = x / 2"
+
+{-# SOURCE kotlinSpec "statements/variables" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.96 #-}
+lint valReassign :: Error, Correctness
+  match (AssignStmt target _ _)
+  when  isImmutable target
+  say   "Val `{target}` cannot be reassigned"
+
+example valReassign
+  fires  "fun f() { val x = 1; x = 2 }"
+  silent "fun f() { var x = 1; x = 2 }"
+
+{-# SOURCE kotlinSpec "statements/control-flow" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.94 #-}
+lint unreachableAfterReturn :: Warning, Correctness
+  match (s :: KtStmt)
+  when  not (reachable s)
+  say   "Unreachable code after return"
+
+example unreachableAfterReturn
+  fires  "fun f(): Int { return 1; val y = 2 }"
+  silent "fun f(): Int { val y = 2; return y }"
+
+{-# SOURCE kotlinSpec "expressions/when" "2026-01-15" #-}
+{-# STATUS verified #-}
+{-# CONFIDENCE 0.93 #-}
+lint whenWithoutElse :: Warning, Style
+  match (WhenStmt _ branches)
+  when  not (hasWhenElse branches)
+  say   "`when` expression/statement has no `else` branch"
+
+example whenWithoutElse
+  fires  "fun f(x: Int) { when (x) { 1 -> return 1 } }"
+  silent "fun f(x: Int) { when (x) { 1 -> return 1; else -> return 0 } }"
+
+profile default = [divByConstZero, valReassign, unreachableAfterReturn]
+profile ci      = [divByConstZero, valReassign, unreachableAfterReturn, whenWithoutElse]
