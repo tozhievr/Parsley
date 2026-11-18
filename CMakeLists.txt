@@ -4,6 +4,8 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" PARSLEY_VERSION)
 string(STRIP "${PARSLEY_VERSION}" PARSLEY_VERSION)
 
 project(parsley VERSION "${PARSLEY_VERSION}" LANGUAGES C CXX)
+include(cmake/EmbedNextc.cmake)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 configure_file(src/version.cppm.in "${CMAKE_CURRENT_BINARY_DIR}/generated/version.cppm" @ONLY)
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_VERSION VERSION_LESS 23)
   message(FATAL_ERROR "Parsley requires Clang 23 or newer with C++26 module support; generated parsers require only an ISO C23 compiler.")
@@ -47,6 +49,9 @@ target_sources(parsley_core
       src/c23_runtime.cppm
       src/optimizer_runtime.cppm
       src/optimizer.cppm
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/nextc_bundle.cppm"
+      src/native_driver.cppm
+      src/native_backend.cppm
       src/codegen.cppm
       src/tooling.cppm
       src/compiler.cppm
@@ -104,6 +109,10 @@ if(PARSLEY_BUILD_TESTS)
   endif()
   add_test(NAME parsley_cli_check_optimizer COMMAND parsley check "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Optimizer.parsley")
   add_test(NAME parsley_cli_test_optimizer COMMAND parsley test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Optimizer.parsley" --fuzz 30)
+  if(WIN32 AND Python3_Interpreter_FOUND)
+    add_test(NAME parsley_native_backend_regressions COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_backend_regression.py" --cli "$<TARGET_FILE:parsley>" --cc "${CMAKE_C_COMPILER}")
+    set_tests_properties(parsley_native_backend_regressions PROPERTIES TIMEOUT 240)
+  endif()
   find_program(PARSLEY_NODE_EXECUTABLE node)
   if(PARSLEY_NODE_EXECUTABLE)
     add_test(NAME parsley_extension_commands COMMAND "${PARSLEY_NODE_EXECUTABLE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/editors/vscode/test/extension.test.cjs")
@@ -113,7 +122,7 @@ if(PARSLEY_BUILD_TESTS)
   add_test(NAME parsley_cli_test_mini COMMAND parsley test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Mini.parsley" --fuzz 30)
   get_property(PARSLEY_ALL_TESTS DIRECTORY PROPERTY TESTS)
   foreach(PARSLEY_TEST IN LISTS PARSLEY_ALL_TESTS)
-    if(NOT PARSLEY_TEST MATCHES "^parsley_(audit|optimizer)_regressions$")
+    if(NOT PARSLEY_TEST MATCHES "^parsley_(audit|optimizer|native_backend)_regressions$")
       set_tests_properties("${PARSLEY_TEST}" PROPERTIES TIMEOUT 120)
     endif()
   endforeach()
@@ -131,7 +140,7 @@ install(FILES
   DESTINATION share/doc/parsley
 )
 
-install(FILES docs/STATUS.md docs/REGEX.md docs/OPTIMIZER.md DESTINATION share/doc/parsley/docs)
+install(FILES docs/STATUS.md docs/REGEX.md docs/OPTIMIZER.md docs/BACKEND.md DESTINATION share/doc/parsley/docs)
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/skills"
   DESTINATION share/parsley OPTIONAL

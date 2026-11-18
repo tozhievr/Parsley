@@ -400,3 +400,5 @@ local effects and the grammar AST, rather than constructor-name heuristics.
 Unknown semantics remain opaque; native custom passes can extend the analysis.
 Always validate the original program before optimizing. Never assume that a
 type equation alone proves a runtime operation pure or gives its evaluation.
+
+Native backend generation (2.2+): --emit-nextc / --compile-compiler generate a standalone compiler using the bundled nextc backend. See [backend contracts and extension API](docs/BACKEND.md). Actual machine targets are x86-64; automatic lowering is derived from denotational equations, while language-specific operations use lowering hooks/MIR passes. C23 remains the implementation-language generation target.

@@ -1,0 +1,16 @@
+file(GLOB_RECURSE PARSLEY_NEXTC_FILES CONFIGURE_DEPENDS
+  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/resources/nextc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/resources/nextc/*")
+set(PARSLEY_NEXTC_MODULE "module;\n#include <string_view>\nexport module parsley.nextc_bundle;\nexport namespace parsley::nextc_bundle {\nstruct File { std::string_view path, content; };\ninline constexpr File files[] = {\n")
+foreach(PARSLEY_NEXTC_FILE IN LISTS PARSLEY_NEXTC_FILES)
+  set(PARSLEY_NEXTC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/nextc/${PARSLEY_NEXTC_FILE}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PARSLEY_NEXTC_PATH}")
+  file(READ "${PARSLEY_NEXTC_PATH}" PARSLEY_NEXTC_CONTENT)
+  string(FIND "${PARSLEY_NEXTC_CONTENT}" ")PARSLEY_NC\"" PARSLEY_NEXTC_DELIMITER)
+  if(NOT PARSLEY_NEXTC_DELIMITER EQUAL -1)
+    message(FATAL_ERROR "nextc resource collides with embedding delimiter")
+  endif()
+  string(APPEND PARSLEY_NEXTC_MODULE "{\"nextc/${PARSLEY_NEXTC_FILE}\", R\"PARSLEY_NC(${PARSLEY_NEXTC_CONTENT})PARSLEY_NC\"},\n")
+endforeach()
+string(APPEND PARSLEY_NEXTC_MODULE "};\n}\n")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/nextc_bundle.cppm" CONTENT "${PARSLEY_NEXTC_MODULE}")

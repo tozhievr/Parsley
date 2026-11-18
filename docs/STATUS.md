@@ -93,3 +93,5 @@ The automated suites are [core tests](../tests/test_main.cpp), [audit regression
 | D-01…D-12 / F-22, T-01…T-06 / F-23, R-01…R-08 | Corrected documentation, MIT text, one compiler-version source, independent extension version, reproducible extension build, pinned Actions, fail-fast toolchain checks and expanded CI tests/timeouts |
 
 CI covers Linux/Windows/macOS builds, a Linux Debug ASan/UBSan configuration, and generated C with GCC in addition to Clang. Workflow definitions do not imply that a remote run has already passed. Meson/Make/XMake/Bazel files are generated integration options; use their own toolchains to verify them for a deployment. `find_package(<module>_parser CONFIG)` imports the installed CMake targets.
+
+Native backend generation (2.2+): --emit-nextc / --compile-compiler generate a standalone compiler using the bundled nextc backend. See [backend contracts and extension API](BACKEND.md). Actual machine targets are x86-64; automatic lowering is derived from denotational equations, while language-specific operations use lowering hooks/MIR passes. C23 remains the implementation-language generation target.

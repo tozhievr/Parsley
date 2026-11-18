@@ -31,6 +31,7 @@ import parsley.c23_text;
 import parsley.analysis;
 import parsley.psl;
 import parsley.optimizer;
+import parsley.native_backend;
 
 export namespace parsley::codegen {
 
@@ -41,6 +42,7 @@ enum class TargetLang {
 struct CodegenOptions {
   TargetLang target = TargetLang::C23;
   bool emit_tests = true;
+  bool emit_nextc = false;
   std::string module_override;
   psl::PslStatus min_status = psl::PslStatus::Draft;
   std::string psl_profile;
@@ -3433,16 +3435,16 @@ inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
     psl_opts.module_override = opts.module_override;
     auto emitted_psl = psl::emit_psl_c23_files(*opts.psl_module, grammar, psl_opts);
     for (auto& file : optimizer::generate(grammar, *opts.psl_module, psl_opts)) emitted_psl.push_back(std::move(file));
+    if (opts.emit_nextc) for (auto& file : native_backend::generate(grammar, *opts.psl_module, psl_opts)) emitted_psl.push_back(std::move(file));
     for (const auto& pf : emitted_psl) {
       psl_files.push_back(GeneratedFile{pf.relative_path, pf.content});
-      if (pf.relative_path.ends_with(".c") && pf.relative_path != "parser.c") {
+      if (pf.relative_path.ends_with(".c") && pf.relative_path != "parser.c" && !pf.relative_path.starts_with("tools/")) {
         extra_c_files.push_back(pf.relative_path);
         if (pf.relative_path == mod_low + "_sem.c") {
           has_psl_selftest = true;
         }
-      } else if (pf.relative_path.ends_with(".h") &&
-                 pf.relative_path.find('/') == std::string::npos) {
-        extra_h_files.push_back(pf.relative_path);
+      } else if (pf.relative_path.ends_with(".h") || pf.relative_path.ends_with(".def")) {
+        if (pf.relative_path.find('/') == std::string::npos) extra_h_files.push_back(pf.relative_path);
         psl_files.push_back(GeneratedFile{"include/" + pf.relative_path, pf.content});
       }
     }
@@ -3476,6 +3478,32 @@ inline std::vector<GeneratedFile> generate_backend(const ir::Grammar& grammar,
       GeneratedFile{mod_low + "_parser.pc", detail::generate_pkgconfig(mod_cap, mod_low)});
   files.push_back(
       GeneratedFile{"README.md", detail::generate_project_readme(mod_cap, mod_low, analysis)});
+  if (opts.emit_nextc && opts.psl_module) {
+    const std::string target=mod_low+"_compiler", lib=mod_low+"_parser";
+    for(auto& file:files){
+      if(file.relative_path=="CMakeLists.txt")file.content+=
+        "\nadd_executable("+target+" tools/"+target+".c)\ntarget_link_libraries("+target+" PRIVATE "+lib+"_static)\n"
+        "install(TARGETS "+target+" RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})\n"
+        "install(DIRECTORY include/nextc DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})\n";
+      else if(file.relative_path=="meson.build")file.content+=
+        "\nexecutable('"+target+"', 'tools/"+target+".c', include_directories: inc, c_args: ['-DPARSLEY_STATIC'], link_with: "+lib+"_static, dependencies: [m_dep], install: true)\n"
+        "install_subdir('include/nextc', install_dir: get_option('includedir'))\n";
+      else if(file.relative_path=="Makefile")file.content+=
+        "\nall: "+target+"$(EXE_EXT)\n"+target+"$(EXE_EXT): tools/"+target+".c lib"+lib+".a\n"
+        "\t$(CC) $(CFLAGS) -DPARSLEY_STATIC -I. $< lib"+lib+".a $(LDFLAGS_MATH) -o $@\n"
+        "install: install-nextc\n.PHONY: install-nextc\ninstall-nextc:\n\tcp -R include/nextc $(DESTDIR)$(PREFIX)/include/\n";
+      else if(file.relative_path=="xmake.lua")file.content+=
+        "\ntarget(\""+target+"\")\n    set_kind(\"binary\")\n    add_files(\"tools/"+target+".c\")\n    add_deps(\""+lib+"_static\")\n    add_includedirs(\".\")\n    add_defines(\"PARSLEY_STATIC\")\n";
+      else if(file.relative_path=="BUILD.bazel"){
+        native_backend::detail::replace(file.content,"hdrs = [","hdrs = glob([\"nextc/**/*.h\", \"nextc/**/*.def\"]) + [");
+        native_backend::detail::replace(file.content,"srcs = [","srcs = glob([\"nextc/**/*.h\", \"nextc/**/*.def\"]) + [");
+        file.content+="\ncc_binary(name = \""+target+"\", srcs = [\"tools/"+target+".c\"], deps = [\":"+lib+"\"], copts = [\"-std=c23\"])\n";
+      }else if(file.relative_path=="README.md")file.content+=
+        "\n## Native compiler\n\nThe "+target+" target parses and validates source, optimizes its AST and lowers semantic equations to nextc MIR. "
+        "Use --run for Windows JIT, or --emit mir|asm|object|exe|flat -o FILE. Default return type is f64; --return bool|i64 selects another ABI. "
+        "Language lowering hooks and MIR passes are declared in "+mod_low+"_backend.h. The bundled nextc snapshot currently targets x86-64.\n";
+    }
+  }
   return files;
 }
 

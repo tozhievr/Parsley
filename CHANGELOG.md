@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0
+
+- Bundle the real nextc C23 backend and generate language-to-MIR adapters from value/effect equations.
+- Generate standalone compiler targets with AST/semantic validation, optimizer integration, Windows JIT, MIR/assembly, COFF/ELF objects and PE/flat emission.
+- Expose language lowering hooks, named MIR passes, verified module ownership and shared-library cg_* exports.
+- Embed source resources in Parsley; record upstream revision/hashes and preserve standalone deployment.
+- Add Windows native-code, PE execution and interpreter/JIT effect-equivalence regressions.
+
 ## 2.1.0
 
 - Generate semantic C23 optimizers automatically from AST schemas and PSL denotational value/effect equations, without handwritten rewrite rules.

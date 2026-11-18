@@ -66,7 +66,7 @@ void print_help() {
       << "Parsley " << parsley::VERSION_STRING
       << " — Haskell-style Grammar DSL, PSL Static Semantics & ISO C23 Generator\n\n"
       << "Usage:\n"
-      << "  parsley build <file.parsley|file.psem> [-o <dir>] [--no-compile-shared] [--min-status draft|reviewed|verified] [--emit-agent-docs] [--emit-ir-json] [--emit-ir-sexpr]\n"
+      << "  parsley build <file.parsley|file.psem> [-o <dir>] [--no-compile-shared] [--emit-nextc] [--compile-compiler] [--min-status draft|reviewed|verified] [--emit-agent-docs] [--emit-ir-json] [--emit-ir-sexpr]\n"
       << "  parsley check <file.parsley|file.psem> [--min-status draft|reviewed|verified]\n"
       << "  parsley test <file.parsley|file.psem> [--fuzz <N>] [--seed <N>] [--min-status draft|reviewed|verified]\n"
       << "  parsley explain <CODE>\n"
@@ -133,6 +133,26 @@ bool compile_shared_library(const fs::path& out_dir, const std::string& mod_low,
   }
   return false;
 }
+bool compile_language_compiler(const fs::path& out_dir,const std::string& mod,
+                              const std::vector<std::string>& sources,fs::path& output) {
+#ifdef _WIN32
+  output=out_dir/(mod+"_compiler.exe");
+#else
+  output=out_dir/(mod+"_compiler");
+#endif
+  for(const auto& cc:candidate_c_compilers()){
+    std::vector<std::string> command{cc,"-std=c23","-O2","-Wall","-Wextra","-pedantic",
+      "-DPARSLEY_STATIC","-I"+out_dir.string(),(out_dir/"parser.c").string()};
+    for(const auto& source:sources)command.push_back((out_dir/source).string());
+    command.push_back((out_dir/"tools"/(mod+"_compiler.c")).string());
+#if !defined(_WIN32) && !defined(__APPLE__)
+    command.push_back("-lm");
+#endif
+    command.push_back("-o");command.push_back(output.string());
+    if(run_process(command)==0 && fs::exists(output))return true;
+  }
+  return false;
+}
 bool parse_min_status_arg(std::string_view val, parsley::psl::PslStatus& out_status) {
   auto parsed = parsley::psl::parse_status_name(val);
   if (!parsed) {
@@ -154,6 +174,7 @@ int cmd_build(const std::vector<std::string>& args) {
   std::string out_dir_str;
   std::string backend = "c23";
   bool compile_shared = true;
+  bool emit_nextc = false, compile_compiler = false;
   bool emit_ir_json = false;
   bool emit_ir_sexpr = false;
   bool emit_agent_docs = false;
@@ -181,6 +202,10 @@ int cmd_build(const std::vector<std::string>& args) {
       if (!parse_min_status_arg(args[++i], min_status)) {
         return 1;
       }
+    } else if (a == "--emit-nextc") {
+      emit_nextc = true;
+    } else if (a == "--compile-compiler") {
+      emit_nextc = compile_compiler = true;
     } else if (a == "--no-compile-shared") {
       compile_shared = false;
     } else if (a == "--emit-agent-docs") {
@@ -217,6 +242,9 @@ int cmd_build(const std::vector<std::string>& args) {
   const std::string mod_low = to_lower(mod_name);
   fs::path out_dir = out_dir_str.empty() ? fs::path(mod_low + "_parser") : fs::path(out_dir_str);
 
+  if(emit_nextc && (!res.psl_module || res.grammar.gRules.empty() || (backend!="c23" && backend!="c"))){
+    std::cerr<<"error: nextc generation requires an adjacent grammar and PSL and the c23 backend\n";return 1;
+  }
   if (backend == "ir-json") {
     emit_ir_json = true;
   } else if (backend == "ir-sexpr") {
@@ -230,6 +258,7 @@ int cmd_build(const std::vector<std::string>& args) {
   if (backend == "c23" || backend == "c") {
     parsley::codegen::CodegenOptions opts;
     opts.target = parsley::codegen::TargetLang::C23;
+    opts.emit_nextc = emit_nextc;
     opts.emit_tests = true;
     opts.min_status = min_status;
     opts.psl_module = res.psl_module ? &*res.psl_module : nullptr;
@@ -243,7 +272,7 @@ int cmd_build(const std::vector<std::string>& args) {
         return 1;
       }
       if (f.relative_path.ends_with(".c") && f.relative_path != "parser.c" &&
-          !f.relative_path.starts_with("test_")) {
+          !f.relative_path.starts_with("test_") && !f.relative_path.starts_with("tools/")) {
         extra_c_files.push_back(f.relative_path);
       }
     }
@@ -266,6 +295,13 @@ int cmd_build(const std::vector<std::string>& args) {
         return 1;
       }
       std::cout << "Compiled shared library: `" << lib_path.string() << "`\n";
+    }
+    if(compile_compiler){
+      fs::path executable;
+      if(!compile_language_compiler(out_dir,mod_low,extra_c_files,executable)){
+        std::cerr<<"error: failed to compile generated language compiler\n";return 1;
+      }
+      std::cout<<"Compiled language compiler: "<<executable.string()<<"\n";
     }
   }
 
