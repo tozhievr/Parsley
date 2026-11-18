@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1
+
+- Verify the bundled nextc snapshot with normalized LF hashes while retaining the original upstream byte hashes, so Git CRLF/LF checkout policy does not invalidate provenance checks.
+
 ## 2.2.0
 
 - Bundle the real nextc C23 backend and generate language-to-MIR adapters from value/effect equations.

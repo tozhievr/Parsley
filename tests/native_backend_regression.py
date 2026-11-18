@@ -17,8 +17,8 @@ def run(cmd,code=0):
     return r.stdout
 
 manifest=json.loads((root/"resources/nextc/UPSTREAM.json").read_text(encoding="utf-8"))
-for name,digest in manifest["files"].items():
-    assert hashlib.sha256((root/"resources/nextc"/name).read_bytes()).hexdigest()==digest,name
+for name,digest in manifest["sha256_lf"].items():
+    assert hashlib.sha256((root/"resources/nextc"/name).read_bytes().replace(b"\r\n",b"\n")).hexdigest()==digest,name
 
 with tempfile.TemporaryDirectory(prefix="parsley native ") as tmp:
     d=Path(tmp)
