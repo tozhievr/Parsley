@@ -18,6 +18,8 @@ kind TypeName
 builtin println :: Function (KtAny -> KtUnit)
 {-# SOURCE kotlinSpec "builtins/stdlib" "2026-01-15" #-}
 builtin readln  :: Function (KtUnit -> KtString)
+{-# SOURCE kotlinSpec "builtins/stdlib" #-}
+builtin Error :: Function (KtUnit -> KtAny)
 
 -- Диагностики ----------------------------------------------------
 diag E_UNDECLARED   :: Error "Unresolved reference: `{name}`"

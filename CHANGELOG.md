@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.10.2
+
+- Evaluate direct calls with typed primitive parameters and local assignments in closed Kotlin box bodies.
+
 ## 2.10.1
 
 - Compile closed Kotlin box bodies with immutable locals, string interpolation and constant branches.

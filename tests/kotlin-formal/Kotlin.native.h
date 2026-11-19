@@ -222,12 +222,15 @@ struct kt_const {
 
 struct kt_binding {
     psl_str name;
+    bool mutable;
     struct kt_const value;
 };
 
 struct kt_constants {
     struct kt_binding bindings[64];
     size_t count;
+    const kotlin_node *functions;
+    unsigned *steps;
 };
 
 static bool kotlin_text_append(cg_buffer_t *text, const void *ptr, size_t size) {
@@ -239,6 +242,11 @@ static const struct kt_const *kotlin_constant(const struct kt_constants *env, ps
         if (psl_str_eq(name, env->bindings[i - 1].name)) return &env->bindings[i - 1].value;
     return NULL;
 }
+
+enum kt_flow { KT_FAILED, KT_CONTINUE, KT_RETURN };
+
+static enum kt_flow kotlin_eval_box_block(const kotlin_node *, struct kt_constants *,
+                                          unsigned, struct kt_const *);
 
 static bool kotlin_eval_constant(const kotlin_node *, const struct kt_constants *,
                                  unsigned, struct kt_const *);
@@ -368,9 +376,49 @@ static bool kotlin_eval_constant_binary(kotlin_node_tag op, const struct kt_cons
     return true;
 }
 
+static bool kotlin_constant_has_type(const struct kt_const *value, psl_str type) {
+    return (value->kind == KT_CONST_INT && psl_str_eq(type, psl_str_lit("Int"))) ||
+           (value->kind == KT_CONST_BOOL && psl_str_eq(type, psl_str_lit("Boolean"))) ||
+           (value->kind == KT_CONST_TEXT && psl_str_eq(type, psl_str_lit("String")));
+}
+
+static bool kotlin_eval_constant_call(const kotlin_node *node, const struct kt_constants *env,
+                                      unsigned depth, struct kt_const *out) {
+    const kotlin_node *target = kotlin_call_target(env->functions, node->children[0]->text_val);
+    if (!target || target->children[1]->tag != KOTLIN_NODE_NOTYPEPARAMETERS) return false;
+    const kotlin_node *scope = target->children[3];
+    const kotlin_node *params = scope->children[1];
+    const kotlin_node *args = node->children[1];
+    struct kt_constants callee = {.functions = env->functions, .steps = env->steps};
+    if (params->child_count != args->child_count ||
+        params->child_count > sizeof(callee.bindings) / sizeof(callee.bindings[0])) return false;
+
+    bool ok = true;
+    for (size_t i = 0; i < params->child_count && ok; ++i) {
+        const kotlin_node *param = params->children[i];
+        if (param->children[2]->bool_val) { ok = false; break; }
+        struct kt_binding *binding = &callee.bindings[callee.count++];
+        binding->name = param->children[0]->text_val;
+        ok = kotlin_eval_constant(args->children[i], env, depth + 1, &binding->value);
+        const psl_str type = param->children[1]->text_val;
+        ok = ok && kotlin_constant_has_type(&binding->value, type);
+    }
+    if (ok) ok = kotlin_eval_box_block(scope->children[2], &callee, depth + 1, out) == KT_RETURN;
+    const kotlin_node *return_types = target->children[2];
+    if (ok && return_types->child_count) {
+        const kotlin_node *type = return_types->children[0];
+        ok = !type->children[1]->child_count &&
+             type->children[2]->tag == KOTLIN_NODE_NOTYPEARGUMENTS &&
+             kotlin_constant_has_type(out, type->children[0]->text_val);
+    }
+    while (callee.count) cg_buffer_free(&callee.bindings[--callee.count].value.text);
+    return ok;
+}
+
 static bool kotlin_eval_constant(const kotlin_node *node, const struct kt_constants *env,
                                  unsigned depth, struct kt_const *out) {
-    if (depth >= 64) return false;
+    if (depth >= 64 || *env->steps >= 100000) return false;
+    ++*env->steps;
     switch (node->tag) {
         case KOTLIN_NODE_STRLIT:
             out->kind = KT_CONST_TEXT;
@@ -393,6 +441,8 @@ static bool kotlin_eval_constant(const kotlin_node *node, const struct kt_consta
             out->number = value->number;
             return value->kind != KT_CONST_TEXT || kotlin_append_constant(&out->text, value);
         }
+        case KOTLIN_NODE_CALL:
+            return kotlin_eval_constant_call(node, env, depth, out);
         case KOTLIN_NODE_BIN: {
             struct kt_const left = {0}, right = {0};
             bool ok = kotlin_eval_constant(node->children[1], env, depth + 1, &left) &&
@@ -406,8 +456,6 @@ static bool kotlin_eval_constant(const kotlin_node *node, const struct kt_consta
     }
 }
 
-enum kt_flow { KT_FAILED, KT_CONTINUE, KT_RETURN };
-
 static enum kt_flow kotlin_eval_box_block(const kotlin_node *body, struct kt_constants *env,
                                           unsigned depth, struct kt_const *out) {
     if (depth >= 64) return KT_FAILED;
@@ -415,14 +463,30 @@ static enum kt_flow kotlin_eval_box_block(const kotlin_node *body, struct kt_con
     enum kt_flow flow = KT_CONTINUE;
     for (size_t i = 0; i < body->child_count && flow == KT_CONTINUE; ++i) {
         const kotlin_node *stmt = body->children[i];
-        if (stmt->tag == KOTLIN_NODE_VALSTMT && !stmt->children[0]->bool_val &&
+        if (stmt->tag == KOTLIN_NODE_VALSTMT &&
             !stmt->children[2]->text_val.len && stmt->children[3]->child_count == 1 &&
             env->count < sizeof(env->bindings) / sizeof(env->bindings[0])) {
             struct kt_binding *binding = &env->bindings[env->count];
-            *binding = (struct kt_binding){.name = stmt->children[1]->text_val};
+            *binding = (struct kt_binding){.name = stmt->children[1]->text_val,
+                                           .mutable = stmt->children[0]->bool_val};
             bool ok = kotlin_eval_constant(stmt->children[3]->children[0], env, depth + 1, &binding->value);
             ++env->count;
             if (!ok) flow = KT_FAILED;
+        } else if (stmt->tag == KOTLIN_NODE_ASSIGNSTMT &&
+                   psl_str_eq(stmt->children[1]->text_val, psl_str_lit("="))) {
+            const psl_str name = stmt->children[0]->text_val;
+            size_t index = env->count;
+            while (index && !psl_str_eq(name, env->bindings[index - 1].name)) --index;
+            struct kt_const replacement = {0};
+            if (index && env->bindings[index - 1].mutable &&
+                kotlin_eval_constant(stmt->children[2], env, depth + 1, &replacement) &&
+                replacement.kind == env->bindings[index - 1].value.kind) {
+                cg_buffer_free(&env->bindings[index - 1].value.text);
+                env->bindings[index - 1].value = replacement;
+            } else {
+                cg_buffer_free(&replacement.text);
+                flow = KT_FAILED;
+            }
         } else if (stmt->tag == KOTLIN_NODE_IFSTMT) {
             struct kt_const condition = {0};
             if (kotlin_eval_constant(stmt->children[0], env, depth + 1, &condition) &&
@@ -495,7 +559,8 @@ static cg_value_t kotlin_lower_box_function(kotlin_backend_context *ctx, const k
     const kotlin_node *scope = function->children[3];
     const kotlin_node *body = scope->children[2];
     if (scope->children[1]->child_count) return CG_INVALID;
-    struct kt_constants env = {0};
+    unsigned steps = 0;
+    struct kt_constants env = {.functions = scope_decls, .steps = &steps};
     struct kt_const constant = {0};
     const enum kt_flow flow = kotlin_eval_box_block(body, &env, 0, &constant);
     cg_value_t value = flow == KT_RETURN && constant.kind == KT_CONST_TEXT

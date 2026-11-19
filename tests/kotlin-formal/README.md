@@ -60,7 +60,8 @@ when the AST retains source tokens. A box case passes when its compiled entry
 returns exactly `OK`. The current native adapter supports string literals and
 chains of parameterless top-level calls and parameterless companion-qualified
 calls without companion initializers. Closed bodies may use immutable local
-values, string templates and constant `if` branches. These are evaluated
+values, local reassignment, string templates, constant `if` branches and
+direct calls with positional primitive arguments. These are evaluated
 before MIR emission, which stores the resulting string in read-only data.
 The adapter uses no JetBrains runtime libraries.
 Full PSI tree comparison remains outside the current probe.

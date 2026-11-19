@@ -177,6 +177,14 @@ def main():
         box.write_text(template_box.replace("OK:6", "OK:7"), encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL: OK:6":
             raise RuntimeError("Kotlin template box did not take its failure branch")
+        mutable_box = ('fun compute(n: Int): Int { var x = n; x = x + 4; return x }\n'
+                       'fun box(): String { if (compute(3) != 7) return "FAIL"; return "OK" }')
+        box.write_text(mutable_box, encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "OK":
+            raise RuntimeError("Kotlin box did not evaluate a call with a mutable local")
+        box.write_text(mutable_box.replace("compute(3)", "compute(4)"), encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
+            raise RuntimeError("Kotlin box ignored the changed argument")
         box.write_text('fun box(): String = "FAIL"\n', encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
             raise RuntimeError("Kotlin box did not return its own string value")
