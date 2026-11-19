@@ -135,6 +135,18 @@ def main():
                   "--no-ast-opt")
         if any(opcode not in mir for opcode in ("mul", "add", "sub")):
             raise RuntimeError(f"Declarative arithmetic did not emit operations: {mir}")
+        conditional = declarative / "conditional.kt"
+        for expression in ("if (-2 < 1) { 42 } else { 9 }",
+                           "if (2 == 1) { 7 } else (if (3 >= 3) 42 else 8)"):
+            conditional.write_text(f"fun main(): Int = {expression}", encoding="utf-8")
+            actual = run(declarative_compiler, conditional, "--run", "--return", "i32",
+                         "--no-ast-opt", "-O0").strip()
+            if actual != "42":
+                raise RuntimeError(f"Wrong declarative conditional result for {expression}: {actual}")
+        mir = run(declarative_compiler, conditional, "--emit", "mir", "--return", "i32",
+                  "--no-ast-opt", "-O0")
+        if any(opcode not in mir for opcode in ("icmp", "phi")):
+            raise RuntimeError(f"Declarative conditional did not emit MIR control flow: {mir}")
         string_entry = declarative / "string.kt"
         for kotlin_literal, value in (('"OK"', "OK"), (r'"a\tb\$\\"', "a\tb$\\")):
             string_entry.write_text(f"fun box(): String = {kotlin_literal}", encoding="utf-8")

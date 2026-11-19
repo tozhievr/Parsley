@@ -88,6 +88,16 @@ recursively lowers operands, requires i32 values, and emits wrapping
 addition, subtraction, multiplication or negation. Other tags remain
 unsupported by that equation.
 
+Use `nativeCompare = i32Comparison op lhs rhs [EqTag, NeTag, LtTag, LeTag, GtTag, GeTag]`
+for signed i32 comparisons producing a boolean. If the same rule declares
+`nativeI32`, the operands must match and the operator tags must be distinct.
+
+Use `nativeSelect = selectSingletons condition thenStatements elseStatements`
+for an expression whose branches each contain one statement. The condition
+lowers to a boolean. Branches must lower to the same type and run in separate
+MIR blocks. A statement can expose its expression through `value = valueOf expr`
+and `effects = []`.
+
 ## Extending a language
 
 When the CLI generates a native backend, it copies an optional adjacent

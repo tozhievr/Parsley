@@ -192,15 +192,25 @@ inline bool emit_i32_arithmetic(std::ostringstream& out, const Ctor& c,
   if (!provenance.has_status || !provenance.has_confidence || provenance.source_name.empty() ||
       static_cast<int>(provenance.status) < static_cast<int>(minimum)) return false;
   const E *equation = nullptr;
+  const E *comparison = nullptr;
   for (const auto& st : c.rule->stmts) {
-    if (st.kind != psl::PslNodeStmt::Kind::AssignAttr || st.target_var != "nativeI32") continue;
-    if (equation) return false;
-    equation = st.expr.get();
+    if (st.kind != psl::PslNodeStmt::Kind::AssignAttr) continue;
+    if (st.target_var == "nativeI32") {
+      if (equation) return false;
+      equation = st.expr.get();
+    } else if (st.target_var == "nativeCompare") {
+      if (comparison) return false;
+      comparison = st.expr.get();
+    }
   }
+  const bool comparison_only = !equation && comparison;
+  if (comparison_only) equation = comparison;
   if (!equation || equation->kind != E::Kind::Call) return false;
   const bool unary = equation->name == "i32Negation" && equation->args.size() == 3;
   const bool binary = equation->name == "i32Binary" && equation->args.size() == 4;
-  if (!unary && !binary) return false;
+  if (!unary && !binary && !comparison_only) return false;
+  if (comparison && (unary || comparison->kind != E::Kind::Call ||
+                     comparison->name != "i32Comparison" || comparison->args.size() != 4)) return false;
   const std::size_t operands = unary ? 2 : 3;
   std::vector<std::size_t> indices;
   for (std::size_t i = 0; i < operands; ++i) {
@@ -220,32 +230,101 @@ inline bool emit_i32_arithmetic(std::ostringstream& out, const Ctor& c,
   if (unary) {
     if (!add_name(operations.get())) return false;
   } else {
-    if (operations->kind != E::Kind::List || operations->args.size() != 3) return false;
-    for (const auto& op : operations->args) if (!add_name(op.get())) return false;
+    if (!comparison_only && (operations->kind != E::Kind::List || operations->args.size() != 3)) return false;
+    if (!comparison_only)
+      for (const auto& op : operations->args) if (!add_name(op.get())) return false;
+  }
+
+  const auto arithmetic_count = names.size();
+  if (comparison) {
+    for (std::size_t i = 0; i < indices.size(); ++i) {
+      const auto& arg = comparison->args[i];
+      if (!arg || arg->kind != E::Kind::Var || arg->name != equation->args[i]->name) return false;
+    }
+    const auto& predicates = comparison->args[3];
+    if (!predicates || predicates->kind != E::Kind::List || predicates->args.size() != 6) return false;
+    for (const auto& predicate : predicates->args) if (!add_name(predicate.get())) return false;
   }
 
   out << "case " << c.tag << ":{\n"
       << "const N *op=n->children[" << indices[0] << "];\n"
       << "if(op->child_count)return b_error(cx,\"invalid i32 operator\");\n"
-      << "cg_op_t operation;\n";
-  static constexpr std::string_view opcodes[] = {"CG_OP_ADD", "CG_OP_SUB", "CG_OP_MUL"};
+      << "unsigned operation;\n";
   for (std::size_t i = 0; i < names.size(); ++i) {
     out << (i ? "else if" : "if") << "(psl_str_eq(op->ctor_name,psl_str_lit("
-        << c23_text::literal(names[i]) << ")))operation=" << opcodes[unary ? 1 : i] << ";\n";
+        << c23_text::literal(names[i]) << ")))operation=" << i << "u;\n";
   }
   out << "else return b_error(cx,\"no declarative i32 lowering for this operator\");\n"
       << "cg_value_t left=" << module << "_backend_node(cx,n->children[" << indices[1] << "]);\n"
       << "if(left==CG_INVALID)return CG_INVALID;\n"
       << "if(cg_value_type(cx->builder.func,left)!=CG_T_I32)return b_error(cx,\"i32 operand required\");\n";
   if (unary) {
-    out << "return cg_build_binary(&cx->builder,operation,"
+    out << "(void)operation;return cg_build_binary(&cx->builder,CG_OP_SUB,"
         << "cg_build_iconst(&cx->builder,CG_T_I32,0),left);}\n";
   } else {
     out << "cg_value_t right=" << module << "_backend_node(cx,n->children[" << indices[2] << "]);\n"
         << "if(right==CG_INVALID)return CG_INVALID;\n"
         << "if(cg_value_type(cx->builder.func,right)!=CG_T_I32)return b_error(cx,\"i32 operand required\");\n"
-        << "return cg_build_binary(&cx->builder,operation,left,right);}\n";
+        << "switch(operation){\n";
+    static constexpr std::string_view opcodes[] = {"CG_OP_ADD", "CG_OP_SUB", "CG_OP_MUL"};
+    static constexpr std::string_view predicates[] = {
+      "CG_ICMP_EQ", "CG_ICMP_NE", "CG_ICMP_SLT", "CG_ICMP_SLE", "CG_ICMP_SGT", "CG_ICMP_SGE"
+    };
+    for (std::size_t i = 0; i < arithmetic_count; ++i)
+      out << "case " << i << ":return cg_build_binary(&cx->builder," << opcodes[i] << ",left,right);\n";
+    for (std::size_t i = arithmetic_count; i < names.size(); ++i)
+      out << "case " << i << ":return cg_build_icmp(&cx->builder," << predicates[i - arithmetic_count] << ",left,right);\n";
+    out << "default:return b_error(cx,\"invalid i32 operation\");}}\n";
   }
+  return true;
+}
+
+inline bool emit_singleton_select(std::ostringstream& out, const Ctor& c,
+                                  const std::string& m, psl::PslStatus minimum) {
+  if (!c.rule || !c.exhaustive) return false;
+  const auto& provenance = c.rule->provenance;
+  if (!provenance.has_status || !provenance.has_confidence || provenance.source_name.empty() ||
+      static_cast<int>(provenance.status) < static_cast<int>(minimum)) return false;
+  const E *equation = nullptr;
+  for (const auto& st : c.rule->stmts) {
+    if (st.kind != psl::PslNodeStmt::Kind::AssignAttr || st.target_var != "nativeSelect") continue;
+    if (equation) return false;
+    equation = st.expr.get();
+  }
+  if (!equation || equation->kind != E::Kind::Call || equation->name != "selectSingletons" ||
+      equation->args.size() != 3) return false;
+  std::vector<std::size_t> fields;
+  for (const auto& arg : equation->args) {
+    if (!arg || arg->kind != E::Kind::Var || !c.vars.contains(arg->name)) return false;
+    fields.push_back(c.vars.at(arg->name));
+  }
+
+  const auto list = optimizer::detail::upper(m) + "_NODE_LIST";
+  out << "case " << c.tag << ":{\n"
+      << "const N *yes=n->children[" << fields[1] << "],*no=n->children[" << fields[2] << "];\n"
+      << "if(yes->tag!=" << list << " || no->tag!=" << list
+      << " || yes->child_count!=1 || no->child_count!=1 || !yes->children || !no->children)"
+      << "return b_error(cx,\"selectSingletons requires one statement in each branch\");\n"
+      << "cg_value_t condition=" << m << "_backend_node(cx,n->children[" << fields[0] << "]);\n"
+      << "if(condition==CG_INVALID)return CG_INVALID;\n"
+      << "if(cg_value_type(cx->builder.func,condition)!=CG_T_I1)return b_error(cx,\"condition expects bool\");\n"
+      << "cg_block_t then_block=cg_builder_new_block(&cx->builder),"
+      << "else_block=cg_builder_new_block(&cx->builder),join=cg_builder_new_block(&cx->builder);\n"
+      << "cg_build_condbr(&cx->builder,condition,then_block,else_block);\n"
+      << "cg_builder_set_block(&cx->builder,then_block);\n"
+      << "cg_value_t then_value=" << m << "_backend_node(cx,yes->children[0]);\n"
+      << "if(then_value==CG_INVALID)return CG_INVALID;\n"
+      << "cg_block_t then_end=cx->builder.block;\ncg_build_br(&cx->builder,join);\n"
+      << "cg_builder_set_block(&cx->builder,else_block);\n"
+      << "cg_value_t else_value=" << m << "_backend_node(cx,no->children[0]);\n"
+      << "if(else_value==CG_INVALID)return CG_INVALID;\n"
+      << "cg_type_t type=cg_value_type(cx->builder.func,then_value);\n"
+      << "if(type!=cg_value_type(cx->builder.func,else_value))return b_error(cx,\"branch types differ\");\n"
+      << "cg_block_t else_end=cx->builder.block;\ncg_build_br(&cx->builder,join);\n"
+      << "cg_builder_set_block(&cx->builder,join);\ncg_value_t result=cg_build_phi(&cx->builder,type);\n"
+      << "if(!cg_phi_add_incoming(cx->builder.func,result,then_value,then_end) || "
+      << "!cg_phi_add_incoming(cx->builder.func,result,else_value,else_end))"
+      << "return b_error(cx,\"cannot build phi\");\nreturn result;}\n";
   return true;
 }
 
@@ -322,7 +401,7 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
         << "return b_quoted_cstr(cx,field->text_val);}\n";
       continue;
     }
-    if (emit_i32_arithmetic(o, c, m, minimum)) continue;
+    if (emit_i32_arithmetic(o, c, m, minimum) || emit_singleton_select(o, c, m, minimum)) continue;
     if(!c.eligible)continue;
     o<<"case "<<c.tag<<":{\n";int seq=0;auto result=expr(o,c.value,c,seq,m);o<<"return "<<result<<";}\n";
   }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.15.0
+
+- Generate signed integer comparisons and conditional expressions directly from PSL.
+
 ## 2.14.0
 
 - Lower declared signed 32-bit arithmetic directly to MIR and use it for Kotlin integer expressions.
