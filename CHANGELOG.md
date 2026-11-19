@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.7.3
+
+- Parse chained Kotlin postfix expressions, casts and throw expressions.
+- Preserve the original AST value when left-factoring consumes an entire alternative.
+
 ## 2.7.2
 
 - Preserve detailed syntax errors in the generated PSL adapter and standalone compiler.

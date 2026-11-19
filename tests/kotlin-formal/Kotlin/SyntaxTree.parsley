@@ -39,8 +39,24 @@ data KtExpr
   | Member KtExpr Text
   | MethodCall KtExpr Text [KtExpr]
   | Index KtExpr KtExpr
+  | PostfixChain KtExpr [KtPostfix]
+  | CastChain KtExpr [KtCast]
+  | ThrowExpr KtExpr
   | IfExpr KtExpr [KtStmt] [KtStmt]
   | WhenExpr [KtExpr] [KtWhenBranch]
+
+data KtPostfix
+  = SelectSuffix Bool Text
+  | InvokeSuffix [KtExpr]
+  | IndexSuffix KtExpr
+  | AssertNotNull
+
+data KtCastType
+  = CastType [Text] [KtCastType] Bool
+
+data KtCast
+  = CheckedCast KtCastType
+  | SafeCast KtCastType
 
 data KtWhenBranch
   = WhenBranch [KtExpr] [KtStmt]

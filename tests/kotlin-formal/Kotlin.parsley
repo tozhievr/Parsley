@@ -21,5 +21,8 @@ example "if_while_method" : "fun loop(n: Int): Int { var s = 0; if (n > 0) { whi
 example "exclusive_range" : "fun f(n: Int) { for (i in 0..<n + 1) {} }" parses-to KtFile [] [FunDecl "f" "" (FunctionScope "" [FunctionParam "n" "Int" False []] [ForStmt "i" (Bin RangeUntil (IntLit 0) (Bin Add (Var "n") (IntLit 1))) []])]
 example "default_and_named_arguments" : "fun f(vararg x: Int, y: Int = 1): Int = y\nfun g(): Int = f(y = 2)" parses-to KtFile [] [FunDecl "f" "Int" (FunctionScope "Int" [FunctionParam "x" "Int" True [], FunctionParam "y" "Int" False [IntLit 1]] [ReturnStmt [Var "y"]]), FunDecl "g" "Int" (FunctionScope "Int" [] [ReturnStmt [Call "f" [NamedArg "y" (IntLit 2)]]])]
 example "vararg_as_name" : "fun vararg(vararg: Int): Int = vararg" parses-to KtFile [] [FunDecl "vararg" "Int" (FunctionScope "Int" [FunctionParam "vararg" "Int" False []] [ReturnStmt [Var "vararg"]])]
+example "postfix_chain" : "fun f() = make().size()" parses-to KtFile [] [FunDecl "f" "" (FunctionScope "" [] [ReturnStmt [PostfixChain (Call "make" []) [SelectSuffix False "size", InvokeSuffix []]]])]
+example "safe_cast" : "fun f(x: Any) = x as? demo.Box<Int?>" parses-to KtFile [] [FunDecl "f" "" (FunctionScope "" [FunctionParam "x" "Any" False []] [ReturnStmt [CastChain (Var "x") [SafeCast (CastType ["demo", "Box"] [CastType ["Int"] [] True] False)]]])]
+example "throw_expression" : "fun f() = throw Error()" parses-to KtFile [] [FunDecl "f" "" (FunctionScope "" [] [ReturnStmt [ThrowExpr (Call "Error" [])]])]
 example "err_expr" : "fun bad(): Int = 1 +" fails-at (1, 21) expecting "expression"
 example "err_rbrace" : "fun bad() { val x = 1" fails-at (1, 22) expecting "}"

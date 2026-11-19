@@ -1,6 +1,6 @@
 module Kotlin.Syntax where
 
-import Parsley.Prelude (sepBy, many, optional, lookahead)
+import Parsley.Prelude (sepBy, many, some, optional, lookahead)
 import Kotlin.Lexical
 import Kotlin.SyntaxTree
 
@@ -382,7 +382,7 @@ returnStmt :: KtStmt
 returnStmt = ReturnStmt <$> ("return" *> returnVal) <* optSemi
 
 expr :: KtExpr
-expr = operators atom
+expr = operators castExpr
   [ infixl 1 ["||" => Bin Or]
   , infixl 2 ["&&" => Bin And]
   , infixl 3 ["==" => Bin Eq, "!=" => Bin Neq]
@@ -391,8 +391,43 @@ expr = operators atom
   , infixl 6 [".." => Bin Range, "..<" => Bin RangeUntil]
   , infixl 7 ["+" => Bin Add, "-" => Bin Sub]
   , infixl 8 ["*" => Bin Mul, "/" => Bin Div, "%" => Bin Mod]
-  , prefix 9 ["-" => Unary Neg, "!" => Unary Not]
   ]
+
+castExpr :: KtExpr
+castExpr
+  =  CastChain <$> prefixExpr <*> some castSuffix
+  |  prefixExpr
+
+castSuffix :: KtCast
+castSuffix
+  =  CheckedCast <$> ("as" *> castType)
+  |  SafeCast <$> ("as?" *> castType)
+
+castType :: KtCastType
+castType = do
+  path     <- lookahead identifier *> (identifier `sepBy` ".")
+  args     <- ("<" *> lookahead identifier *> (castType `sepBy` ",") <* ">") <|> pure []
+  nullable <- ("?" *> pure True) <|> pure False
+  pure (CastType path args nullable)
+
+prefixExpr :: KtExpr
+prefixExpr
+  =  Unary Neg <$> ("-" *> prefixExpr)
+  |  Unary Not <$> ("!" *> prefixExpr)
+  |  postfixExpr
+
+postfixExpr :: KtExpr
+postfixExpr
+  =  PostfixChain <$> atom <*> some postfixSuffix
+  |  atom
+
+postfixSuffix :: KtPostfix
+postfixSuffix
+  =  SelectSuffix True <$> ("?." *> identifier)
+  |  SelectSuffix False <$> ("." *> identifier)
+  |  InvokeSuffix <$> parens (callArg `sepBy` ",")
+  |  IndexSuffix <$> brackets expr
+  |  "!!" *> pure AssertNotNull
 
 atom :: KtExpr
 atom
@@ -404,6 +439,7 @@ atom
   |  ("true" *> pure (BoolLit True))
   |  ("false" *> pure (BoolLit False))
   |  ("null" *> pure NullLit)
+  |  ThrowExpr <$> ("throw" *> expr)
   |  ifExpr
   |  whenExpr
   |  do

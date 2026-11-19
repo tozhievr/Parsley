@@ -311,7 +311,12 @@ inline ir::ProdPtr build_suffix_prod(const FlattenedAlt& alt, std::size_t prefix
                         alt.span);
   }
   if (rem.empty()) {
-    return ir::make_eps(alt.span);
+    // The untransformed alternative returns its last value, which now
+    // lives in the shared prefix rather than in the suffix sequence.
+    ir::ActionExpr projection;
+    projection.kind = ir::ActionExpr::Kind::Arg;
+    projection.arg_index = -1;
+    return ir::make_act(std::move(projection), {}, alt.span);
   }
   if (rem.size() == 1) {
     return rem[0];
