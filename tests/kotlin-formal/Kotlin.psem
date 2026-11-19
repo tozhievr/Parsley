@@ -75,6 +75,13 @@ node CallReceiver name where
   require (isResolved value || isResolved qualifier) `orFail` E_UNDECLARED { name = name }
   type = if isResolved value then typeOf value else typeOf qualifier
 
+{-# SOURCE kotlinSpec "expressions/try-expressions" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node CatchClause name _ body where
+  scope body $ declare Variable name KtAny
+  type = KtUnit
+
 node Unary op e where
   type = if op == Not then KtBool else typeOf e
 

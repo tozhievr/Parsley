@@ -493,6 +493,7 @@ atom
   |  BoolLit <$> boolLit
   |  ("null" *> pure NullLit)
   |  ThrowExpr <$> ("throw" *> expr)
+  |  tryExpr
   |  ifExpr
   |  whenExpr
   |  do
@@ -525,6 +526,22 @@ atom
     pure (Index (Var arr) idx)
   |  Var <$> identifier
   |  parens expr
+
+tryExpr :: KtExpr
+tryExpr = TryExpr <$> ("try" *> block) <*> tryContinuation
+
+tryContinuation :: KtTryContinuation
+tryContinuation
+  =  CatchHandlers <$> catchClause <*> many catchClause <*> optionalFinally
+  |  FinallyOnly <$> ("finally" *> block)
+
+catchClause :: KtCatchClause
+catchClause = CatchClause <$> ("catch" *> "(" *> identifier <* ":") <*> (castType <* ")") <*> block
+
+optionalFinally :: KtFinally
+optionalFinally
+  =  FinallyBlock <$> ("finally" *> block)
+  |  pure NoFinally
 
 identifier :: Text
 identifier

@@ -44,8 +44,20 @@ data KtExpr
   | PostfixChain KtExpr [KtPostfix]
   | CastChain KtExpr [KtCast]
   | ThrowExpr KtExpr
+  | TryExpr [KtStmt] KtTryContinuation
   | IfExpr KtExpr [KtStmt] [KtStmt]
   | WhenExpr [KtExpr] [KtWhenBranch]
+
+data KtTryContinuation
+  = CatchHandlers KtCatchClause [KtCatchClause] KtFinally
+  | FinallyOnly [KtStmt]
+
+data KtCatchClause
+  = CatchClause Text KtCastType [KtStmt]
+
+data KtFinally
+  = NoFinally
+  | FinallyBlock [KtStmt]
 
 data KtPostfix
   = SelectSuffix Bool Text

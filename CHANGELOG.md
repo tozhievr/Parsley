@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.10.3
+
+- Parse Kotlin try expressions with catch and finally clauses and scope catch parameters to their handlers.
+
 ## 2.10.2
 
 - Evaluate direct calls with typed primitive parameters and local assignments in closed Kotlin box bodies.

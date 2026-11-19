@@ -120,8 +120,24 @@
   {
     "id": "exception",
     "source": "fun f() { try { throw IllegalStateException() } catch (e: Exception) {} }",
+    "parse": true
+  },
+  {
+    "id": "catch-parameter-scope",
+    "source": "fun f() { try {} catch (e: Exception) { e } finally {} }",
     "parse": true,
-    "gap": "try/catch/throw"
+    "diag": "!E_UNDECLARED"
+  },
+  {
+    "id": "catch-parameter-does-not-leak",
+    "source": "fun f() { try {} catch (e: Exception) {} finally { e } }",
+    "parse": true,
+    "diag": "E_UNDECLARED"
+  },
+  {
+    "id": "try-without-handler",
+    "source": "fun f() { try {} }",
+    "parse": false
   },
   {
     "id": "lambda",
