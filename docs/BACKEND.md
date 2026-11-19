@@ -75,7 +75,8 @@ A flat numeric constructor can declare `value = i32Literal n` with
 `n` is exactly representable as a signed 32-bit integer before emitting MIR.
 
 A rule may also provide `entryCstr` for the C string ABI. An optional
-`entryCstrConstructor` string limits that rule to the named constructor.
+`entryCstrConstructor` string or list of strings limits that rule to the named
+constructors.
 When no string entry matches, the driver's existing entry lowering applies.
 A flat text constructor can declare `value = cstrQuoted text` and
 `effects = []` with provenance. It emits a NUL-terminated value in read-only

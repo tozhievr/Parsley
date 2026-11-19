@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.25.0
+
+- Support constructor lists for declarative string entries and lower Kotlin boolean literals and string conditionals.
+
 ## 2.24.0
 
 - Resolve Kotlin generic constructors and array factories, and check indexed assignment receiver names.

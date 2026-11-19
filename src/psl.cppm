@@ -6168,12 +6168,28 @@ inline std::string emit_sem_source(const PslModule& psem,
         bodies << "        if(" << id << "<0)return -1;\n";
         if (optional) {
           const auto guard = std::find_if(rule.stmts.begin(), rule.stmts.end(), [](const auto& st) {
-            return st.kind == PslNodeStmt::Kind::AssignAttr && st.target_var == "entryCstrConstructor" &&
-                   st.expr && st.expr->kind == PslExpr::Kind::String;
+            return st.kind == PslNodeStmt::Kind::AssignAttr && st.target_var == "entryCstrConstructor";
           });
-          if (guard != rule.stmts.end())
-            bodies << "        if(!psl_str_eq(cx->nodes[" << id << "].node->ctor_name,"
-                   << "psl_str_lit(" << c_str_lit(guard->expr->name) << ")))continue;\n";
+          if (guard != rule.stmts.end()) {
+            const auto* expression = guard->expr.get();
+            std::vector<std::string> constructors;
+            if (expression && expression->kind == PslExpr::Kind::String)
+              constructors.push_back(expression->name);
+            if (expression && expression->kind == PslExpr::Kind::List) {
+              for (const auto& element : expression->args) {
+                if (!element || element->kind != PslExpr::Kind::String) {
+                  constructors.clear();
+                  break;
+                }
+                constructors.push_back(element->name);
+              }
+            }
+            bodies << "        if(1";
+            for (const auto& constructor : constructors)
+              bodies << " && !psl_str_eq(cx->nodes[" << id << "].node->ctor_name,"
+                     << "psl_str_lit(" << c_str_lit(constructor) << "))";
+            bodies << ")continue;\n";
+          }
         }
         bodies << "        if(selected>=0)return -1;\n        selected=" << id << ";\n";
       } else if (!is_passive(rule)) {

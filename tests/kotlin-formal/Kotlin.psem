@@ -72,8 +72,13 @@ node StrLit text where
   value = cstrQuoted text
   effects = []
 
-node BoolLit _ where
+{-# SOURCE kotlinSpec "expressions/boolean-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node BoolLit literal where
   type = KtBool
+  value = literal
+  effects = []
 
 node NullLit where
   type = KtNull
@@ -211,7 +216,7 @@ node FunDecl "box" NoTypeParameters [CastType "String" [] NoTypeArguments []] (F
   type = KtUnit
   entryPassive = True
   entryCstr = result
-  entryCstrConstructor = "StrLit"
+  entryCstrConstructor = ["StrLit", "IfExpr"]
 
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}
 {-# STATUS draft #-}

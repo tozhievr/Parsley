@@ -157,6 +157,11 @@ def main():
             string_entry.write_text(f"fun box(): String = {kotlin_literal}", encoding="utf-8")
             if run(declarative_compiler, string_entry, "--run", "--return", "cstr") != value + "\n":
                 raise RuntimeError("Kotlin box literal did not execute from its PSL description")
+        string_entry.write_text(
+            'fun box(): String = if (false) "FAIL" else "OK"', encoding="utf-8")
+        if run(declarative_compiler, string_entry, "--run", "--return", "cstr",
+               "--no-ast-opt", "-O0") != "OK\n":
+            raise RuntimeError("Conditional Kotlin string entry did not lower from PSL")
         annotation_entry = declarative / "annotation.kt"
         annotation_entry.write_text(
             'annotation class Outer { annotation class Inner }\n'
