@@ -36,6 +36,7 @@ data KtExpr
   | GenericCall Text KtTypeArgs [KtExpr]
   | NamedArg Text KtExpr
   | SpreadArg KtExpr
+  | CollectionLit [KtExpr]
   | SafeMember KtExpr Text
   | SafeMethodCall KtExpr Text [KtExpr]
   | Member KtExpr Text

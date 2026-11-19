@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.19.0
+
+- Parse Kotlin type annotations and retain bracketed collection literals in the AST.
+
 ## 2.18.0
 
 - Preserve spread arguments in Kotlin call and annotation syntax.

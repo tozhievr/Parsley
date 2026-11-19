@@ -327,6 +327,7 @@ optQuest
 
 typeExpr :: Text
 typeExpr = do
+  _    <- many declarationAnnotation
   base <- identifier
   _    <- optTypeArgs
   _    <- optQuest
@@ -503,6 +504,7 @@ castSuffix
 
 castType :: KtCastType
 castType = do
+  _        <- many declarationAnnotation
   first    <- identifier
   rest     <- many ("." *> identifier)
   args     <- typeArguments
@@ -553,6 +555,7 @@ atom
   |  StrLit <$> strLit
   |  BoolLit <$> boolLit
   |  ("null" *> pure NullLit)
+  |  CollectionLit <$> ("[" *> (expr `sepEndBy` ",") <* "]")
   |  ThrowExpr <$> ("throw" *> expr)
   |  tryExpr
   |  lambdaExpr
