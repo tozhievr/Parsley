@@ -180,6 +180,13 @@ def main():
         mir = run(declarative_compiler, string_entry, "--emit", "mir", *lowering_flags)
         if mir.count("call ptr @__parsley_cstr_") != 2:
             raise RuntimeError(f"Expected two native calls with parameters in Kotlin MIR: {mir}")
+        string_entry.write_text(
+            'fun box() = forward("OK", "FAIL")\n'
+            'fun forward(x: String, y: String): String = select(y, y, x, y, x)\n'
+            'fun select(a: String, b: String, c: String, d: String, e: String): String = e\n',
+            encoding="utf-8")
+        if run(declarative_compiler, string_entry, "--run", *lowering_flags) != "OK\n":
+            raise RuntimeError("Declarative Kotlin positional parameters were not passed in order")
         annotation_entry = declarative / "annotation.kt"
         annotation_entry.write_text(
             'annotation class Outer { annotation class Inner }\n'

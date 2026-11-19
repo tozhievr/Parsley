@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.29.0
+
+- Generate Kotlin native calls with multiple positional string parameters.
+
 ## 2.28.0
 
 - Pass a positional string argument through generated Kotlin native calls.

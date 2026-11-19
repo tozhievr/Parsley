@@ -6217,6 +6217,22 @@ inline std::string emit_sem_source(const PslModule& psem,
   bodies << "  return 0;\n}\n\n";
 
 
+  bool positional_parameters = false;
+  for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri)
+    positional_parameters |= !entry_binding(ri, "nativeCstrParameters").empty();
+  if (positional_parameters) {
+    bodies << "static psl_str native_cstr_parameter(" << mod_low << "_ctx *cx,int32_t param){\n";
+    for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
+      const auto field = entry_binding(ri, "nativeCstrParameterName");
+      if (field.empty()) continue;
+      bodies << "  {pat_bind_node_" << ri << " b={0};\n"
+             << "    if(match_pat_node_" << ri << "(cx,param,&b) && b.nid_" << field << ">=0){\n"
+             << "      const " << mod_low << "_node *name=cx->nodes[b.nid_" << field << "].node;\n"
+             << "      if(name->tag==" << mod_up << "_NODE_STRING)return name->text_val;\n"
+             << "    }\n  }\n";
+    }
+    bodies << "  (void)cx;(void)param;return (psl_str){0};\n}\n";
+  }
   bodies << "const " << mod_low << "_node *" << mod_low
          << "_native_cstr_function(void *context,psl_str name,size_t argc,psl_str *parameter){\n";
   bool callable = false;
@@ -6227,8 +6243,8 @@ inline std::string emit_sem_source(const PslModule& psem,
     bodies << "  (void)context;(void)name;(void)argc;(void)parameter;return NULL;\n}\n";
   } else {
     bodies << "  " << mod_low << "_ctx *cx=context;\n"
-           << "  if(!cx || !cx->node_count || !name.ptr || !name.len || argc>1 || (argc && !parameter))return NULL;\n"
-           << "  if(parameter)*parameter=(psl_str){0};\n"
+           << "  if(!cx || !cx->node_count || !name.ptr || !name.len || argc>16 || (argc && !parameter))return NULL;\n"
+           << "  for(size_t i=0;i<argc;++i)parameter[i]=(psl_str){0};\n"
            << "  int32_t list=-1;\n";
     for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
       const auto field = entry_binding(ri, "entryCandidates");
@@ -6246,17 +6262,33 @@ inline std::string emit_sem_source(const PslModule& psem,
       const auto name = entry_binding(ri, "nativeFunctionName");
       const auto body = entry_binding(ri, "nativeCstrBody");
       const auto parameter = entry_binding(ri, "nativeCstrParameter");
+      const auto parameters = entry_binding(ri, "nativeCstrParameters");
       if (name.empty() || body.empty()) continue;
       bodies << "    if(!matched){pat_bind_node_" << ri << " b={0};\n"
              << "      if(match_pat_node_" << ri << "(cx,candidate,&b)){\n"
              << "        matched=1;\n";
-      if (!name.empty() && !body.empty()) {
-        bodies << "        if(argc==" << (parameter.empty() ? 0 : 1)
-               << " && b.nid_" << name << ">=0 && b.nid_" << body << ">=0){\n"
+      {
+        bodies << "        if(";
+        if (parameters.empty()) bodies << "argc==" << (parameter.empty() ? 0 : 1);
+        else bodies << "b.nid_" << parameters << ">=0 && cx->nodes[b.nid_" << parameters
+                    << "].node->tag==" << mod_up << "_NODE_LIST && "
+                    << "cx->nodes[b.nid_" << parameters << "].child_count==argc";
+        bodies << " && b.nid_" << name << ">=0 && b.nid_" << body << ">=0){\n"
                << "          const " << mod_low << "_node *identifier=cx->nodes[b.nid_" << name << "].node;\n"
                << "          if(identifier->tag==" << mod_up << "_NODE_STRING && psl_str_eq(identifier->text_val,name)){\n"
-               << "            if(body)return NULL;\n";
-        if (!parameter.empty())
+               ;
+        if (!parameters.empty()) {
+          bodies << "            psl_str names[16];bool valid=true;\n"
+                 << "            for(size_t j=0;j<argc;++j){\n"
+                 << "              names[j]=native_cstr_parameter(cx,cx->nodes[b.nid_" << parameters
+                 << "].children[j]);\n"
+                 << "              if(!names[j].ptr || !names[j].len){valid=false;break;}\n"
+                 << "            }\n"
+                 << "            if(!valid)continue;\n"
+                 << "            if(body)return NULL;\n"
+                 << "            for(size_t j=0;j<argc;++j)parameter[j]=names[j];\n";
+        } else bodies << "            if(body)return NULL;\n";
+        if (parameters.empty() && !parameter.empty())
           bodies << "            if(b.nid_" << parameter << "<0)return NULL;\n"
                  << "            const " << mod_low << "_node *param=cx->nodes[b.nid_" << parameter << "].node;\n"
                  << "            if(param->tag!=" << mod_up << "_NODE_STRING)return NULL;\n"

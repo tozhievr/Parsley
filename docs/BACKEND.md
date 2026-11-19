@@ -103,7 +103,10 @@ A call constructor can declare `nativeCall = callCstr name arguments`.
 The standalone compiler resolves a unique function by name and arity from
 `entryCandidates` using the first matching native signature rule with
 `nativeFunctionName = name` and `nativeCstrBody = body`. A function can bind
-one positional C string parameter with `nativeCstrParameter = parameter`.
+up to 16 positional C string parameters with `nativeCstrParameters = parameters`
+and parameter patterns defining `nativeCstrParameterName = name`.
+The singular `nativeCstrParameter = parameter` remains supported.
+The resolver writes one parameter name per argument into the supplied array.
 A reference constructor can read that parameter with
 `nativeCall = readCstrParameter name`. The callee must
 lower to a C string and is emitted as a local MIR function. The backend's
