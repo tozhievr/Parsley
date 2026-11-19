@@ -37,6 +37,7 @@ example "constructor_parameter_defaults" : "class Config(val ordinary: Int, vara
 example "spread_arguments" : "fun f() = call(*xs, items = *ys, 2 * 3)" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [Call "call" [SpreadArg (Var "xs"), NamedArg "items" (SpreadArg (Var "ys")), Bin Mul (IntLit 2) (IntLit 3)]]])]
 example "annotated_constructor_type" : "annotation class Ann(vararg val xs: @Mark String = [])" parses-to KtFile [] [ClassDecl "annotation" "Ann" NoTypeParameters [ExtendedClassParam "val" "xs" "String" True [CollectionLit []]] [] False]
 example "collection_literal" : "fun f() = g([1, 2,])[0]" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [PostfixChain (Call "g" [CollectionLit [IntLit 1, IntLit 2]]) [IndexSuffix (IntLit 0)]]])]
+example "unary_updates" : "fun f() { xs[0]++; x--; ++y; --z; +a + b }" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [] [ExprStmt (PostfixChain (Index (Var "xs") (IntLit 0)) [PostInc]), ExprStmt (PostfixChain (Var "x") [PostDec]), ExprStmt (Unary PreInc (Var "y")), ExprStmt (Unary PreDec (Var "z")), ExprStmt (Bin Add (Unary Pos (Var "a")) (Var "b"))])]
 example "err_lone_comma" : "fun f(,) {}" fails-at (1, 7) expecting ")"
 example "err_expr" : "fun bad(): Int = 1 +" fails-at (1, 21) expecting "expression"
 example "err_rbrace" : "fun bad() { val x = 1" fails-at (1, 22) expecting "}"

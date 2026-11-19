@@ -528,7 +528,10 @@ presentTypeArguments = TypeArguments <$> ("<" *> castType) <*> many ("," *> cast
 
 prefixExpr :: KtExpr
 prefixExpr
-  =  Unary Neg <$> ("-" *> prefixExpr)
+  =  Unary PreInc <$> ("++" *> prefixExpr)
+  |  Unary PreDec <$> ("--" *> prefixExpr)
+  |  Unary Pos <$> ("+" *> prefixExpr)
+  |  Unary Neg <$> ("-" *> prefixExpr)
   |  Unary Not <$> ("!" *> prefixExpr)
   |  postfixExpr
 
@@ -544,6 +547,8 @@ postfixSuffix
   |  InvokeSuffix <$> parens (callArg `sepEndBy` ",")
   |  IndexSuffix <$> brackets expr
   |  "!!" *> pure AssertNotNull
+  |  "++" *> pure PostInc
+  |  "--" *> pure PostDec
   |  TrailingLambdaSuffix <$> lambdaExpr
 
 atom :: KtExpr

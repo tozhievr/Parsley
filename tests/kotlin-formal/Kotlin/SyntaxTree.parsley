@@ -19,7 +19,7 @@ data KtOp
   | Div
   | Mod
 
-data KtUnaryOp = Neg | Not
+data KtUnaryOp = Neg | Not | Pos | PreInc | PreDec
 
 data KtExpr
   = IntLit Double
@@ -78,6 +78,8 @@ data KtPostfix
   | InvokeSuffix [KtExpr]
   | IndexSuffix KtExpr
   | AssertNotNull
+  | PostInc
+  | PostDec
   | TrailingLambdaSuffix KtExpr
 
 data KtCastType

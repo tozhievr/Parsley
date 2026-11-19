@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.21.0
+
+- Parse Kotlin prefix and postfix updates and unary plus.
+
 ## 2.20.0
 
 - Add reproducible offsets to JetBrains Kotlin corpus batches.
