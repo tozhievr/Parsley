@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.24.0
+
+- Resolve Kotlin generic constructors and array factories, and check indexed assignment receiver names.
+
 ## 2.23.0
 
 - Parse assignments to indexed Kotlin variables and preserve ordered indices in the AST.

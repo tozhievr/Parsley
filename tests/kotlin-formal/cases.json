@@ -1,5 +1,23 @@
 [
   {
+    "id": "array-factory-and-indexed-assignment",
+    "source": "fun f() { val values = arrayOf<String>(\"A\"); values[0] = \"B\" }",
+    "parse": true,
+    "diag": "!E_UNDECLARED"
+  },
+  {
+    "id": "unresolved-indexed-assignment",
+    "source": "fun f() { missing[0] = 1 }",
+    "parse": true,
+    "diag": "E_UNDECLARED"
+  },
+  {
+    "id": "generic-constructor",
+    "source": "class Holder<T>; fun f() = Holder<String>()",
+    "parse": true,
+    "diag": "!E_UNDECLARED"
+  },
+  {
     "id": "arithmetic",
     "source": "fun f(): Int = 1 + 2 * 3",
     "parse": true

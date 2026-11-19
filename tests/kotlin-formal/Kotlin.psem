@@ -24,6 +24,8 @@ builtin readln  :: Function (KtUnit -> KtString)
 builtin Error :: Function (KtUnit -> KtAny)
 {-# SOURCE kotlinSpec "builtins/stdlib" #-}
 builtin run :: Function (KtAny -> KtAny)
+{-# SOURCE kotlinSpec "builtins/stdlib/arrayOf" #-}
+builtin arrayOf :: Function (KtAny -> KtAny)
 
 -- Диагностики ----------------------------------------------------
 diag E_UNDECLARED   :: Error "Unresolved reference: `{name}`"
@@ -164,14 +166,24 @@ node Call f args where
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
 node GenericCall f _ args where
-  fn <- lookup Function f `orFail` E_UNDECLARED { name = f }
-  type = typeOf fn
+  fn <- lookup Function f
+  classifier <- lookup Constructor f
+  alias <- lookup TypeAlias f
+  require (isResolved fn || isResolved classifier || isResolved alias) `orFail` E_UNDECLARED { name = f }
+  type = if isResolved fn then typeOf fn else if isResolved classifier then typeOf classifier else typeOf alias
 
 node ValStmt isVar name ty init where
   declare Variable name (if ty == "" then KtAny else KtInt)
   type = KtUnit
 
 node AssignStmt target op rhs where
+  sym <- lookup Variable target `orFail` E_UNDECLARED { name = target }
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "statements/assignments" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node IndexedAssignStmt target _ _ _ where
   sym <- lookup Variable target `orFail` E_UNDECLARED { name = target }
   type = KtUnit
 
