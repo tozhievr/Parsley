@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.11.3
+
+- Infer primitive argument types from sequential local bindings and simple `run` lambdas, with full lambda source ranges.
+
 ## 2.11.2
 
 - Parse Kotlin lambda literals and trailing lambdas, preserving explicit parameter scopes.

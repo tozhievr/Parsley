@@ -45,7 +45,7 @@ data KtExpr
   | CastChain KtExpr [KtCast]
   | ThrowExpr KtExpr
   | TryExpr [KtStmt] KtTryContinuation
-  | LambdaExpr KtLambdaScope
+  | LambdaExpr Text KtLambdaScope Text
   | IfExpr KtExpr [KtStmt] [KtStmt]
   | WhenExpr [KtExpr] [KtWhenBranch]
 

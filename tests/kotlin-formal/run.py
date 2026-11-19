@@ -198,6 +198,17 @@ def main():
         box.write_text('fun box(): String = "FAIL"\n', encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
             raise RuntimeError("Kotlin box did not return its own string value")
+        marked = (b"fun take(x: String) {}\n"
+                  b"fun test() { val n = 1; val copy = n; "
+                  b"take(<!ARGUMENT_TYPE_MISMATCH!>copy<!>); "
+                  b"take(<!ARGUMENT_TYPE_MISMATCH!>run { n }<!>); take(run { \"ok\" }) }")
+        clean, expected = unmark(marked)
+        located = subprocess.run([probe, "--diagnostic-spans"], input=clean,
+                                 capture_output=True, timeout=15, check=True)
+        verdict, *messages = located.stdout.decode().splitlines()
+        comparison = compare_diagnostics(expected, messages)
+        if verdict != "accept" or comparison[0] != "diagnostics-match":
+            raise RuntimeError(f"Incorrect Kotlin inferred argument diagnostics: {comparison}")
         failures = gaps = 0
         for case in cases:
             verdict, *messages = run(probe, source=case["source"]).splitlines()

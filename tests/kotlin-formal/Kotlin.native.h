@@ -33,19 +33,97 @@ static const kotlin_node *kotlin_call_target(const kotlin_node *decls, psl_str n
     return target;
 }
 
-static void kotlin_check_literal_argument(const kotlin_node *argument, const kotlin_node *param,
-                                          psl_sink sink, void *user) {
-    psl_str actual;
+struct kt_type_scope {
+    const struct kt_type_scope *parent;
+    const kotlin_node *list;
+    size_t prefix;
+};
+
+static const kotlin_node *kotlin_local_declaration(const struct kt_type_scope *scope, psl_str name,
+                                                   struct kt_type_scope *initializer_scope) {
+    for (; scope; scope = scope->parent) {
+        for (size_t i = scope->prefix; i > 0; --i) {
+            const kotlin_node *node = scope->list->children[i - 1];
+            const bool parameter = node->tag == KOTLIN_NODE_FUNCTIONPARAM;
+            if ((!parameter && node->tag != KOTLIN_NODE_VALSTMT) ||
+                !psl_str_eq(node->children[parameter ? 0 : 1]->text_val, name)) continue;
+            *initializer_scope = (struct kt_type_scope){scope->parent, scope->list, i - 1};
+            return node;
+        }
+    }
+    return NULL;
+}
+
+static bool kotlin_run_is_builtin(const kotlin_node *decls, const struct kt_type_scope *scope) {
+    const psl_str run = psl_str_lit("run");
+    struct kt_type_scope unused;
+    if (kotlin_local_declaration(scope, run, &unused)) return false;
+    for (size_t i = 0; i < decls->child_count; ++i) {
+        const kotlin_node *decl = decls->children[i];
+        if (decl->tag == KOTLIN_NODE_FUNDECL && psl_str_eq(decl->children[0]->text_val, run))
+            return false;
+        if ((decl->tag == KOTLIN_NODE_PROPDECL || decl->tag == KOTLIN_NODE_CLASSDECL) &&
+            psl_str_eq(decl->children[1]->text_val, run)) return false;
+        if (decl->tag == KOTLIN_NODE_IMPORTDECL) return false;
+    }
+    return true;
+}
+
+static psl_str kotlin_argument_type(const kotlin_node *argument, const kotlin_node *decls,
+                                   const struct kt_type_scope *scope, unsigned depth) {
+    if (depth >= 64) return (psl_str){0};
     switch (argument->tag) {
         case KOTLIN_NODE_INTLIT:
-            if (argument->children[0]->num_val > INT32_MAX) return;
-            actual = psl_str_lit("Int");
+            if (argument->children[0]->num_val <= INT32_MAX) return psl_str_lit("Int");
             break;
-        case KOTLIN_NODE_FLOATLIT: actual = psl_str_lit("Double"); break;
-        case KOTLIN_NODE_BOOLLIT: actual = psl_str_lit("Boolean"); break;
-        case KOTLIN_NODE_STRLIT: actual = psl_str_lit("String"); break;
-        default: return;
+        case KOTLIN_NODE_FLOATLIT: return psl_str_lit("Double");
+        case KOTLIN_NODE_BOOLLIT: return psl_str_lit("Boolean");
+        case KOTLIN_NODE_STRLIT: return psl_str_lit("String");
+        case KOTLIN_NODE_VAR: {
+            struct kt_type_scope initializer_scope;
+            const kotlin_node *local = kotlin_local_declaration(scope, argument->children[0]->text_val,
+                                                               &initializer_scope);
+            if (!local) break;
+            if (local->tag == KOTLIN_NODE_FUNCTIONPARAM)
+                return local->children[2]->bool_val ? (psl_str){0} : local->children[1]->text_val;
+            const psl_str declared = local->children[2]->text_val;
+            if (declared.len) return declared;
+            const kotlin_node *init = local->children[3];
+            if (init->child_count == 1)
+                return kotlin_argument_type(init->children[0], decls, &initializer_scope, depth + 1);
+            break;
+        }
+        case KOTLIN_NODE_CALL: {
+            const kotlin_node *args = argument->children[1];
+            if (!psl_str_eq(argument->children[0]->text_val, psl_str_lit("run")) ||
+                args->child_count != 1 || !kotlin_run_is_builtin(decls, scope)) break;
+            const kotlin_node *lambda = args->children[0];
+            if (lambda->tag != KOTLIN_NODE_LAMBDAEXPR) break;
+            const kotlin_node *lambda_scope = lambda->children[1];
+            const kotlin_node *params = lambda_scope->children[0];
+            if (params->tag == KOTLIN_NODE_EXPLICITLAMBDAPARAMS && params->children[0]->child_count) break;
+            const kotlin_node *body = lambda_scope->children[1];
+            if (!body->child_count) break;
+            const size_t last = body->child_count - 1;
+            for (size_t i = 0; i < last; ++i)
+                if (body->children[i]->tag != KOTLIN_NODE_VALSTMT) return (psl_str){0};
+            const kotlin_node *stmt = body->children[last];
+            if (stmt->tag != KOTLIN_NODE_EXPRSTMT) break;
+            const struct kt_type_scope inner = {scope, body, last};
+            return kotlin_argument_type(stmt->children[0], decls, &inner, depth + 1);
+        }
+        default: break;
     }
+    return (psl_str){0};
+}
+
+static void kotlin_check_argument(const kotlin_node *argument, const kotlin_node *param,
+                                  const kotlin_node *decls, const struct kt_type_scope *scope,
+                                  psl_sink sink, void *user) {
+    const psl_str actual = kotlin_argument_type(argument, decls, scope, 0);
+    if (!(psl_str_eq(actual, psl_str_lit("Int")) || psl_str_eq(actual, psl_str_lit("Double")) ||
+          psl_str_eq(actual, psl_str_lit("Boolean")) || psl_str_eq(actual, psl_str_lit("String"))))
+        return;
     const psl_str expected = param->children[1]->text_val;
     if ((psl_str_eq(expected, psl_str_lit("Int")) ||
          psl_str_eq(expected, psl_str_lit("Double")) ||
@@ -56,6 +134,7 @@ static void kotlin_check_literal_argument(const kotlin_node *argument, const kot
 }
 
 static int kotlin_bind_arguments(const kotlin_node *call, const kotlin_node *target,
+                                 const kotlin_node *decls, const struct kt_type_scope *scope,
                                  psl_sink sink, void *user) {
     const kotlin_node *params = target->children[3]->children[1];
     const kotlin_node *args = call->children[1];
@@ -77,7 +156,7 @@ static int kotlin_bind_arguments(const kotlin_node *call, const kotlin_node *tar
             }
             bound[index] = true;
             if (!params->children[index]->children[2]->bool_val)
-                kotlin_check_literal_argument(arg->children[1], params->children[index], sink, user);
+                kotlin_check_argument(arg->children[1], params->children[index], decls, scope, sink, user);
             continue;
         }
         while (next < count && bound[next] && !params->children[next]->children[2]->bool_val) ++next;
@@ -86,7 +165,7 @@ static int kotlin_bind_arguments(const kotlin_node *call, const kotlin_node *tar
             continue;
         }
         bound[next] = true;
-        kotlin_check_literal_argument(arg, params->children[next], sink, user);
+        kotlin_check_argument(arg, params->children[next], decls, scope, sink, user);
     }
     for (size_t i = 0; i < count; ++i) {
         const kotlin_node *param = params->children[i];
@@ -183,18 +262,27 @@ static void kotlin_check_generic_varargs(const kotlin_node *call, const kotlin_n
 }
 
 static int kotlin_check_call_nodes(const kotlin_node *node, const kotlin_node *decls,
-                                   psl_sink sink, void *user) {
+                                   const struct kt_type_scope *scope, psl_sink sink, void *user) {
+    if (node->tag == KOTLIN_NODE_LAMBDASCOPE || node->tag == KOTLIN_NODE_CATCHCLAUSE ||
+        node->tag == KOTLIN_NODE_FORSTMT) scope = NULL;
     if (node->tag == KOTLIN_NODE_CALL || node->tag == KOTLIN_NODE_GENERICCALL) {
         const kotlin_node *target = kotlin_call_target(decls, node->children[0]->text_val);
         if (target && target->children[1]->tag == KOTLIN_NODE_TYPEPARAMETERS) {
             kotlin_check_generic_varargs(node, target, decls, sink, user);
         } else if (target && node->tag == KOTLIN_NODE_CALL &&
-                   kotlin_bind_arguments(node, target, sink, user) < 0) {
+                   kotlin_bind_arguments(node, target, decls, scope, sink, user) < 0) {
             return -1;
         }
     }
     for (size_t i = 0; i < node->child_count; ++i) {
-        if (kotlin_check_call_nodes(node->children[i], decls, sink, user) < 0) return -1;
+        struct kt_type_scope prefix = {scope, node, i};
+        const struct kt_type_scope *child_scope = node->tag == KOTLIN_NODE_LIST ? &prefix : scope;
+        if (node->tag == KOTLIN_NODE_FUNCTIONSCOPE && i == 2) {
+            const kotlin_node *params = node->children[1];
+            prefix = (struct kt_type_scope){scope, params, params->child_count};
+            child_scope = &prefix;
+        }
+        if (kotlin_check_call_nodes(node->children[i], decls, child_scope, sink, user) < 0) return -1;
     }
     return 0;
 }
@@ -203,7 +291,7 @@ static int kotlin_check_calls(const kotlin_node *root, psl_sink sink, void *user
     const kotlin_node *decls = root->children[1];
     for (size_t i = 0; i < decls->child_count; ++i) {
         const kotlin_node *decl = decls->children[i];
-        if (decl->tag == KOTLIN_NODE_FUNDECL && kotlin_check_call_nodes(decl, decls, sink, user) < 0)
+        if (decl->tag == KOTLIN_NODE_FUNDECL && kotlin_check_call_nodes(decl, decls, NULL, sink, user) < 0)
             return -1;
     }
     return 0;

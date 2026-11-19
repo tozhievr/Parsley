@@ -535,7 +535,7 @@ trailingLambdaArgument = do
   pure [arg]
 
 lambdaExpr :: KtExpr
-lambdaExpr = LambdaExpr <$> ("{" *> lambdaScope <* "}")
+lambdaExpr = LambdaExpr <$> openBrace <*> lambdaScope <*> closeBrace
 
 lambdaScope :: KtLambdaScope
 lambdaScope = LambdaScope <$> lambdaParameters <*> many stmt
@@ -598,4 +598,4 @@ brackets :: Rule a -> Rule a
 brackets p = "[" *> p <* "]"
 
 braces :: Rule a -> Rule a
-braces p = "{" *> p <* "}"
+braces p = openBrace *> p <* (closeBrace <?> "}")
