@@ -1,10 +1,12 @@
 """Run bounded stage probes against a local copy of JetBrains Kotlin test data."""
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
 from pathlib import Path
 import os
 import re
 import subprocess
+import sys
 
 MULTI_FILE = re.compile(rb"(?m)^[ \t]*//[ \t]*(?:FILE|MODULE):")
 DIAGNOSTIC = re.compile(rb"<!>|<![A-Z][^\r\n]*?!>")
@@ -129,24 +131,34 @@ def classify(path, suite, probe, compiler):
     return "box-fail", repr(result.stdout.decode("utf-8", errors="replace"))
 
 
-def sample(integration, selection, limit, probe, compiler, *, offset=0):
+def sample(integration, selection, limit, probe, compiler, *, offset=0, jobs=1):
     directory = (integration / selection).resolve()
     if not directory.is_relative_to(integration) or not directory.exists():
         raise ValueError(f"Unknown JetBrains corpus path: {selection}")
     parts = directory.relative_to(integration).parts
     if not parts or parts[0] not in ("psi", "diagnostics", "codegen"):
         raise ValueError(f"Choose a path under psi, diagnostics or codegen: {selection}")
-    counts = Counter()
-    for path in islice(source_files(directory), offset, offset + limit):
+    def run_case(path):
         if path.suffix != ".kt":
             raise ValueError(f"Expected a .kt input: {path}")
         try:
-            status, detail = classify(path, parts[0], probe, compiler)
+            return classify(path, parts[0], probe, compiler)
         except subprocess.TimeoutExpired:
-            status, detail = "timeout", "stage exceeded 10 seconds"
-        counts[status] += 1
-        detail = " ".join(detail.split())[:240]
-        print(f"{status:22} {path.relative_to(integration).as_posix()}  {detail}")
+            return "timeout", "stage exceeded 10 seconds"
+        except OSError as error:
+            return "probe-error", str(error)
+
+    counts = Counter()
+    stop = None if limit is None else offset + limit
+    paths = islice(source_files(directory), offset, stop)
+    with ThreadPoolExecutor(max_workers=jobs) as workers:
+        while batch := list(islice(paths, jobs * 4)):
+            for path, (status, detail) in zip(batch, workers.map(run_case, batch)):
+                counts[status] += 1
+                detail = " ".join(detail.split())[:240]
+                print(f"{status:22} {path.relative_to(integration).as_posix()}  {detail}")
+            if limit is None:
+                sys.stdout.flush()
     if not counts:
         raise ValueError(f"No .kt files found in {selection} at offset {offset}")
     print(f"JetBrains batch {selection}: offset={offset}, files={sum(counts.values())}")

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.34.0
+
+- Run full JetBrains Kotlin suites with bounded parallelism and ordered per-file reports.
+
 ## 2.33.0
 
 - Parse Kotlin Float literals with precision suffixes, digit separators and exponents.

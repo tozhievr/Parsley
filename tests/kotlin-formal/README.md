@@ -47,6 +47,11 @@ Run a bounded sample under `integration/` on Windows:
 
     python tests/kotlin-formal/run.py --cli build/parsley.exe --cc clang --jetbrains psi/operators --jetbrains diagnostics/tests/arguments --jetbrains codegen/box/basics --sample-limit 6
 
+To run the complete local box suite with eight workers and preserve the ordered
+per-file results, run this from the repository root:
+
+    python -u tests/kotlin-formal/run.py --cli build/parsley.exe --cc clang --jetbrains codegen/box --all-jetbrains --jobs 8 > build/kotlin-box-baseline.txt
+
 Pass `--sample-offset 100 --sample-limit 100` to run the second batch for each selected path. Paths are visited in the same sorted traversal on each run, and files before the offset are skipped without opening them.
 
 Each selection can be a directory or an individual `.kt` file. Directories

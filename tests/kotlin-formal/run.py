@@ -61,11 +61,19 @@ def main():
     parser.add_argument("--strict", action="store_true", help="Fail on every observed conformance gap")
     parser.add_argument("--jetbrains", action="append", default=[], metavar="PATH",
                         help="Sample a path relative to integration/ (repeatable)")
-    parser.add_argument("--sample-limit", type=int, default=12,
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--all-jetbrains", action="store_true",
+                           help="Run every Kotlin file under each selected JetBrains path")
+    selection.add_argument("--sample-limit", type=int, default=12,
                         help="Maximum Kotlin files to open per selected path (default: 12)")
     parser.add_argument("--sample-offset", type=int, default=0,
                         help="Skip this many sorted Kotlin paths per selection (default: 0)")
+    parser.add_argument("--jobs", type=int, default=1, help="Concurrent JetBrains test files")
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
+    if args.all_jetbrains and not args.jetbrains:
+        parser.error("--all-jetbrains requires --jetbrains")
     if args.sample_offset < 0:
         parser.error("--sample-offset must be non-negative")
     if args.sample_limit < 1:
@@ -322,8 +330,9 @@ def main():
                 print(f"PASS {case['id']}")
         print(f"{len(cases) - failures - gaps} passed, {gaps} known gaps, {failures} regressions")
         for selection in args.jetbrains:
-            failures += sample(ROOT / "integration", selection, args.sample_limit, probe, compiler,
-                               offset=args.sample_offset)
+            limit = None if args.all_jetbrains else args.sample_limit
+            failures += sample(ROOT / "integration", selection, limit, probe, compiler,
+                               offset=args.sample_offset, jobs=args.jobs)
         return int(bool(failures or (args.strict and gaps)))
 
 
