@@ -8,7 +8,7 @@ import Kotlin.Lints
 source kotlinSpec = manual "Kotlin Language Specification" rev "1.9-rfc+0.1"
 
 -- Типы и символы -------------------------------------------------
-type KtTy = KtInt | KtDouble | KtString | KtChar | KtBool | KtUnit | KtNull | KtAny | KtErr
+type KtTy = KtInt | KtDouble | KtFloat | KtString | KtChar | KtBool | KtUnit | KtNull | KtAny | KtErr
 
 kind Variable where shadowing = Warn
 kind Function
@@ -64,6 +64,12 @@ node FloatLit n where
   type = KtDouble
   value = n
   effects = []
+
+{-# SOURCE kotlinSpec "expressions/floating-point-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node Float32Lit _ where
+  type = KtFloat
 
 {-# SOURCE kotlinSpec "expressions/string-literals" #-}
 {-# STATUS draft #-}

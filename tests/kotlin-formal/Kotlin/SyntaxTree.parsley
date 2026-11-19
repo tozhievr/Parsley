@@ -26,6 +26,7 @@ data KtExpr
   | HexLit Text
   | BinaryLit Text
   | FloatLit Double
+  | Float32Lit Text
   | StrLit Text
   | CharLit Text
   | BoolLit Bool

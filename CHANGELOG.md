@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.33.0
+
+- Parse Kotlin Float literals with precision suffixes, digit separators and exponents.
+
 ## 2.32.0
 
 - Parse Kotlin character literals and distinguish `Char` from `String` in PSL.

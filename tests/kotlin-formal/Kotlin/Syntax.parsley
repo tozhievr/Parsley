@@ -641,7 +641,8 @@ postfixSuffix
 
 atom :: KtExpr
 atom
-  =  FloatLit <$> floatLit
+  =  Float32Lit <$> float32Lit
+  |  FloatLit <$> floatLit
   |  HexLit <$> hexLit
   |  BinaryLit <$> binaryLit
   |  IntLit <$> intLit
