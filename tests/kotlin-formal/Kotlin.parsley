@@ -30,5 +30,8 @@ example "try_finally" : "fun f() = try { 1 } finally {}" parses-to KtFile [] [Fu
 example "multiple_catches" : "fun f() = try {} catch (a: A) {} catch (b: B) {} finally {}" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [TryExpr [] (CatchHandlers (CatchClause "a" (CastType "A" [] NoTypeArguments []) []) [CatchClause "b" (CastType "B" [] NoTypeArguments []) []] (FinallyBlock []))]])]
 example "lambda_arguments" : "fun f() = run { x: Int -> x }" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [Call "run" [LambdaExpr "{" (LambdaScope (ExplicitLambdaParams [LambdaParameter "x" [CastType "Int" [] NoTypeArguments []]]) [ExprStmt (Var "x")]) "}"]]])]
 example "trailing_lambda_suffix" : "fun f() = apply(1) { 2 }" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [PostfixChain (Call "apply" [IntLit 1]) [TrailingLambdaSuffix (LambdaExpr "{" (LambdaScope ImplicitLambdaParams [ExprStmt (IntLit 2)]) "}")]]])]
+example "trailing_comma" : "fun f(x: Int,) = g(x,)" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [FunctionParam "x" "Int" False []] [ReturnStmt [Call "g" [Var "x"]]])]
+example "type_test_precedence" : "fun f(x: Any) = x !is Int == true" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [FunctionParam "x" "Any" False []] [ReturnStmt [Bin Eq (TypeTestChain (Var "x") [TypeTest False (CastType "Int" [] NoTypeArguments [])]) (BoolLit True)]])]
+example "err_lone_comma" : "fun f(,) {}" fails-at (1, 7) expecting ")"
 example "err_expr" : "fun bad(): Int = 1 +" fails-at (1, 21) expecting "expression"
 example "err_rbrace" : "fun bad() { val x = 1" fails-at (1, 22) expecting "}"

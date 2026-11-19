@@ -1,6 +1,6 @@
 module Kotlin.Syntax where
 
-import Parsley.Prelude (sepBy, many, some, optional, lookahead)
+import Parsley.Prelude (sepBy, sepEndBy, many, some, optional, lookahead)
 import Kotlin.Lexical
 import Kotlin.SyntaxTree
 
@@ -118,12 +118,12 @@ superClause = do
   ":"
   _ <- identifier
   _ <- optTypeArgs
-  _ <- parens (callArg `sepBy` ",") <|> (do
+  _ <- parens (callArg `sepEndBy` ",") <|> (do
   pure [])
   pure ()
 
 classParamList :: [KtParam]
-classParamList = parens (classParam `sepBy` ",")
+classParamList = parens (classParam `sepEndBy` ",")
 
 classParamMut :: Text
 classParamMut
@@ -173,7 +173,7 @@ companionDecl = do
 
 typeParameters :: KtTypeParams
 typeParameters
-  =  TypeParameters <$> ("<" *> typeParameter) <*> many ("," *> typeParameter) <* ">"
+  =  TypeParameters <$> ("<" *> typeParameter) <*> many ("," *> typeParameter) <* optional "," <* ">"
   |  pure NoTypeParameters
 
 typeParameter :: KtTypeParam
@@ -195,7 +195,7 @@ funDecl = do
   "fun"
   types  <- typeParameters
   name   <- identifier
-  params <- parens (funParam `sepBy` ",")
+  params <- parens (funParam `sepEndBy` ",")
   retTy  <- functionReturnType
   body   <- funBody
   optSemi
@@ -264,7 +264,7 @@ optTypeArgs :: ()
 optTypeArgs
   =  do
     "<"
-    _ <- typeExpr `sepBy` ","
+    _ <- typeExpr `sepEndBy` ","
     ">"
     pure ()
   |  do
@@ -419,12 +419,26 @@ returnStmt :: KtStmt
 returnStmt = ReturnStmt <$> ("return" *> returnVal) <* optSemi
 
 expr :: KtExpr
-expr = operators castExpr
+expr = operators typeTestExpr
   [ infixl 1 ["||" => Bin Or]
   , infixl 2 ["&&" => Bin And]
   , infixl 3 ["==" => Bin Eq, "!=" => Bin Neq]
   , infixl 4 ["<=" => Bin Le, ">=" => Bin Ge, "<" => Bin Lt, ">" => Bin Gt]
-  , infixr 5 ["?:" => Bin Elvis]
+  ]
+
+typeTestExpr :: KtExpr
+typeTestExpr
+  =  TypeTestChain <$> elvisExpr <*> some typeTest
+  |  elvisExpr
+
+typeTest :: KtTypeTest
+typeTest
+  =  TypeTest True <$> ("is" *> castType)
+  |  TypeTest False <$> ("!is" *> castType)
+
+elvisExpr :: KtExpr
+elvisExpr = operators castExpr
+  [ infixr 5 ["?:" => Bin Elvis]
   , infixl 6 [".." => Bin Range, "..<" => Bin RangeUntil]
   , infixl 7 ["+" => Bin Add, "-" => Bin Sub]
   , infixl 8 ["*" => Bin Mul, "/" => Bin Div, "%" => Bin Mod]
@@ -461,7 +475,7 @@ typeArguments
   |  pure NoTypeArguments
 
 presentTypeArguments :: KtTypeArgs
-presentTypeArguments = TypeArguments <$> ("<" *> castType) <*> many ("," *> castType) <* ">"
+presentTypeArguments = TypeArguments <$> ("<" *> castType) <*> many ("," *> castType) <* optional "," <* ">"
 
 prefixExpr :: KtExpr
 prefixExpr
@@ -478,7 +492,7 @@ postfixSuffix :: KtPostfix
 postfixSuffix
   =  SelectSuffix True <$> ("?." *> identifier)
   |  SelectSuffix False <$> ("." *> identifier)
-  |  InvokeSuffix <$> parens (callArg `sepBy` ",")
+  |  InvokeSuffix <$> parens (callArg `sepEndBy` ",")
   |  IndexSuffix <$> brackets expr
   |  "!!" *> pure AssertNotNull
   |  TrailingLambdaSuffix <$> lambdaExpr
@@ -501,7 +515,7 @@ atom
     obj  <- identifier
     "?."
     meth <- identifier
-    args <- parens (callArg `sepBy` ",")
+    args <- parens (callArg `sepEndBy` ",")
     pure (SafeMethodCall (Var obj) meth args)
   |  do
     obj <- identifier
@@ -512,15 +526,15 @@ atom
     obj  <- identifier
     "."
     meth <- identifier
-    args <- parens (callArg `sepBy` ",")
+    args <- parens (callArg `sepEndBy` ",")
     pure (MethodCall (CallReceiver obj) meth args)
   |  do
     obj <- identifier
     "."
     fld <- identifier
     pure (Member (Var obj) fld)
-  |  GenericCall <$> identifier <*> presentTypeArguments <*> parens (callArg `sepBy` ",")
-  |  Call <$> identifier <*> parens (callArg `sepBy` ",")
+  |  GenericCall <$> identifier <*> presentTypeArguments <*> parens (callArg `sepEndBy` ",")
+  |  Call <$> identifier <*> parens (callArg `sepEndBy` ",")
   |  do
     arr <- identifier
     idx <- brackets expr
@@ -542,7 +556,7 @@ lambdaScope = LambdaScope <$> lambdaParameters <*> many stmt
 
 lambdaParameters :: KtLambdaParams
 lambdaParameters
-  =  ExplicitLambdaParams <$> ((lambdaParameter `sepBy` ",") <* "->")
+  =  ExplicitLambdaParams <$> ((lambdaParameter `sepEndBy` ",") <* "->")
   |  pure ImplicitLambdaParams
 
 lambdaParameter :: KtLambdaParam

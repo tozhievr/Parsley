@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.11.4
+
+- Require an element before an optional trailing separator in `sepEndBy` and support Kotlin trailing commas in parameter, argument and type lists.
+- Parse Kotlin `is` and `!is` type checks at their own precedence tier.
+
 ## 2.11.3
 
 - Infer primitive argument types from sequential local bindings and simple `run` lambdas, with full lambda source ranges.

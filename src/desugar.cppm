@@ -1181,7 +1181,7 @@ private:
     specialized.rSpan = call_span;
     specialized.is_generated = true;
 
-    if (fn == "sepBy" && args.size() >= 2) {
+    if ((fn == "sepBy" || fn == "sepEndBy") && args.size() >= 2) {
       // sepBy p sep = (:) <$> p <*> many (sep *> p) <|> pure []
       auto dp = desugar_expr(args[0], {}, false);
       auto dsep = desugar_expr(args[1], {}, true);
@@ -1204,17 +1204,16 @@ private:
       empty_list.kind = ir::ActionExpr::Kind::List;
       auto empty = ir::make_act(std::move(empty_list), {}, call_span);
 
+      if (fn == "sepEndBy") {
+        // A trailing separator belongs to a nonempty list.
+        auto opt_sep = ir::make_rep(0, 1, dsep, call_span);
+        ir::ActionExpr keep_first;
+        keep_first.kind = ir::ActionExpr::Kind::Arg;
+        keep_first.arg_index = 0;
+        non_empty = ir::make_act(std::move(keep_first),
+                                 {std::move(non_empty), std::move(opt_sep)}, call_span);
+      }
       specialized.rBody = ir::make_alt({std::move(non_empty), std::move(empty)}, call_span);
-      specialized.rType = ir::Type{ir::Type::Kind::List, "List", {}};
-    } else if (fn == "sepEndBy" && args.size() >= 2) {
-      auto base_sep_by = monomorphize_call("sepBy", args, {}, false, call_span);
-      auto dsep = desugar_expr(args[1], {}, true);
-      auto opt_sep = ir::make_rep(0, 1, std::move(dsep), call_span);
-      ir::ActionExpr keep_first;
-      keep_first.kind = ir::ActionExpr::Kind::Arg;
-      keep_first.arg_index = 0;
-      specialized.rBody = ir::make_act(
-          std::move(keep_first), {std::move(base_sep_by), std::move(opt_sep)}, call_span);
       specialized.rType = ir::Type{ir::Type::Kind::List, "List", {}};
     } else if (fn == "between" && args.size() >= 3) {
       auto dopen = desugar_expr(args[0], {}, false);

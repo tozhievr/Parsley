@@ -43,6 +43,7 @@ data KtExpr
   | Index KtExpr KtExpr
   | PostfixChain KtExpr [KtPostfix]
   | CastChain KtExpr [KtCast]
+  | TypeTestChain KtExpr [KtTypeTest]
   | ThrowExpr KtExpr
   | TryExpr [KtStmt] KtTryContinuation
   | LambdaExpr Text KtLambdaScope Text
@@ -83,6 +84,9 @@ data KtCastType
 data KtTypeArgs
   = NoTypeArguments
   | TypeArguments KtCastType [KtCastType]
+
+data KtTypeTest
+  = TypeTest Bool KtCastType
 
 data KtCast
   = CheckedCast KtCastType
