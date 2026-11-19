@@ -309,13 +309,8 @@ optInit
 
 optTypeArgs :: ()
 optTypeArgs
-  =  do
-    "<"
-    _ <- typeExpr `sepEndBy` ","
-    ">"
-    pure ()
-  |  do
-    pure ()
+  =  presentTypeArguments *> pure ()
+  |  pure ()
 
 optQuest :: ()
 optQuest
@@ -524,7 +519,14 @@ typeArguments
   |  pure NoTypeArguments
 
 presentTypeArguments :: KtTypeArgs
-presentTypeArguments = TypeArguments <$> ("<" *> castType) <*> many ("," *> castType) <* optional "," <* ">"
+presentTypeArguments = TypeArguments <$> ("<" *> typeProjection) <*> many ("," *> typeProjection) <* optional "," <* ">"
+
+typeProjection :: KtCastType
+typeProjection
+  =  "*" *> pure StarProjection
+  |  InProjection <$> ("in" *> castType)
+  |  OutProjection <$> ("out" *> castType)
+  |  castType
 
 prefixExpr :: KtExpr
 prefixExpr
@@ -649,6 +651,7 @@ identifier
   |  ("setparam" *> pure "setparam")
   |  ("delegate" *> pure "delegate")
   |  ("all" *> pure "all")
+  |  ("out" *> pure "out")
 
 callArg :: KtExpr
 callArg

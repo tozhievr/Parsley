@@ -84,6 +84,9 @@ data KtPostfix
 
 data KtCastType
   = CastType Text [Text] KtTypeArgs [Text]
+  | StarProjection
+  | InProjection KtCastType
+  | OutProjection KtCastType
 
 data KtTypeArgs
   = NoTypeArguments

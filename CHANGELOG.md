@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.22.0
+
+- Parse Kotlin use-site type projections and preserve them in structural type nodes.
+
 ## 2.21.0
 
 - Parse Kotlin prefix and postfix updates and unary plus.
