@@ -137,7 +137,8 @@ def main():
             raise RuntimeError(f"Declarative arithmetic did not emit operations: {mir}")
         conditional = declarative / "conditional.kt"
         for expression in ("if (-2 < 1) { 42 } else { 9 }",
-                           "if (2 == 1) { 7 } else (if (3 >= 3) 42 else 8)"):
+                           "if (2 == 1) { 7 } else (if (3 >= 3) 42 else 8)",
+                           "if (2 == 1) { 7 } else { if (3 >= 3) 42 else 8 }"):
             conditional.write_text(f"fun main(): Int = {expression}", encoding="utf-8")
             actual = run(declarative_compiler, conditional, "--run", "--return", "i32",
                          "--no-ast-opt", "-O0").strip()

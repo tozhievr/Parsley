@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.15.1
+
+- Lower Kotlin conditionals used as the sole statement in a value-producing branch.
+
 ## 2.15.0
 
 - Generate signed integer comparisons and conditional expressions directly from PSL.

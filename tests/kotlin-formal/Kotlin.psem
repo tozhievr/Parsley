@@ -122,6 +122,12 @@ node TypeTestChain _ _ where
 node IfExpr condition whenTrue whenFalse where
   nativeSelect = selectSingletons condition whenTrue whenFalse
 
+{-# SOURCE kotlinSpec "expressions/conditional-expressions" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node IfStmt condition whenTrue whenFalse where
+  nativeSelect = selectSingletons condition whenTrue whenFalse
+
 {-# SOURCE kotlinSpec "statements" #-}
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
