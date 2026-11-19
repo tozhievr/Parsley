@@ -1,6 +1,7 @@
 """Compile and execute the generated C23 optimizer and pass ABI."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,6 +11,7 @@ parser.add_argument("--cli", required=True)
 parser.add_argument("--cc", required=True)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
+math_libraries = ["-lm"] if os.name != "nt" else []
 
 def run(command, **kwargs):
     result = subprocess.run(list(map(str, command)), capture_output=True, text=True,
@@ -248,7 +250,7 @@ int main(void){
                out/"optimizer_opt.c", consumer]
     exe = out/"optimizer-test.exe"
     run([args.cc, "-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror",
-         "-DPARSLEY_STATIC", *sources, "-o", exe])
+         "-DPARSLEY_STATIC", *sources, "-o", exe, *math_libraries])
     print(run([exe]).stdout, end="")
     # Changing the denotation changes the generated optimization, without any
     # optimizer rule or constructor-name change.
@@ -283,7 +285,7 @@ int main(void){
         exe = generated/"check.exe"
         run([args.cc, "-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror",
              "-DPARSLEY_STATIC", generated/"parser.c", generated/"optimizer_parse.c",
-             generated/"optimizer_opt.c", check, "-o", exe])
+             generated/"optimizer_opt.c", check, "-o", exe, *math_libraries])
         run([exe])
 
     variant("changed-denotation", original_sem.replace("l.value + r.value", "l.value - r.value"),

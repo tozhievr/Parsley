@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.35.3
+
+- Link the generated optimizer regression consumers with libm on non-Windows hosts.
+
 ## 2.35.2
 
 - Write Kotlin conformance logs as UTF-8 under Windows CI.
