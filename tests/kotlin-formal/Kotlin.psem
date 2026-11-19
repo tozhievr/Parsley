@@ -13,6 +13,7 @@ type KtTy = KtInt | KtDouble | KtString | KtBool | KtUnit | KtNull | KtAny | KtE
 kind Variable where shadowing = Warn
 kind Function
 kind TypeName
+kind Constructor
 
 {-# SOURCE kotlinSpec "builtins/stdlib" "2026-01-15" #-}
 builtin println :: Function (KtAny -> KtUnit)
@@ -92,8 +93,10 @@ node Bin op l r where
          else if op == RangeUntil then KtAny else typeOf l
 
 node Call f args where
-  fn <- lookup Function f `orFail` E_UNDECLARED { name = f }
-  type = typeOf fn
+  fn <- lookup Function f
+  classifier <- lookup Constructor f
+  require (isResolved fn || isResolved classifier) `orFail` E_UNDECLARED { name = f }
+  type = if isResolved fn then typeOf fn else typeOf classifier
 
 {-# SOURCE kotlinSpec "expressions/function-calls-and-property-access" #-}
 {-# STATUS draft #-}
@@ -118,7 +121,7 @@ node PropDecl isVar name ty init where
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
 node FunDecl name _ _ functionScope where
-  declare Function name KtAny
+  predeclare Function name KtAny
   scope functionScope $ pure ()
   type = KtUnit
 
@@ -137,7 +140,8 @@ node FunctionScope [CastType ty [] NoTypeArguments _] _ [ReturnStmt [result]] wh
   type = KtUnit
 
 node ClassDecl kw name _ params members where
-  declare TypeName name KtAny
+  predeclare Constructor name KtAny
+  predeclare TypeName name KtAny
   scope members $ pure ()
   type = KtUnit
 

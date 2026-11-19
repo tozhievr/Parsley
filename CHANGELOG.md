@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.11.0
+
+- Add PSL `predeclare` for sibling declarations and enable forward function and class references in Kotlin.
+
 ## 2.10.3
 
 - Parse Kotlin try expressions with catch and finally clauses and scope catch parameters to their handlers.

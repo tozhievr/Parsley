@@ -290,6 +290,7 @@ struct PslNodeStmt {
   };
 
   Kind kind = Kind::AssignAttr;
+  bool predeclare = false;
   std::string target_var;
   std::string sym_kind;
   PslExprPtr expr;
@@ -305,6 +306,11 @@ struct PslNodeRule {
   PslProvenance provenance;
   Span span;
 };
+
+inline bool has_predeclarations(const PslNodeRule& rule) {
+  return std::any_of(rule.stmts.begin(), rule.stmts.end(),
+                     [](const PslNodeStmt& st) { return st.predeclare; });
+}
 
 struct PslFlowExpr {
   enum class Kind {
@@ -2045,7 +2051,8 @@ private:
       }
       return st;
     }
-    if (check_ident("declare")) {
+    if (check_ident("declare") || check_ident("predeclare")) {
+      st.predeclare = check_ident("predeclare");
       st.kind = PslNodeStmt::Kind::Declare;
       advance();
       if (!at_eof()) {
@@ -3031,7 +3038,7 @@ public:
       sym.arity = types_.arity_of(tid);
       int sid = static_cast<int>(symbols_.size());
       symbols_.push_back(std::move(sym));
-      scopes_.back()[bi.name] = sid;
+      scopes_.back()[bi.name][symbols_.back().kind] = sid;
     }
   }
 
@@ -3040,6 +3047,7 @@ public:
     if (nodes_.empty()) return res;
 
     // Passes 1-3: Scope/Declare, Lookup, TypeInference/Require
+    hoist_ = std::any_of(mod_.node_rules.begin(), mod_.node_rules.end(), has_predeclarations);
     run_node_passes(0, 0);
 
     // Pass 4: Flow CFG + Bitvector Dataflow Analyses
@@ -3075,7 +3083,8 @@ private:
   std::unordered_map<std::string, int> type_aliases_;
   TypeStore types_;
   std::vector<RuntimeSymbol> symbols_;
-  std::vector<std::unordered_map<std::string, int>> scopes_;
+  using ScopeSymbols = std::unordered_map<std::string, std::unordered_map<std::string, int>>;
+  std::vector<ScopeSymbols> scopes_;
   std::unordered_map<int, int> node_types_;
   std::unordered_map<int, int> node_resolved_sym_;
   std::unordered_map<int, int> node_declared_sym_;
@@ -3718,12 +3727,14 @@ private:
   int lookup_symbol_in_scopes(const std::string& name, const std::string& kind) const {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
       auto fit = it->find(name);
-      if (fit != it->end()) {
-        if (kind.empty() || symbols_[fit->second].kind == kind ||
-            symbols_[fit->second].kind == "Builtin") {
-          return fit->second;
-        }
+      if (fit == it->end()) continue;
+      if (kind.empty()) {
+        int latest = -1;
+        for (const auto& [symbol_kind, symbol] : fit->second) latest = std::max(latest, symbol);
+        return latest;
       }
+      if (auto found = fit->second.find(kind); found != fit->second.end()) return found->second;
+      if (auto builtin = fit->second.find("Builtin"); builtin != fit->second.end()) return builtin->second;
     }
     return -1;
   }
@@ -3771,7 +3782,7 @@ private:
         sym.arity = types_.arity_of(sym.type_var);
         int sid = static_cast<int>(symbols_.size());
         symbols_.push_back(std::move(sym));
-        scopes_.back()[nv.s] = sid;
+        scopes_.back()[nv.s][st.sym_kind] = sid;
         node_declared_sym_[nid] = sid;
         break;
       }
@@ -3816,6 +3827,23 @@ private:
   }
 
   std::unordered_set<int> scoped_children_;
+  std::unordered_set<int> predeclared_;
+  bool hoist_ = false;
+
+  void predeclare_node(int nid, int level) {
+    if (predeclared_.contains(nid) || !nodes_[nid].val) return;
+    for (const auto& rule : mod_.node_rules) {
+      std::unordered_map<std::string, PatBinding> bindings;
+      if (!match_psl_pattern(rule.pattern, *nodes_[nid].val, nid, val_to_id_, grammar_, bindings)) continue;
+      if (has_predeclarations(rule)) {
+        std::unordered_map<std::string, RVal> locals;
+        for (const auto& st : rule.stmts)
+          if (st.predeclare) exec_node_stmt(st, bindings, locals, nid, level);
+        predeclared_.insert(nid);
+      }
+      return;
+    }
+  }
 
   void run_node_passes(int nid, int level) {
     if (nid < 0 || nid >= static_cast<int>(nodes_.size())) return;
@@ -3824,6 +3852,9 @@ private:
     const eval::EvalValue* val = nodes_[nid].val;
     if (!val) return;
 
+    if (hoist_ && val->kind == eval::EvalValue::Kind::List) {
+      for (int child : nodes_[nid].children) predeclare_node(child, level);
+    }
     // Match first applicable `node` rule
     const PslNodeRule* matched_rule = nullptr;
     std::unordered_map<std::string, PatBinding> bindings;
@@ -3867,7 +3898,7 @@ private:
             scopes_.pop_back();
             scoped_children_.insert(scid);
           }
-        } else {
+        } else if (!st.predeclare || !predeclared_.contains(nid)) {
           exec_node_stmt(st, bindings, locals, nid, level);
         }
       }
@@ -5489,7 +5520,7 @@ inline std::string emit_sem_source(const PslModule& psem,
   o << "  const " << mod_low << "_node *node;\n";
   o << "  int32_t parent_id;\n  int32_t *children;\n  size_t child_count;\n";
   o << "  int32_t type_id;\n  int32_t decl_sym;\n  int32_t resolved_sym;\n";
-  o << "  uint8_t reachable;\n  uint8_t scoped_done;\n";
+  o << "  uint8_t reachable;\n  uint8_t scoped_done;\n  uint8_t predeclared;\n";
   o << "} psl_node_info;\n\n";
 
   o << "#define PSL_MAX_SCOPES 64\n\n";
@@ -5893,6 +5924,40 @@ inline std::string emit_sem_source(const PslModule& psem,
                          psem.node_rules[ri].pattern, node_vars[ri]);
   }
 
+  const bool hoist = std::any_of(psem.node_rules.begin(), psem.node_rules.end(), has_predeclarations);
+  if (hoist) {
+    bodies << "static void predeclare_node(" << mod_low << "_ctx *cx, int32_t nid, int level) {\n"
+           << "  if(nid<0 || (size_t)nid>=cx->node_count || cx->nodes[nid].predeclared)return;\n";
+    for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
+      const auto& rule = psem.node_rules[ri];
+      const std::string pstruct = "pat_bind_node_" + std::to_string(ri);
+      bodies << "  {\n    " << pstruct << " bindings={0};\n"
+             << "    if(match_pat_node_" << ri << "(cx,nid,&bindings)){\n";
+      if (has_predeclarations(rule)) {
+        bodies << "      const " << pstruct << " *b=&bindings;\n      (void)b;\n";
+        ExprEnv env;
+        env.mod_low = mod_low;
+        env.pat_struct = pstruct;
+        env.pat_vars = node_vars[ri];
+        env.type_names = type_names;
+        env.analysis_idx = analysis_idx;
+        env.helpers = &helpers;
+        env.next_helper_id = next_helper_id;
+        for (const auto& st : rule.stmts) {
+          if (!st.predeclare) continue;
+          bodies << "      {\n        psl_rval name=" << emit_expr(st.expr, env)
+                 << ";\n        psl_rval type=" << emit_expr(st.expr2, env)
+                 << ";\n        sym_declare(cx,name.s,psl_str_lit(" << c_str_lit(st.sym_kind)
+                 << "),rv_as_type(cx,type,level),nid);\n      }\n";
+        }
+        next_helper_id = env.next_helper_id;
+        bodies << "      cx->nodes[nid].predeclared=1;\n";
+      }
+      bodies << "      return;\n    }\n  }\n";
+    }
+    bodies << "}\n\n";
+  }
+
   bodies << "static void run_node_passes(" << mod_low << "_ctx *cx, int32_t nid, int level);\n\n";
   for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
     const auto& nr = psem.node_rules[ri];
@@ -5966,7 +6031,8 @@ inline std::string emit_sem_source(const PslModule& psem,
         case PslNodeStmt::Kind::Declare: {
           std::string nv = emit_expr(st.expr, env);
           std::string tv = emit_expr(st.expr2, env);
-          bodies << "  {\n    psl_rval dn = " << nv << ";\n    psl_rval dt = " << tv << ";\n";
+          bodies << (st.predeclare && !slevel_delta ? "  if (!cx->nodes[nid].predeclared) {" : "  {");
+          bodies << "\n    psl_rval dn = " << nv << ";\n    psl_rval dt = " << tv << ";\n";
           bodies << "    sym_declare(cx, dn.s, psl_str_lit(" << c_str_lit(st.sym_kind) << "), rv_as_type(cx, dt, " << lvl << "), nid);\n";
           bodies << "  }\n";
           break;
@@ -6037,6 +6103,11 @@ inline std::string emit_sem_source(const PslModule& psem,
   bodies << "  if (cx->nodes[nid].scoped_done) return;\n";
   bodies << "  const " << mod_low << "_node *n = cx->nodes[nid].node;\n";
   bodies << "  if (!n) return;\n";
+  if (hoist) {
+    bodies << "  if(n->tag==" << mod_up << "_NODE_LIST){\n"
+           << "    for(size_t i=0;i<cx->nodes[nid].child_count;++i)\n"
+           << "      predeclare_node(cx,cx->nodes[nid].children[i],level);\n  }\n";
+  }
   for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
     bodies << "  {\n    pat_bind_node_" << ri << " b;\n    memset(&b, 0, sizeof(b));\n";
     bodies << "    if (match_pat_node_" << ri << "(cx, nid, &b)) {\n";

@@ -211,5 +211,23 @@
     "source": "fun f(x: Int): Int = x; fun g(): Int = x",
     "diag": "E_UNDECLARED",
     "parse": true
+  },
+  {
+    "id": "forward-function-and-constructor",
+    "source": "fun f(): Int = g(); fun g(): Int { val x = Later(); return 1 }; class Later",
+    "parse": true,
+    "diag": "!E_UNDECLARED"
+  },
+  {
+    "id": "member-predeclaration-does-not-leak",
+    "source": "class C { fun hidden(): Int = 1 }; fun main(): Int = hidden()",
+    "parse": true,
+    "diag": "E_UNDECLARED"
+  },
+  {
+    "id": "local-variables-are-sequential",
+    "source": "fun f() { val a = b; val b = 1 }",
+    "parse": true,
+    "diag": "E_UNDECLARED"
   }
 ]

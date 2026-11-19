@@ -12,6 +12,11 @@ Updated: 2026-11-18. This describes the C23 implementation; the older architectu
 - `Parsley.Ascii` provides ASCII token classes. `Parsley.Unicode` remains a legacy alias with the same ASCII-only behavior. See [REGEX.md](REGEX.md).
 - `pkg list/show` inspect bundled modules; `pkg init` scaffolds files. It is not a dependency downloader, and `parsley.toml` is scaffolding metadata rather than an active project loader.
 
+PSL `predeclare Kind name type` registers declarations on direct AST list
+members before analyzing their bodies. Use pattern-bound names and types
+that can be evaluated without visiting child nodes. A regular `declare`
+retains its sequential visibility.
+
 ## Generated C ABI
 
 Regenerate headers and libraries together after these unreleased ABI changes. For module `Calc`, exported parser symbols are `calc_parser_parse`, `calc_parser_parse_n`, `calc_parser_result_free`, `calc_parser_format_ast`, and `calc_parser_run_examples`. The semantic adapter is separately named `calc_parse`.
