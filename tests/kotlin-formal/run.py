@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
@@ -108,6 +109,27 @@ def main():
         result = subprocess.run([executable], capture_output=True, timeout=15)
         if result.returncode != 42:
             raise RuntimeError(f"Expected Kotlin PE exit code 42, got {result.returncode}: {result.stderr!r}")
+        declarative = out / "without-adapter"
+        declarative.mkdir()
+        shutil.copyfile(grammar, declarative / grammar.name)
+        shutil.copyfile(ROOT / "Kotlin.psem", declarative / "Kotlin.psem")
+        shutil.copytree(ROOT / "Kotlin", declarative / "Kotlin")
+        generated = declarative / "generated"
+        run(args.cli, "build", declarative / grammar.name, "-o", generated,
+            "--no-compile-shared", "--compile-compiler", env={**os.environ, "PARSLEY_CC": args.cc})
+        if (generated / "tools" / "native_adapter.h").exists():
+            raise RuntimeError("Declarative test unexpectedly used a native adapter")
+        declarative_compiler = generated / "kotlin_compiler.exe"
+        if run(declarative_compiler, source, "--run", "--return", "i32").strip() != "42":
+            raise RuntimeError("Kotlin main did not execute from its PSL description")
+        invalid_entry = declarative / "invalid.kt"
+        for text in ("fun other(): Int = 42", "fun main(): Int = 1; fun main(): Int = 2",
+                     "val x = 1; fun main(): Int = 42"):
+            invalid_entry.write_text(text, encoding="utf-8")
+            result = subprocess.run([declarative_compiler, invalid_entry, "--emit", "mir",
+                                     "--return", "i32"], capture_output=True, encoding="utf-8", timeout=15)
+            if result.returncode != 1 or "declarative native entry" not in result.stderr:
+                raise RuntimeError(f"Accepted invalid declarative entry: {text}")
         print("Standalone Kotlin compiler: help, version, JIT and PE exit code verified")
         strict_c = ["-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror",
                     "-DPARSLEY_STATIC", "-I", out]

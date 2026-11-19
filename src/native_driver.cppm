@@ -133,6 +133,10 @@ int main(int argc,char **argv){
    goto cleanup;
  }
 #endif
+ const @m@_node *entry=NULL;
+ const int selected=@m@_native_entry(semantic,result==CG_T_I32,&entry);
+ if(selected<0){fprintf(stderr,"missing, ambiguous or unsupported declarative native entry\n");goto cleanup;}
+ if(selected>0)root=entry;
  if(ast_opt){
    @m@_opt_result opt=@m@_optimize(&optimized,root,NULL,NULL,0);
    if(opt.status){fprintf(stderr,"AST optimization failed: %d\n",opt.status);goto cleanup;}root=opt.root;

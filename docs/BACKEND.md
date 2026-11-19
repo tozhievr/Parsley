@@ -62,6 +62,18 @@ not enabled. A frontend needing exact integers must use its exact typed parser
 AST/custom adapter instead of reconstructing Int64 from a PSL double.
 Unsupported operations fail rather than producing a placeholder zero value.
 
+## Declarative i32 entry
+
+Assign `entryCandidates` to a pattern-bound list on the file's PSL node
+rule. On an entry declaration's rule use `entryI32` to bind the expression
+to lower. Mark other permitted declarations with `entryPassive = True` only
+when they require no execution. Exactly one candidate must supply the entry.
+Selection runs after semantic validation and before expression optimization.
+
+A flat numeric constructor can declare `value = i32Literal n` with
+`effects = []` and the normal provenance pragmas. The backend checks that
+`n` is exactly representable as a signed 32-bit integer before emitting MIR.
+
 ## Extending a language
 
 When the CLI generates a native backend, it copies an optional adjacent

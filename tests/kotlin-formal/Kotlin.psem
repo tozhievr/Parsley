@@ -34,8 +34,13 @@ diag W_DIV_ZERO     :: Warning "Division or modulo by constant zero"
 diag W_DEAD_CODE    :: Warning "Unreachable statement after `return`"
 
 -- Правила для узлов AST ------------------------------------------
-node IntLit _ where
+{-# SOURCE kotlinSpec "expressions/integer-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node IntLit n where
   type = KtInt
+  value = i32Literal n
+  effects = []
 
 {-# SOURCE kotlinSpec "expressions/integer-literals" #-}
 {-# STATUS draft #-}
@@ -144,7 +149,16 @@ node PropDecl isVar name ty init where
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunDecl "main" NoTypeParameters [CastType "Int" [] NoTypeArguments []] (FunctionScope _ [] [ReturnStmt [result]]) where
+  predeclare Function "main" KtAny
+  type = KtUnit
+  entryI32 = result
+
 node FunDecl name _ _ functionScope where
+  entryPassive = True
   predeclare Function name KtAny
   scope functionScope $ pure ()
   type = KtUnit
@@ -198,6 +212,7 @@ node TypeAliasDecl name _ where
   type = KtUnit
 
 node KtFile pkg decls where
+  entryCandidates = decls
   scope decls $ pure ()
   type = KtUnit
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.12.0
+
+- Generate signed 32-bit entry selection from PSL AST patterns and use it for Kotlin `main`, including checked integer literal lowering.
+
 ## 2.11.4
 
 - Require an element before an optional trailing separator in `sepEndBy` and support Kotlin trailing commas in parameter, argument and type lists.

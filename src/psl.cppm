@@ -4992,6 +4992,9 @@ inline std::string emit_sem_header(const std::string& mod_low, const std::string
   o << "PARSLEY_API " << mod_low << "_ctx *" << mod_low << "_ctx_new(psl_arena *arena, const " << mod_low << "_options *opt);\n";
   o << "PARSLEY_API int " << mod_low << "_analyze(" << mod_low << "_ctx *cx, const " << mod_low
     << "_node *root, psl_sink sink, void *user);\n";
+  o << "/* After analyze: 1 selected, 0 no declarative entry for this ABI, -1 invalid or ambiguous. */\n";
+  o << "PARSLEY_API int " << mod_low << "_native_entry(" << mod_low << "_ctx *cx, int i32, const "
+    << mod_low << "_node **entry);\n";
   o << "PARSLEY_API int " << mod_low << "_psl_selftest(void);\n\n";
   o << "PARSLEY_API size_t " << mod_low << "_diag_count(const " << mod_low << "_ctx *cx);\n";
   o << "PARSLEY_API size_t " << mod_low << "_nodes_visited(const " << mod_low << "_ctx *cx);\n";
@@ -6117,6 +6120,62 @@ inline std::string emit_sem_source(const PslModule& psem,
   bodies << "  for (size_t ci = 0; ci < cx->nodes[nid].child_count; ++ci) {\n";
   bodies << "    run_node_passes(cx, cx->nodes[nid].children[ci], level);\n";
   bodies << "  }\n}\n\n";
+
+  // Entry attributes use the same first-match patterns and indexed AST as PSL.
+  auto entry_binding = [&](std::size_t ri, std::string_view attribute) -> std::string {
+    for (const auto& st : psem.node_rules[ri].stmts) {
+      if (st.kind != PslNodeStmt::Kind::AssignAttr || st.target_var != attribute ||
+          !st.expr || st.expr->kind != PslExpr::Kind::Var) continue;
+      if (std::find(node_vars[ri].begin(), node_vars[ri].end(), st.expr->name) != node_vars[ri].end())
+        return sanitize_ident(st.expr->name);
+    }
+    return {};
+  };
+  auto is_passive = [](const PslNodeRule& rule) {
+    return std::any_of(rule.stmts.begin(), rule.stmts.end(), [](const PslNodeStmt& st) {
+      return st.kind == PslNodeStmt::Kind::AssignAttr && st.target_var == "entryPassive" &&
+             st.expr && st.expr->kind == PslExpr::Kind::Bool && st.expr->bool_value;
+    });
+  };
+  bool has_i32_entry = false;
+  for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri)
+    has_i32_entry |= !entry_binding(ri, "entryI32").empty();
+
+  bodies << "int " << mod_low << "_native_entry(" << mod_low << "_ctx *cx, int i32, const "
+         << mod_low << "_node **entry) {\n";
+  if (!has_i32_entry) {
+    bodies << "  (void)cx; (void)i32; (void)entry;\n  return 0;\n}\n\n";
+  } else {
+    bodies << "  if(!i32)return 0;\n  if(!cx || !cx->node_count || !entry)return -1;\n"
+           << "  int32_t list=-1, selected=-1;\n";
+    for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
+      const auto field = entry_binding(ri, "entryCandidates");
+      bodies << "  if(list<0){\n    pat_bind_node_" << ri << " b={0};\n"
+             << "    if(match_pat_node_" << ri << "(cx,0,&b)){\n";
+      if (field.empty()) bodies << "      return -1;\n";
+      else bodies << "      list=b.nid_" << field << ";\n      if(list<0)return -1;\n";
+      bodies << "    }\n  }\n";
+    }
+    bodies << "  if(list<0 || cx->nodes[list].node->tag!=" << mod_up << "_NODE_LIST)return -1;\n"
+           << "  for(size_t i=0;i<cx->nodes[list].child_count;++i){\n"
+           << "    int32_t candidate=cx->nodes[list].children[i];\n    int accepted=0;\n";
+    for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
+      const auto field = entry_binding(ri, "entryI32");
+      bodies << "    if(!accepted){\n      pat_bind_node_" << ri << " b={0};\n"
+             << "      if(match_pat_node_" << ri << "(cx,candidate,&b)){\n";
+      if (!field.empty()) {
+        bodies << "        if(selected>=0 || b.nid_" << field << "<0)return -1;\n"
+               << "        selected=b.nid_" << field << ";\n        accepted=1;\n";
+      } else if (is_passive(psem.node_rules[ri])) {
+        bodies << "        accepted=1;\n";
+      } else {
+        bodies << "        return -1;\n";
+      }
+      bodies << "      }\n    }\n";
+    }
+    bodies << "    if(!accepted)return -1;\n  }\n"
+           << "  if(selected<0)return -1;\n  *entry=cx->nodes[selected].node;\n  return 1;\n}\n\n";
+  }
 
   // Pass 4: CFG & Bitvector Dataflow Solver
   for (std::size_t fi = 0; fi < psem.flow_rules.size(); ++fi) {

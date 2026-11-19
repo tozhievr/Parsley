@@ -160,7 +160,30 @@ PARSLEY_API cg_module_t *@m@_backend_lower(const @m@_node *,const char *,
 )NB";
   replace(h,"@m@",m);replace(h,"@U@",up);return h;
 }
-inline std::string source(const std::vector<Ctor>& ctors,const std::string& m){
+inline const E *i32_literal(const Ctor& c, psl::PslStatus minimum) {
+  if (!c.rule || !c.exhaustive || !c.value || c.value->kind != E::Kind::Call ||
+      c.value->name != "i32Literal" || c.value->args.size() != 1) return nullptr;
+  const E *arg = c.value->args[0].get();
+  if (!arg || arg->kind != E::Kind::Var || !c.vars.contains(arg->name) ||
+      optimizer::detail::primitive(c.fields[c.vars.at(arg->name)]) != 1) return nullptr;
+  const auto& provenance = c.rule->provenance;
+  if (!provenance.has_status || !provenance.has_confidence || provenance.source_name.empty() ||
+      static_cast<int>(provenance.status) < static_cast<int>(minimum)) return nullptr;
+  bool pure = false;
+  for (const auto& st : c.rule->stmts) {
+    if (st.kind != psl::PslNodeStmt::Kind::AssignAttr) return nullptr;
+    if (st.target_var == "effects") {
+      if (pure || !optimizer::detail::empty_effects(st.expr.get())) return nullptr;
+      pure = true;
+    } else if (st.target_var == "value") {
+      if (st.expr.get() != c.value) return nullptr;
+    } else if (st.target_var != "type") return nullptr;
+  }
+  return pure ? arg : nullptr;
+}
+
+inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
+                          psl::PslStatus minimum){
   std::ostringstream o;
   o<<"#include \""<<m<<"_backend.h\"\n#include <string.h>\n"
    <<"struct "<<m<<"_backend_context {cg_builder_t builder;cg_diag_t *diag;"<<m<<"_backend_options options;size_t depth,steps;};\n"
@@ -169,7 +192,19 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m){
    <<"cg_builder_t *"<<m<<"_backend_builder(Ctx *cx){return cx ? &cx->builder : NULL;}\n"
    <<"cg_diag_t *"<<m<<"_backend_diagnostic(Ctx *cx){return cx ? cx->diag : NULL;}\n"
    <<"static cg_value_t b_infer(Ctx *cx,const N *n){(void)cx;switch(n->tag){\n";
-  for(const auto& c:ctors)if(c.eligible){
+  for(const auto& c:ctors) {
+    if (const E *arg = i32_literal(c, minimum)) {
+      o << "case " << c.tag << ":{\n"
+        << "const N *field=n->children[" << c.vars.at(arg->name) << "];\n"
+        << "if(field->tag!=" << optimizer::detail::upper(m) << "_NODE_NUMBER)"
+        << "return b_error(cx,\"i32Literal requires a numeric field\");\n"
+        << "const double value=field->num_val;\n"
+        << "if(!(value>=INT32_MIN && value<=INT32_MAX) || value!=(double)(int32_t)value)"
+        << "return b_error(cx,\"i32Literal requires an exact signed 32-bit integer\");\n"
+        << "return cg_build_iconst(&cx->builder,CG_T_I32,(int32_t)value);}\n";
+      continue;
+    }
+    if(!c.eligible)continue;
     o<<"case "<<c.tag<<":{\n";int seq=0;auto result=expr(o,c.value,c,seq,m);o<<"return "<<result<<";}\n";
   }
   o<<"default:return b_error(cx,\"constructor needs a language lowering hook\");}}\n";
@@ -201,7 +236,7 @@ inline std::vector<psl::PslGeneratedFile> generate(const ir::Grammar& g,const ps
   const std::string m=c23_text::module_stem(options.module_override.empty()?g.module_name:options.module_override);
   const auto up=optimizer::detail::upper(m);
   auto ctors=optimizer::detail::derive(g,sem,up,options.min_status);
-  std::vector<psl::PslGeneratedFile> files={{m+"_backend.h",detail::header(m,up)},{m+"_backend.c",detail::source(ctors,m)}};
+  std::vector<psl::PslGeneratedFile> files={{m+"_backend.h",detail::header(m,up)},{m+"_backend.c",detail::source(ctors,m,options.min_status)}};
   files.push_back({"tools/"+m+"_compiler.c",native_driver::generate(m, adapter.has_value())});
   if(adapter)files.push_back({"tools/native_adapter.h",*adapter});
   for(const auto& file:nextc_bundle::files)files.push_back({std::string(file.path),detail::bundle_file(file)});
