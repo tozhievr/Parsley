@@ -106,6 +106,7 @@ data KtWhenBranch
 data KtStmt
   = ValStmt Bool Text Text [KtExpr]
   | AssignStmt Text Text KtExpr
+  | IndexedAssignStmt Text [KtExpr] Text KtExpr
   | IfStmt KtExpr [KtStmt] [KtStmt]
   | WhenStmt [KtExpr] [KtWhenBranch]
   | WhileStmt KtExpr [KtStmt]

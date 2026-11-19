@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.23.0
+
+- Parse assignments to indexed Kotlin variables and preserve ordered indices in the AST.
+
 ## 2.22.0
 
 - Parse Kotlin use-site type projections and preserve them in structural type nodes.

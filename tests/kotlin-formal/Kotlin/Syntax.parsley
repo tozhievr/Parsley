@@ -346,6 +346,7 @@ stmt
   |  whileStmt
   |  forStmt
   |  returnStmt
+  |  indexedAssignStmt
   |  assignStmt
   |  (ExprStmt <$> expr <* optSemi)
 
@@ -375,6 +376,18 @@ assignOp
   |  do
     "/="
     pure "/="
+  |  do
+    "%="
+    pure "%="
+
+indexedAssignStmt :: KtStmt
+indexedAssignStmt = do
+  receiver <- identifier
+  indices  <- some (brackets expr)
+  op       <- assignOp
+  rhs      <- expr
+  optSemi
+  pure (IndexedAssignStmt receiver indices op rhs)
 
 assignStmt :: KtStmt
 assignStmt = do
