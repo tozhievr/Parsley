@@ -164,6 +164,10 @@ def main():
         box.write_text('fun value(): String = "OK"\nfun box() = value()', encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "OK":
             raise RuntimeError("Kotlin box did not return OK")
+        box.write_text('class A { companion object { fun answer() = "OK" } }\n'
+                       'fun box() = A.answer()\n', encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "OK":
+            raise RuntimeError("Kotlin companion call did not return OK")
         box.write_text('fun box(): String = "FAIL"\n', encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
             raise RuntimeError("Kotlin box did not return its own string value")

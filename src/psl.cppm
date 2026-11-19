@@ -3531,6 +3531,13 @@ private:
           }
           RVal r; r.kind = RVal::Kind::Number; r.num = static_cast<double>(cnt); return r;
         }
+        if (e->name == "isResolved" && e->args.size() == 1) {
+          const RVal value = eval_expr(e->args[0], bindings, locals, cur_node_id, level, depth + 1);
+          RVal result;
+          result.kind = RVal::Kind::Bool;
+          result.b = value.kind == RVal::Kind::SymId;
+          return result;
+        }
         if (e->name == "useCount" && !e->args.empty()) {
           RVal av = eval_expr(e->args[0], bindings, locals, cur_node_id, level, depth + 1);
           int cnt = 0;
@@ -5271,6 +5278,9 @@ inline std::string emit_expr(const PslExprPtr& e, ExprEnv& env, int depth = 0) {
       }
       if (e->name == "count" && !e->args.empty()) {
         return "rv_count_list(" + emit_expr(e->args[0], env, depth + 1) + ")";
+      }
+      if (e->name == "isResolved" && e->args.size() == 1) {
+        return "rv_bool((" + emit_expr(e->args[0], env, depth + 1) + ").kind == RV_SYM)";
       }
       if (e->name == "useCount" && !e->args.empty()) {
         return "rv_use_count(cx, nid, " + emit_expr(e->args[0], env, depth + 1) + ")";

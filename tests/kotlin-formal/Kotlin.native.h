@@ -260,8 +260,34 @@ static bool kotlin_box_return_type(const kotlin_node *types) {
            type->children[2]->tag == KOTLIN_NODE_NOTYPEARGUMENTS;
 }
 
+static const kotlin_node *kotlin_companion_members(const kotlin_node *decls, psl_str name) {
+    const kotlin_node *members = NULL;
+    for (size_t i = 0; i < decls->child_count; ++i) {
+        const kotlin_node *decl = decls->children[i];
+        if (decl->tag != KOTLIN_NODE_CLASSDECL ||
+            !psl_str_eq(decl->children[1]->text_val, name)) continue;
+        if (members) return NULL;
+        members = decl->children[4];
+    }
+    if (!members) return NULL;
+    const kotlin_node *companion = NULL;
+    for (size_t i = 0; i < members->child_count; ++i) {
+        const kotlin_node *member = members->children[i];
+        if (member->tag != KOTLIN_NODE_COMPANIONDECL) continue;
+        if (companion) return NULL;
+        companion = member->children[1];
+    }
+    if (!companion) return NULL;
+    for (size_t i = 0; i < companion->child_count; ++i) {
+        /* Initializers may have effects and need companion object storage. */
+        if (companion->children[i]->tag != KOTLIN_NODE_FUNDECL) return NULL;
+    }
+    return companion;
+}
+
 static cg_value_t kotlin_lower_box_function(kotlin_backend_context *ctx, const kotlin_node *function,
-                                             const kotlin_node *decls, unsigned depth) {
+                                             const kotlin_node *decls, const kotlin_node *scope_decls,
+                                             unsigned depth) {
     if (!function || depth >= 64 || function->children[1]->tag != KOTLIN_NODE_NOTYPEPARAMETERS ||
         !kotlin_box_return_type(function->children[2])) return CG_INVALID;
     const kotlin_node *scope = function->children[3];
@@ -272,21 +298,31 @@ static cg_value_t kotlin_lower_box_function(kotlin_backend_context *ctx, const k
     if (returns->child_count != 1) return CG_INVALID;
     const kotlin_node *expr = returns->children[0];
     if (expr->tag == KOTLIN_NODE_STRLIT) return kotlin_box_literal(ctx, expr->children[0]->text_val);
-    if (expr->tag != KOTLIN_NODE_CALL || expr->children[1]->child_count) return CG_INVALID;
-    const kotlin_node *callee = kotlin_call_target(decls, expr->children[0]->text_val);
-    return kotlin_lower_box_function(ctx, callee, decls, depth + 1);
+    if (expr->tag == KOTLIN_NODE_CALL && !expr->children[1]->child_count) {
+        const kotlin_node *callee = kotlin_call_target(scope_decls, expr->children[0]->text_val);
+        return kotlin_lower_box_function(ctx, callee, decls, scope_decls, depth + 1);
+    }
+    if (expr->tag == KOTLIN_NODE_METHODCALL &&
+        expr->children[0]->tag == KOTLIN_NODE_CALLRECEIVER && !expr->children[2]->child_count) {
+        const psl_str receiver = expr->children[0]->children[0]->text_val;
+        const kotlin_node *members = kotlin_companion_members(decls, receiver);
+        if (!members) return CG_INVALID;
+        const kotlin_node *callee = kotlin_call_target(members, expr->children[1]->text_val);
+        return kotlin_lower_box_function(ctx, callee, decls, members, depth + 1);
+    }
+    return CG_INVALID;
 }
 
 static cg_value_t kotlin_lower_box(kotlin_backend_context *ctx, const kotlin_node *decls) {
     for (size_t i = 0; i < decls->child_count; ++i) {
         const kotlin_node_tag tag = decls->children[i]->tag;
-        if (tag != KOTLIN_NODE_FUNDECL && tag != KOTLIN_NODE_IMPORTDECL) {
-            cg_diag_error(kotlin_backend_diagnostic(ctx), "box lowering supports only top-level functions and imports");
+        if (tag != KOTLIN_NODE_FUNDECL && tag != KOTLIN_NODE_IMPORTDECL && tag != KOTLIN_NODE_CLASSDECL) {
+            cg_diag_error(kotlin_backend_diagnostic(ctx), "box lowering supports only top-level functions, classes and imports");
             return CG_INVALID;
         }
     }
     const kotlin_node *function = kotlin_call_target(decls, psl_str_lit("box"));
-    cg_value_t result = kotlin_lower_box_function(ctx, function, decls, 0);
+    cg_value_t result = kotlin_lower_box_function(ctx, function, decls, decls, 0);
     if (result == CG_INVALID)
         cg_diag_error(kotlin_backend_diagnostic(ctx), "unsupported or missing Kotlin box string entry");
     return result;

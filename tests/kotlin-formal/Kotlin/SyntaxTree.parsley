@@ -39,6 +39,7 @@ data KtExpr
   | SafeMethodCall KtExpr Text [KtExpr]
   | Member KtExpr Text
   | MethodCall KtExpr Text [KtExpr]
+  | CallReceiver Text
   | Index KtExpr KtExpr
   | PostfixChain KtExpr [KtPostfix]
   | CastChain KtExpr [KtCast]

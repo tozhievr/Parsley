@@ -64,6 +64,15 @@ node Var x where
   sym  <- lookup Variable x `orFail` E_UNDECLARED { name = x }
   type =  typeOf sym
 
+{-# SOURCE kotlinSpec "overload-resolution/building-the-overload-candidate-set" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node CallReceiver name where
+  value <- lookup Variable name
+  qualifier <- lookup TypeName name
+  require (isResolved value || isResolved qualifier) `orFail` E_UNDECLARED { name = name }
+  type = if isResolved value then typeOf value else typeOf qualifier
+
 node Unary op e where
   type = if op == Not then KtBool else typeOf e
 

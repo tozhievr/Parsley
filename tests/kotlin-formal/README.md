@@ -58,7 +58,8 @@ on tool errors, timeouts and incorrect executed box results. The diagnostic comp
 codes and reports missing and extra entries. Token-derived ranges are available
 when the AST retains source tokens. A box case passes when its compiled entry
 returns exactly `OK`. The current native adapter supports string literals and
-chains of parameterless top-level calls, with no JetBrains runtime libraries.
+chains of parameterless top-level calls and parameterless companion-qualified
+calls without companion initializers. It uses no JetBrains runtime libraries.
 Full PSI tree comparison remains outside the current probe.
 
 ## Coverage boundaries

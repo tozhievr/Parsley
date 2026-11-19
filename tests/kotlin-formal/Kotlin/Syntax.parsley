@@ -511,7 +511,7 @@ atom
     "."
     meth <- identifier
     args <- parens (callArg `sepBy` ",")
-    pure (MethodCall (Var obj) meth args)
+    pure (MethodCall (CallReceiver obj) meth args)
   |  do
     obj <- identifier
     "."

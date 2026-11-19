@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.10.0
+
+- Expose `isResolved` in PSL and support Kotlin companion-qualified string calls in the native box entry.
+
 ## 2.9.0
 
 - Add a C string JIT result ABI and run supported Kotlin box functions through the generated compiler.
