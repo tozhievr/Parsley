@@ -65,7 +65,8 @@ static bool interpret_call(void *user,const char *name,const uint64_t *args,uint
  ++effects;*out=args[0];return true;
 }
 static bool lower(optimizer_backend_context *cx,const optimizer_node *node,cg_value_t *out,void *user){
- (void)user;cg_builder_t *b=optimizer_backend_builder(cx);
+ if(optimizer_backend_program(cx)!=user){*out=CG_INVALID;return true;}
+ cg_builder_t *b=optimizer_backend_builder(cx);
  if(node->tag==OPTIMIZER_NODE_OPAQUE){*out=cg_func_param(b->func,0);return true;}
  if(node->tag==OPTIMIZER_NODE_TRACE){
    cg_value_t arg=optimizer_backend_node(cx,node->children[0]);
@@ -87,7 +88,7 @@ int main(void){
  const optimizer_node *node=NULL;psl_diag error={0};
  CHECK(optimizer_parse(&arena,psl_str_lit("if eq opaque 0 0 trace 10 trace 20"),&node,&error)>=0);
  optimizer_mir_pass extension={"count",pass,NULL};
- optimizer_backend_options options={0};options.lower=lower;options.passes=&extension;options.pass_count=1;
+ optimizer_backend_options options={0};options.lower=lower;options.user=(void *)node;options.passes=&extension;options.pass_count=1;
  cg_type_t params[]={CG_T_F64};
  cg_module_t *module=optimizer_backend_lower(node,"entry",CG_T_F64,params,1,&options,&diag);
  CHECK(module && passes==1);
@@ -103,6 +104,12 @@ int main(void){
    effects=0;CHECK(fn(x)==expected && effects==1);
  }
  cg_jit_destroy(jit);cg_module_destroy(module);
+ const optimizer_node *separate_entry=NULL;
+ CHECK(optimizer_parse(&arena,psl_str_lit("opaque 0"),&separate_entry,&error)>=0);
+ CHECK(node!=separate_entry);
+ module=optimizer_backend_lower_entry(node,separate_entry,"entry",CG_T_F64,params,1,&options,&diag);
+ CHECK(module && passes==2);
+ cg_module_destroy(module);
  extension.run=broken;diag=(cg_diag_t){0};
  module=optimizer_backend_lower(node,"entry",CG_T_F64,params,1,&options,&diag);
  CHECK(!module && diag.error_count);

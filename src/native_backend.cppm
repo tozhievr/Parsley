@@ -149,10 +149,13 @@ typedef struct @m@_backend_options {
   size_t pass_count;
 } @m@_backend_options;
 PARSLEY_API cg_builder_t *@m@_backend_builder(@m@_backend_context *);
+PARSLEY_API const @m@_node *@m@_backend_program(const @m@_backend_context *);
 PARSLEY_API cg_diag_t *@m@_backend_diagnostic(@m@_backend_context *);
 PARSLEY_API cg_value_t @m@_backend_node(@m@_backend_context *,const @m@_node *);
 PARSLEY_API cg_module_t *@m@_backend_lower(const @m@_node *,const char *,
   cg_type_t,const cg_type_t *,uint32_t,const @m@_backend_options *,cg_diag_t *);
+PARSLEY_API cg_module_t *@m@_backend_lower_entry(const @m@_node *program,const @m@_node *entry,
+  const char *,cg_type_t,const cg_type_t *,uint32_t,const @m@_backend_options *,cg_diag_t *);
 #ifdef __cplusplus
 }
 #endif
@@ -332,10 +335,11 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
                           psl::PslStatus minimum){
   std::ostringstream o;
   o<<"#include \""<<m<<"_backend.h\"\n#include <string.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
-   <<"struct "<<m<<"_backend_context {cg_builder_t builder;cg_diag_t *diag;"<<m<<"_backend_options options;size_t depth,steps;};\n"
+   <<"struct "<<m<<"_backend_context {cg_builder_t builder;cg_diag_t *diag;"<<m<<"_backend_options options;const "<<m<<"_node *program;size_t depth,steps;};\n"
    <<"typedef "<<m<<"_backend_context Ctx;\ntypedef "<<m<<"_node N;\n"
    <<"static cg_value_t b_error(Ctx *cx,const char *message){cg_diag_error(cx->diag,\"%s\",message);return CG_INVALID;}\n"
    <<"cg_builder_t *"<<m<<"_backend_builder(Ctx *cx){return cx ? &cx->builder : NULL;}\n"
+   <<"const N *"<<m<<"_backend_program(const Ctx *cx){return cx ? cx->program : NULL;}\n"
    <<"cg_diag_t *"<<m<<"_backend_diagnostic(Ctx *cx){return cx ? cx->diag : NULL;}\n"
    ;
   if (std::any_of(ctors.begin(), ctors.end(), [&](const Ctor& c) {
@@ -414,9 +418,9 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
   o<<"default:break;}\nif(n->child_count>cx->options.max_steps)return b_error(cx,\"child budget exceeded\");\nfor(size_t i=0;i<n->child_count;++i)if(!n->children[i] || n->children[i]->size<sizeof(N))return b_error(cx,\"invalid child node\");\n++cx->depth;\ncg_value_t value=CG_INVALID;\n"
    <<"if(!cx->options.lower || !cx->options.lower(cx,n,&value,cx->options.user))value=b_infer(cx,n);\n"
    <<"--cx->depth;\nif(value==CG_INVALID && !cx->diag->error_count)b_error(cx,\"language hook failed\");\nreturn value;}\n";
-  o<<"cg_module_t *"<<m<<"_backend_lower(const N *root,const char *symbol,cg_type_t result,const cg_type_t *params,uint32_t count,const "<<m<<"_backend_options *options,cg_diag_t *diag){\n"
-   <<"if(!diag)return NULL;\nif(!root || !symbol || !*symbol || (count && !params) || result==CG_T_VOID || result>=CG_T_COUNT){cg_diag_error(diag,\"invalid lowering arguments\");return NULL;}\n"
-   <<"Ctx cx={0};cx.diag=diag;if(options)cx.options=*options;\n"
+  o<<"cg_module_t *"<<m<<"_backend_lower_entry(const N *program,const N *root,const char *symbol,cg_type_t result,const cg_type_t *params,uint32_t count,const "<<m<<"_backend_options *options,cg_diag_t *diag){\n"
+   <<"if(!diag)return NULL;\nif(!program || !root || !symbol || !*symbol || (count && !params) || result==CG_T_VOID || result>=CG_T_COUNT){cg_diag_error(diag,\"invalid lowering arguments\");return NULL;}\n"
+   <<"Ctx cx={0};cx.diag=diag;cx.program=program;if(options)cx.options=*options;\n"
    <<"if(!cx.options.max_depth)cx.options.max_depth=128;if(!cx.options.max_steps)cx.options.max_steps=1000000;\n"
    <<"if(cx.options.max_depth>512 || (cx.options.pass_count && !cx.options.passes)){cg_diag_error(diag,\"invalid lowering options\");return NULL;}\n"
    <<"cg_module_t *module=cg_module_create();if(!module){cg_diag_error(diag,\"cannot allocate MIR module\");return NULL;}\n"
@@ -426,7 +430,10 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
    <<"if(value==CG_INVALID || diag->error_count || cg_value_type(function,value)!=result){if(!diag->error_count)cg_diag_error(diag,\"entry result type differs from declared return type\");cg_module_destroy(module);return NULL;}\n"
    <<"cg_build_ret(&cx.builder,value);\nfor(size_t i=0;i<cx.options.pass_count;++i){const "<<m<<"_mir_pass *pass=&cx.options.passes[i];\n"
    <<"if(!pass->run || !pass->name || !pass->run(module,diag,pass->user)){if(!diag->error_count)cg_diag_error(diag,\"MIR extension pass failed\");cg_module_destroy(module);return NULL;}}\n"
-   <<"if(!cg_module_ok(module) || diag->error_count || !cg_verify_module(module,diag)){cg_module_destroy(module);return NULL;}\nreturn module;}\n";
+   <<"if(!cg_module_ok(module) || diag->error_count || !cg_verify_module(module,diag)){cg_module_destroy(module);return NULL;}\nreturn module;}\n"
+   <<"cg_module_t *"<<m<<"_backend_lower(const N *root,const char *symbol,cg_type_t result,const cg_type_t *params,uint32_t count,const "
+   <<m<<"_backend_options *options,cg_diag_t *diag){\n"
+   <<"return "<<m<<"_backend_lower_entry(root,root,symbol,result,params,count,options,diag);}\n";
   return o.str();
 }
 } // namespace detail

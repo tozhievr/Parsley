@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.26.0
+
+- Preserve the full AST in native lowering when a distinct entry body is selected.
+
 ## 2.25.0
 
 - Support constructor lists for declarative string entries and lower Kotlin boolean literals and string conditionals.

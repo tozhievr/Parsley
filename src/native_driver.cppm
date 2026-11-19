@@ -136,12 +136,13 @@ int main(int argc,char **argv){
  const @m@_node *entry=NULL;
  const int selected=@m@_native_entry(semantic,result==CG_T_I32 ? 1 : result==CG_T_PTR ? 2 : 0,&entry);
  if(selected<0){fprintf(stderr,"missing, ambiguous or unsupported declarative native entry\n");goto cleanup;}
+ const @m@_node *program=root;
  if(selected>0)root=entry;
  if(ast_opt){
    @m@_opt_result opt=@m@_optimize(&optimized,root,NULL,NULL,0);
    if(opt.status){fprintf(stderr,"AST optimization failed: %d\n",opt.status);goto cleanup;}root=opt.root;
  }
- module=@m@_backend_lower(root,"language_main",result,NULL,0,PARSLEY_NATIVE_OPTIONS,&diag);
+ module=@m@_backend_lower_entry(program,root,"language_main",result,NULL,0,PARSLEY_NATIVE_OPTIONS,&diag);
  if(!module)goto cleanup;
  if(run){
    if(options.os!=CG_OS_WINDOWS){cg_diag_error(&diag,"JIT execution is available only for the Windows host");goto cleanup;}

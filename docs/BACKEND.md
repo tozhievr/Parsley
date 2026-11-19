@@ -101,6 +101,12 @@ and `effects = []`.
 
 ## Extending a language
 
+The standalone driver preserves the validated program AST when choosing an
+entry body. A lowering hook can inspect it with `<module>_backend_program(cx)`.
+API clients can supply a separate program and body with
+`<module>_backend_lower_entry`. The original lowering API treats its root
+as both the program and the entry.
+
 When the CLI generates a native backend, it copies an optional adjacent
 `<Grammar>.native.h` to `tools/native_adapter.h` and includes it in the
 standalone driver. Define `PARSLEY_NATIVE_RESULT` (a nextc type),
