@@ -162,6 +162,15 @@ def main():
         if run(declarative_compiler, string_entry, "--run", "--return", "cstr",
                "--no-ast-opt", "-O0") != "OK\n":
             raise RuntimeError("Conditional Kotlin string entry did not lower from PSL")
+        string_entry.write_text(
+            'fun box() = first()\nfun first(): String = second()\nfun second() = "OK"\n',
+            encoding="utf-8")
+        lowering_flags = ("--return", "cstr", "--no-ast-opt", "-O0")
+        if run(declarative_compiler, string_entry, "--run", *lowering_flags) != "OK\n":
+            raise RuntimeError("Declarative Kotlin string calls did not execute")
+        mir = run(declarative_compiler, string_entry, "--emit", "mir", *lowering_flags)
+        if mir.count("call ptr @__parsley_cstr_") != 2:
+            raise RuntimeError(f"Expected two native calls in Kotlin MIR: {mir}")
         annotation_entry = declarative / "annotation.kt"
         annotation_entry.write_text(
             'annotation class Outer { annotation class Inner }\n'

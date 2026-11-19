@@ -147,6 +147,8 @@ typedef struct @m@_backend_options {
   void *user;
   const @m@_mir_pass *passes;
   size_t pass_count;
+  const @m@_node *(*resolve_cstr_body)(void *,psl_str);
+  void *resolve_user;
 } @m@_backend_options;
 PARSLEY_API cg_builder_t *@m@_backend_builder(@m@_backend_context *);
 PARSLEY_API const @m@_node *@m@_backend_program(const @m@_backend_context *);
@@ -331,11 +333,51 @@ inline bool emit_singleton_select(std::ostringstream& out, const Ctor& c,
   return true;
 }
 
+inline bool emit_cstr_call(std::ostringstream& out, const Ctor& c,
+                           const std::string& m, psl::PslStatus minimum) {
+  if (!c.rule || !c.exhaustive) return false;
+  const auto& provenance = c.rule->provenance;
+  if (!provenance.has_status || !provenance.has_confidence || provenance.source_name.empty() ||
+      static_cast<int>(provenance.status) < static_cast<int>(minimum)) return false;
+  const E *equation = nullptr;
+  for (const auto& st : c.rule->stmts) {
+    if (st.kind != psl::PslNodeStmt::Kind::AssignAttr || st.target_var != "nativeCall") continue;
+    if (equation) return false;
+    equation = st.expr.get();
+  }
+  if (!equation || equation->kind != E::Kind::Call || equation->name != "callCstr" ||
+      equation->args.size() != 2) return false;
+  for (const auto& arg : equation->args)
+    if (!arg || arg->kind != E::Kind::Var || !c.vars.contains(arg->name)) return false;
+  const auto up = optimizer::detail::upper(m);
+  out << "case " << c.tag << ":{\n"
+      << "const N *name=n->children[" << c.vars.at(equation->args[0]->name) << "];\n"
+      << "const N *args=n->children[" << c.vars.at(equation->args[1]->name) << "];\n"
+      << "if(name->tag!=" << up << "_NODE_STRING || args->tag!=" << up << "_NODE_LIST || args->child_count)"
+      << "return b_error(cx,\"callCstr requires a name and no arguments\");\n"
+      << "if(!cx->options.resolve_cstr_body)return b_error(cx,\"missing native function resolver\");\n"
+      << "const N *body=cx->options.resolve_cstr_body(cx->options.resolve_user,name->text_val);\n"
+      << "if(!body)return b_error(cx,\"unresolved or ambiguous native string function\");\n"
+      << "char symbol[64];\n"
+      << "snprintf(symbol,sizeof symbol,\"__parsley_cstr_%zu\",cx->call_count++);\n"
+      << "cg_builder_t caller=cx->builder;\n"
+      << "cg_func_t *fn=cg_module_add_function(caller.module,symbol,CG_T_PTR,NULL,0,false,CG_BIND_LOCAL);\n"
+      << "if(!fn)return b_error(cx,\"cannot allocate native callee\");\n"
+      << "cg_builder_init(&cx->builder,caller.module,fn);\n"
+      << "cg_value_t value=" << m << "_backend_node(cx,body);\n"
+      << "if(value!=CG_INVALID && cg_value_type(fn,value)==CG_T_PTR)cg_build_ret(&cx->builder,value);\n"
+      << "else value=CG_INVALID;\n"
+      << "cx->builder=caller;\n"
+      << "if(value==CG_INVALID)return b_error(cx,\"native callee must return a string\");\n"
+      << "return cg_build_call(&cx->builder,cg_module_symbol(caller.module,symbol),CG_T_PTR,NULL,0,false);}\n";
+  return true;
+}
+
 inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
                           psl::PslStatus minimum){
   std::ostringstream o;
   o<<"#include \""<<m<<"_backend.h\"\n#include <string.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
-   <<"struct "<<m<<"_backend_context {cg_builder_t builder;cg_diag_t *diag;"<<m<<"_backend_options options;const "<<m<<"_node *program;size_t depth,steps;};\n"
+   <<"struct "<<m<<"_backend_context {cg_builder_t builder;cg_diag_t *diag;"<<m<<"_backend_options options;const "<<m<<"_node *program;size_t depth,steps,call_count;};\n"
    <<"typedef "<<m<<"_backend_context Ctx;\ntypedef "<<m<<"_node N;\n"
    <<"static cg_value_t b_error(Ctx *cx,const char *message){cg_diag_error(cx->diag,\"%s\",message);return CG_INVALID;}\n"
    <<"cg_builder_t *"<<m<<"_backend_builder(Ctx *cx){return cx ? &cx->builder : NULL;}\n"
@@ -405,7 +447,8 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
         << "return b_quoted_cstr(cx,field->text_val);}\n";
       continue;
     }
-    if (emit_i32_arithmetic(o, c, m, minimum) || emit_singleton_select(o, c, m, minimum)) continue;
+    if (emit_i32_arithmetic(o, c, m, minimum) || emit_singleton_select(o, c, m, minimum) ||
+        emit_cstr_call(o, c, m, minimum)) continue;
     if(!c.eligible)continue;
     o<<"case "<<c.tag<<":{\n";int seq=0;auto result=expr(o,c.value,c,seq,m);o<<"return "<<result<<";}\n";
   }

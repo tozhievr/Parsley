@@ -99,6 +99,14 @@ lowers to a boolean. Branches must lower to the same type and run in separate
 MIR blocks. A statement can expose its expression through `value = valueOf expr`
 and `effects = []`.
 
+A call constructor can declare `nativeCall = callCstr name arguments`.
+The standalone compiler resolves a unique parameterless function from
+`entryCandidates` using the first matching PSL rule with
+`nativeFunctionName = name` and `nativeCstrBody = body`. The callee must
+lower to a C string and is emitted as a local MIR function. The backend's
+step and depth limits also bound lowering of callees. This lowering does
+not support recursive call graphs.
+
 ## Extending a language
 
 The standalone driver preserves the validated program AST when choosing an

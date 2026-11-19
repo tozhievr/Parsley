@@ -160,7 +160,11 @@ node Bin op l r where
          then KtBool
          else if op == RangeUntil then KtAny else typeOf l
 
+{-# SOURCE kotlinSpec "expressions/function-calls-and-property-access" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
 node Call f args where
+  nativeCall = callCstr f args
   fn <- lookup Function f
   classifier <- lookup Constructor f
   alias <- lookup TypeAlias f
@@ -216,7 +220,7 @@ node FunDecl "box" NoTypeParameters [CastType "String" [] NoTypeArguments []] (F
   type = KtUnit
   entryPassive = True
   entryCstr = result
-  entryCstrConstructor = ["StrLit", "IfExpr"]
+  entryCstrConstructor = ["StrLit", "IfExpr", "Call"]
 
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}
 {-# STATUS draft #-}
@@ -226,7 +230,27 @@ node FunDecl "box" NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [result]
   type = KtUnit
   entryPassive = True
   entryCstr = result
-  entryCstrConstructor = "StrLit"
+  entryCstrConstructor = ["StrLit", "IfExpr", "Call"]
+
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunDecl name NoTypeParameters [CastType "String" [] NoTypeArguments []] (FunctionScope _ [] [ReturnStmt [result]]) where
+  entryPassive = True
+  nativeFunctionName = name
+  nativeCstrBody = result
+  predeclare Function name KtAny
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunDecl name NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [result]]) where
+  entryPassive = True
+  nativeFunctionName = name
+  nativeCstrBody = result
+  predeclare Function name KtAny
+  type = KtUnit
 
 node FunDecl name _ _ functionScope where
   entryPassive = True

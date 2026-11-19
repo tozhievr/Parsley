@@ -4995,6 +4995,8 @@ inline std::string emit_sem_header(const std::string& mod_low, const std::string
   o << "/* After analyze: 1 selected, 0 no declarative entry for this ABI, -1 invalid or ambiguous. */\n";
   o << "PARSLEY_API int " << mod_low << "_native_entry(" << mod_low << "_ctx *cx, int abi, const "
     << mod_low << "_node **entry);\n";
+  o << "PARSLEY_API const " << mod_low << "_node *" << mod_low
+    << "_native_cstr_body(void *context, psl_str name);\n";
   o << "PARSLEY_API int " << mod_low << "_psl_selftest(void);\n\n";
   o << "PARSLEY_API size_t " << mod_low << "_diag_count(const " << mod_low << "_ctx *cx);\n";
   o << "PARSLEY_API size_t " << mod_low << "_nodes_visited(const " << mod_low << "_ctx *cx);\n";
@@ -6212,6 +6214,49 @@ inline std::string emit_sem_source(const PslModule& psem,
   if (cstr_entry) bodies << "  if(abi==2)return native_entry_cstr(cx,entry);\n";
   bodies << "  return 0;\n}\n\n";
 
+
+  bodies << "const " << mod_low << "_node *" << mod_low
+         << "_native_cstr_body(void *context,psl_str name){\n";
+  bool callable = false;
+  for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri)
+    callable |= !entry_binding(ri, "nativeFunctionName").empty() &&
+                !entry_binding(ri, "nativeCstrBody").empty();
+  if (!callable) {
+    bodies << "  (void)context;(void)name;return NULL;\n}\n";
+  } else {
+    bodies << "  " << mod_low << "_ctx *cx=context;\n"
+           << "  if(!cx || !cx->node_count || !name.ptr || !name.len)return NULL;\n"
+           << "  int32_t list=-1;\n";
+    for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
+      const auto field = entry_binding(ri, "entryCandidates");
+      bodies << "  if(list<0){pat_bind_node_" << ri << " b={0};\n"
+             << "    if(match_pat_node_" << ri << "(cx,0,&b)){\n";
+      if (field.empty()) bodies << "      return NULL;\n";
+      else bodies << "      list=b.nid_" << field << ";\n      if(list<0)return NULL;\n";
+      bodies << "    }\n  }\n";
+    }
+    bodies << "  if(list<0 || cx->nodes[list].node->tag!=" << mod_up << "_NODE_LIST)return NULL;\n"
+           << "  const " << mod_low << "_node *body=NULL;\n"
+           << "  for(size_t i=0;i<cx->nodes[list].child_count;++i){\n"
+           << "    int32_t candidate=cx->nodes[list].children[i];int matched=0;\n";
+    for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
+      const auto name = entry_binding(ri, "nativeFunctionName");
+      const auto body = entry_binding(ri, "nativeCstrBody");
+      bodies << "    if(!matched){pat_bind_node_" << ri << " b={0};\n"
+             << "      if(match_pat_node_" << ri << "(cx,candidate,&b)){\n"
+             << "        matched=1;\n";
+      if (!name.empty() && !body.empty()) {
+        bodies << "        if(b.nid_" << name << ">=0 && b.nid_" << body << ">=0){\n"
+               << "          const " << mod_low << "_node *identifier=cx->nodes[b.nid_" << name << "].node;\n"
+               << "          if(identifier->tag==" << mod_up << "_NODE_STRING && psl_str_eq(identifier->text_val,name)){\n"
+               << "            if(body)return NULL;\n"
+               << "            body=cx->nodes[b.nid_" << body << "].node;\n"
+               << "          }\n        }\n";
+      }
+      bodies << "      }\n    }\n";
+    }
+    bodies << "  }\n  return body;\n}\n";
+  }
 
   // Pass 4: CFG & Bitvector Dataflow Solver
   for (std::size_t fi = 0; fi < psem.flow_rules.size(); ++fi) {

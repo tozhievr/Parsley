@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.27.0
+
+- Generate direct native calls to parameterless Kotlin string functions from PSL declarations.
+
 ## 2.26.0
 
 - Preserve the full AST in native lowering when a distinct entry body is selected.

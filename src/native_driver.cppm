@@ -142,7 +142,19 @@ int main(int argc,char **argv){
    @m@_opt_result opt=@m@_optimize(&optimized,root,NULL,NULL,0);
    if(opt.status){fprintf(stderr,"AST optimization failed: %d\n",opt.status);goto cleanup;}root=opt.root;
  }
- module=@m@_backend_lower_entry(program,root,"language_main",result,NULL,0,PARSLEY_NATIVE_OPTIONS,&diag);
+ const @m@_backend_options *configured=PARSLEY_NATIVE_OPTIONS;
+ @m@_backend_options lowering={0};
+ if(configured)lowering=*configured;
+ if(!lowering.resolve_cstr_body){
+   lowering.resolve_cstr_body=@m@_native_cstr_body;
+   lowering.resolve_user=semantic;
+ }
+ module=@m@_backend_lower_entry(program,root,"language_main",result,NULL,0,&lowering,&diag);
+ if(!module && selected>0 && configured && configured->lower && result==CG_T_PTR){
+   cg_diag_t fallback={0};
+   module=@m@_backend_lower_entry(program,program,"language_main",result,NULL,0,configured,&fallback);
+   if(module)diag=fallback;
+ }
  if(!module)goto cleanup;
  if(run){
    if(options.os!=CG_OS_WINDOWS){cg_diag_error(&diag,"JIT execution is available only for the Windows host");goto cleanup;}
