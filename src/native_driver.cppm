@@ -134,7 +134,7 @@ int main(int argc,char **argv){
  }
 #endif
  const @m@_node *entry=NULL;
- const int selected=@m@_native_entry(semantic,result==CG_T_I32,&entry);
+ const int selected=@m@_native_entry(semantic,result==CG_T_I32 ? 1 : result==CG_T_PTR ? 2 : 0,&entry);
  if(selected<0){fprintf(stderr,"missing, ambiguous or unsupported declarative native entry\n");goto cleanup;}
  if(selected>0)root=entry;
  if(ast_opt){

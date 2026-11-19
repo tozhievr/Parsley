@@ -160,12 +160,13 @@ PARSLEY_API cg_module_t *@m@_backend_lower(const @m@_node *,const char *,
 )NB";
   replace(h,"@m@",m);replace(h,"@U@",up);return h;
 }
-inline const E *i32_literal(const Ctor& c, psl::PslStatus minimum) {
+inline const E *literal_operand(const Ctor& c, psl::PslStatus minimum,
+                                std::string_view intrinsic, int primitive_kind) {
   if (!c.rule || !c.exhaustive || !c.value || c.value->kind != E::Kind::Call ||
-      c.value->name != "i32Literal" || c.value->args.size() != 1) return nullptr;
+      c.value->name != intrinsic || c.value->args.size() != 1) return nullptr;
   const E *arg = c.value->args[0].get();
   if (!arg || arg->kind != E::Kind::Var || !c.vars.contains(arg->name) ||
-      optimizer::detail::primitive(c.fields[c.vars.at(arg->name)]) != 1) return nullptr;
+      optimizer::detail::primitive(c.fields[c.vars.at(arg->name)]) != primitive_kind) return nullptr;
   const auto& provenance = c.rule->provenance;
   if (!provenance.has_status || !provenance.has_confidence || provenance.source_name.empty() ||
       static_cast<int>(provenance.status) < static_cast<int>(minimum)) return nullptr;
@@ -185,15 +186,58 @@ inline const E *i32_literal(const Ctor& c, psl::PslStatus minimum) {
 inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
                           psl::PslStatus minimum){
   std::ostringstream o;
-  o<<"#include \""<<m<<"_backend.h\"\n#include <string.h>\n"
+  o<<"#include \""<<m<<"_backend.h\"\n#include <string.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
    <<"struct "<<m<<"_backend_context {cg_builder_t builder;cg_diag_t *diag;"<<m<<"_backend_options options;size_t depth,steps;};\n"
    <<"typedef "<<m<<"_backend_context Ctx;\ntypedef "<<m<<"_node N;\n"
    <<"static cg_value_t b_error(Ctx *cx,const char *message){cg_diag_error(cx->diag,\"%s\",message);return CG_INVALID;}\n"
    <<"cg_builder_t *"<<m<<"_backend_builder(Ctx *cx){return cx ? &cx->builder : NULL;}\n"
    <<"cg_diag_t *"<<m<<"_backend_diagnostic(Ctx *cx){return cx ? cx->diag : NULL;}\n"
-   <<"static cg_value_t b_infer(Ctx *cx,const N *n){(void)cx;switch(n->tag){\n";
+   ;
+  if (std::any_of(ctors.begin(), ctors.end(), [&](const Ctor& c) {
+        return literal_operand(c, minimum, "cstrQuoted", 3) != nullptr;
+      })) {
+    o << R"CSTR(static cg_value_t b_quoted_cstr(Ctx *cx, psl_str text) {
+  if(!text.ptr || text.len<2 || text.len>UINT32_MAX ||
+     text.ptr[0]!='"' || text.ptr[text.len-1]!='"')
+    return b_error(cx,"cstrQuoted requires a quoted string");
+  char *bytes=malloc(text.len);
+  if(!bytes)return b_error(cx,"cannot allocate string");
+  size_t size=0;
+  bool valid=true;
+  for(size_t i=1;i<text.len-1 && valid;++i){
+    char ch=text.ptr[i];
+    if(ch=='\\'){
+      if(++i>=text.len-1){valid=false;break;}
+      ch=text.ptr[i];
+      switch(ch){
+        case 'n':ch='\n';break;
+        case 'r':ch='\r';break;
+        case 't':ch='\t';break;
+        case 'b':ch='\b';break;
+        case '"':case '\'':case '\\':case '$':break;
+        default:valid=false;break;
+      }
+    }else if(ch=='$' && i+1<text.len-1){
+      const unsigned char next=(unsigned char)text.ptr[i+1];
+      valid=next!='{' && next!='_' && next<128 &&
+            !(next>='a' && next<='z') && !(next>='A' && next<='Z');
+    }else if(ch=='\0' || ch=='\r' || ch=='\n' || ch=='"')valid=false;
+    if(valid)bytes[size++]=ch;
+  }
+  if(!valid){free(bytes);return b_error(cx,"unsupported cstrQuoted escape or interpolation");}
+  bytes[size++]='\0';
+  char name[48];
+  snprintf(name,sizeof(name),"parsley_cstr_%u",(unsigned)cx->builder.module->symbols.count);
+  const cg_symbol_t symbol=cg_module_add_data(cx->builder.module,name,(uint32_t)size,1,
+                                             bytes,CG_DATA_RO,CG_BIND_LOCAL);
+  free(bytes);
+  return symbol==CG_INVALID ? CG_INVALID : cg_build_symaddr(&cx->builder,symbol);
+}
+)CSTR";
+  }
+  o<<"static cg_value_t b_infer(Ctx *cx,const N *n){(void)cx;switch(n->tag){\n";
   for(const auto& c:ctors) {
-    if (const E *arg = i32_literal(c, minimum)) {
+    if (const E *arg = literal_operand(c, minimum, "i32Literal", 1)) {
       o << "case " << c.tag << ":{\n"
         << "const N *field=n->children[" << c.vars.at(arg->name) << "];\n"
         << "if(field->tag!=" << optimizer::detail::upper(m) << "_NODE_NUMBER)"
@@ -202,6 +246,14 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
         << "if(!(value>=INT32_MIN && value<=INT32_MAX) || value!=(double)(int32_t)value)"
         << "return b_error(cx,\"i32Literal requires an exact signed 32-bit integer\");\n"
         << "return cg_build_iconst(&cx->builder,CG_T_I32,(int32_t)value);}\n";
+      continue;
+    }
+    if (const E *arg = literal_operand(c, minimum, "cstrQuoted", 3)) {
+      o << "case " << c.tag << ":{\n"
+        << "const N *field=n->children[" << c.vars.at(arg->name) << "];\n"
+        << "if(field->tag!=" << optimizer::detail::upper(m) << "_NODE_STRING)"
+        << "return b_error(cx,\"cstrQuoted requires a text field\");\n"
+        << "return b_quoted_cstr(cx,field->text_val);}\n";
       continue;
     }
     if(!c.eligible)continue;

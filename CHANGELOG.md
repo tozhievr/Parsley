@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.13.0
+
+- Generate declarative C string entries and lower quoted string literals to nextc read-only data.
+
 ## 2.12.0
 
 - Generate signed 32-bit entry selection from PSL AST patterns and use it for Kotlin `main`, including checked integer literal lowering.

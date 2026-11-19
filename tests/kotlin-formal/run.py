@@ -122,6 +122,11 @@ def main():
         declarative_compiler = generated / "kotlin_compiler.exe"
         if run(declarative_compiler, source, "--run", "--return", "i32").strip() != "42":
             raise RuntimeError("Kotlin main did not execute from its PSL description")
+        string_entry = declarative / "string.kt"
+        for kotlin_literal, value in (('"OK"', "OK"), (r'"a\tb\$\\"', "a\tb$\\")):
+            string_entry.write_text(f"fun box(): String = {kotlin_literal}", encoding="utf-8")
+            if run(declarative_compiler, string_entry, "--run", "--return", "cstr") != value + "\n":
+                raise RuntimeError("Kotlin box literal did not execute from its PSL description")
         invalid_entry = declarative / "invalid.kt"
         for text in ("fun other(): Int = 42", "fun main(): Int = 1; fun main(): Int = 2",
                      "val x = 1; fun main(): Int = 42"):

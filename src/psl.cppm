@@ -4993,7 +4993,7 @@ inline std::string emit_sem_header(const std::string& mod_low, const std::string
   o << "PARSLEY_API int " << mod_low << "_analyze(" << mod_low << "_ctx *cx, const " << mod_low
     << "_node *root, psl_sink sink, void *user);\n";
   o << "/* After analyze: 1 selected, 0 no declarative entry for this ABI, -1 invalid or ambiguous. */\n";
-  o << "PARSLEY_API int " << mod_low << "_native_entry(" << mod_low << "_ctx *cx, int i32, const "
+  o << "PARSLEY_API int " << mod_low << "_native_entry(" << mod_low << "_ctx *cx, int abi, const "
     << mod_low << "_node **entry);\n";
   o << "PARSLEY_API int " << mod_low << "_psl_selftest(void);\n\n";
   o << "PARSLEY_API size_t " << mod_low << "_diag_count(const " << mod_low << "_ctx *cx);\n";
@@ -6137,16 +6137,14 @@ inline std::string emit_sem_source(const PslModule& psem,
              st.expr && st.expr->kind == PslExpr::Kind::Bool && st.expr->bool_value;
     });
   };
-  bool has_i32_entry = false;
-  for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri)
-    has_i32_entry |= !entry_binding(ri, "entryI32").empty();
-
-  bodies << "int " << mod_low << "_native_entry(" << mod_low << "_ctx *cx, int i32, const "
-         << mod_low << "_node **entry) {\n";
-  if (!has_i32_entry) {
-    bodies << "  (void)cx; (void)i32; (void)entry;\n  return 0;\n}\n\n";
-  } else {
-    bodies << "  if(!i32)return 0;\n  if(!cx || !cx->node_count || !entry)return -1;\n"
+  auto emit_entry = [&](std::string_view attr, std::string_view suffix, bool optional) {
+    bool enabled = false;
+    for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri)
+      enabled |= !entry_binding(ri, attr).empty();
+    if (!enabled) return false;
+    bodies << "static int native_entry_" << suffix << "(" << mod_low << "_ctx *cx, const "
+           << mod_low << "_node **entry) {\n"
+           << "  if(!cx || !cx->node_count || !entry)return -1;\n"
            << "  int32_t list=-1, selected=-1;\n";
     for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
       const auto field = entry_binding(ri, "entryCandidates");
@@ -6157,25 +6155,47 @@ inline std::string emit_sem_source(const PslModule& psem,
       bodies << "    }\n  }\n";
     }
     bodies << "  if(list<0 || cx->nodes[list].node->tag!=" << mod_up << "_NODE_LIST)return -1;\n"
+           << "  int unsupported=0;\n"
            << "  for(size_t i=0;i<cx->nodes[list].child_count;++i){\n"
-           << "    int32_t candidate=cx->nodes[list].children[i];\n    int accepted=0;\n";
+           << "    int32_t candidate=cx->nodes[list].children[i];\n    int matched=0;\n";
     for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
-      const auto field = entry_binding(ri, "entryI32");
-      bodies << "    if(!accepted){\n      pat_bind_node_" << ri << " b={0};\n"
-             << "      if(match_pat_node_" << ri << "(cx,candidate,&b)){\n";
+      const auto& rule = psem.node_rules[ri];
+      const auto field = entry_binding(ri, attr);
+      bodies << "    if(!matched){\n      pat_bind_node_" << ri << " b={0};\n"
+             << "      if(match_pat_node_" << ri << "(cx,candidate,&b)){\n        matched=1;\n";
       if (!field.empty()) {
-        bodies << "        if(selected>=0 || b.nid_" << field << "<0)return -1;\n"
-               << "        selected=b.nid_" << field << ";\n        accepted=1;\n";
-      } else if (is_passive(psem.node_rules[ri])) {
-        bodies << "        accepted=1;\n";
-      } else {
-        bodies << "        return -1;\n";
+        const std::string id = "b.nid_" + field;
+        bodies << "        if(" << id << "<0)return -1;\n";
+        if (optional) {
+          const auto guard = std::find_if(rule.stmts.begin(), rule.stmts.end(), [](const auto& st) {
+            return st.kind == PslNodeStmt::Kind::AssignAttr && st.target_var == "entryCstrConstructor" &&
+                   st.expr && st.expr->kind == PslExpr::Kind::String;
+          });
+          if (guard != rule.stmts.end())
+            bodies << "        if(!psl_str_eq(cx->nodes[" << id << "].node->ctor_name,"
+                   << "psl_str_lit(" << c_str_lit(guard->expr->name) << ")))continue;\n";
+        }
+        bodies << "        if(selected>=0)return -1;\n        selected=" << id << ";\n";
+      } else if (!is_passive(rule)) {
+        bodies << "        unsupported=1;\n";
       }
       bodies << "      }\n    }\n";
     }
-    bodies << "    if(!accepted)return -1;\n  }\n"
-           << "  if(selected<0)return -1;\n  *entry=cx->nodes[selected].node;\n  return 1;\n}\n\n";
-  }
+    bodies << "    if(!matched)unsupported=1;\n  }\n";
+    if (optional) bodies << "  if(selected<0)return 0;\n";
+    bodies << "  if(selected<0 || unsupported)return -1;\n"
+           << "  *entry=cx->nodes[selected].node;\n  return 1;\n}\n\n";
+    return true;
+  };
+  const bool i32_entry = emit_entry("entryI32", "i32", false);
+  const bool cstr_entry = emit_entry("entryCstr", "cstr", true);
+  bodies << "int " << mod_low << "_native_entry(" << mod_low << "_ctx *cx, int abi, const "
+         << mod_low << "_node **entry) {\n"
+         << "  (void)cx; (void)abi; (void)entry;\n";
+  if (i32_entry) bodies << "  if(abi==1)return native_entry_i32(cx,entry);\n";
+  if (cstr_entry) bodies << "  if(abi==2)return native_entry_cstr(cx,entry);\n";
+  bodies << "  return 0;\n}\n\n";
+
 
   // Pass 4: CFG & Bitvector Dataflow Solver
   for (std::size_t fi = 0; fi < psem.flow_rules.size(); ++fi) {

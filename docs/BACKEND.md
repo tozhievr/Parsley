@@ -74,6 +74,13 @@ A flat numeric constructor can declare `value = i32Literal n` with
 `effects = []` and the normal provenance pragmas. The backend checks that
 `n` is exactly representable as a signed 32-bit integer before emitting MIR.
 
+A rule may also provide `entryCstr` for the C string ABI. An optional
+`entryCstrConstructor` string limits that rule to the named constructor.
+When no string entry matches, the driver's existing entry lowering applies.
+A flat text constructor can declare `value = cstrQuoted text` and
+`effects = []` with provenance. It emits a NUL-terminated value in read-only
+MIR data. The intrinsic decodes basic escapes and rejects interpolation.
+
 ## Extending a language
 
 When the CLI generates a native backend, it copies an optional adjacent

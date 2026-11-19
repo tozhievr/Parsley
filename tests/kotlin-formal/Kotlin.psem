@@ -62,8 +62,13 @@ node FloatLit n where
   value = n
   effects = []
 
-node StrLit _ where
+{-# SOURCE kotlinSpec "expressions/string-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node StrLit text where
   type = KtString
+  value = cstrQuoted text
+  effects = []
 
 node BoolLit _ where
   type = KtBool
@@ -155,7 +160,18 @@ node PropDecl isVar name ty init where
 node FunDecl "main" NoTypeParameters [CastType "Int" [] NoTypeArguments []] (FunctionScope _ [] [ReturnStmt [result]]) where
   predeclare Function "main" KtAny
   type = KtUnit
+  entryPassive = True
   entryI32 = result
+
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunDecl "box" NoTypeParameters [CastType "String" [] NoTypeArguments []] (FunctionScope _ [] [ReturnStmt [result]]) where
+  predeclare Function "box" KtAny
+  type = KtUnit
+  entryPassive = True
+  entryCstr = result
+  entryCstrConstructor = "StrLit"
 
 node FunDecl name _ _ functionScope where
   entryPassive = True
