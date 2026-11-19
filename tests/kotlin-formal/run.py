@@ -153,6 +153,12 @@ def main():
             string_entry.write_text(f"fun box(): String = {kotlin_literal}", encoding="utf-8")
             if run(declarative_compiler, string_entry, "--run", "--return", "cstr") != value + "\n":
                 raise RuntimeError("Kotlin box literal did not execute from its PSL description")
+        annotation_entry = declarative / "annotation.kt"
+        annotation_entry.write_text(
+            'annotation class Outer { annotation class Inner }\n'
+            '@Outer.Inner fun box(): String { return "OK" }\n', encoding="utf-8")
+        if run(declarative_compiler, annotation_entry, "--run", "--return", "cstr") != "OK\n":
+            raise RuntimeError("Annotation declarations blocked the declarative box entry")
         invalid_entry = declarative / "invalid.kt"
         for text in ("fun other(): Int = 42", "fun main(): Int = 1; fun main(): Int = 2",
                      "val x = 1; fun main(): Int = 42"):

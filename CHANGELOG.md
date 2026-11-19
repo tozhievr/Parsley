@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.16.1
+
+- Allow annotation class declarations alongside declarative Kotlin native entry points.
+
 ## 2.16.0
 
 - Parse Kotlin annotation classes and annotation prefixes on declarations and parameters.

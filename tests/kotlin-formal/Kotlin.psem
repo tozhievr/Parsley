@@ -221,6 +221,16 @@ node FunctionScope [CastType ty [] NoTypeArguments _] _ [ReturnStmt [result]] wh
   require (ty /= "Int" || typeOf result /= KtString) `orFail` E_TYPE { expected = ty, actual = "String" }
   type = KtUnit
 
+{-# SOURCE kotlinSpec "declarations/annotation-class-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node ClassDecl "annotation" name _ params members False where
+  entryPassive = True
+  predeclare Constructor name KtAny
+  predeclare TypeName name KtAny
+  scope members $ pure ()
+  type = KtUnit
+
 node ClassDecl kw name _ params members _ where
   predeclare Constructor name KtAny
   predeclare TypeName name KtAny
