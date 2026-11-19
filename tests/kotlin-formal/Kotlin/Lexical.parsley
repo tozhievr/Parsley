@@ -10,5 +10,6 @@ token strLit       = /"([^"\\]|\\.)*"/ :: Text
 token hexLit       = /0[xX][0-9a-fA-F]([0-9a-fA-F_]*[0-9a-fA-F])?/ :: Text
 token binaryLit    = /0[bB][01]([01_]*[01])?/ :: Text
 token boolLit      = /true|false/ :: Bool
+token questionMark = /[?]/
 token ident        = /([a-zA-Z_][a-zA-Z0-9_]*|`[^`\r\n]+`)/ :: Text
 keywords = ["package", "import", "as", "class", "interface", "fun", "val", "var", "if", "else", "when", "while", "for", "in", "return", "null", "data", "open", "abstract", "override", "private", "public", "internal"]

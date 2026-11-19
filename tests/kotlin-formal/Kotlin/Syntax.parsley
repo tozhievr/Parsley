@@ -197,7 +197,7 @@ funDecl = do
   types  <- typeParameters
   name   <- identifier
   params <- parens (funParam `sepBy` ",")
-  retTy  <- optRetType
+  retTy  <- functionReturnType
   body   <- funBody
   optSemi
   pure (FunDecl name types retTy (FunctionScope retTy params body))
@@ -210,6 +210,13 @@ funParam = do
   ty       <- typeExpr
   default_ <- optInit
   pure (FunctionParam name ty variadic default_)
+
+functionReturnType :: [KtCastType]
+functionReturnType
+  =  do
+    ty <- ":" *> castType
+    pure [ty]
+  |  pure []
 
 optRetType :: Text
 optRetType
@@ -267,7 +274,7 @@ optTypeArgs
 optQuest :: ()
 optQuest
   =  do
-    "?"
+    questionMark
     pure ()
   |  do
     pure ()
@@ -439,8 +446,15 @@ castType = do
   first    <- identifier
   rest     <- many ("." *> identifier)
   args     <- typeArguments
-  nullable <- ("?" *> pure True) <|> pure False
+  nullable <- nullableMarker
   pure (CastType first rest args nullable)
+
+nullableMarker :: [Text]
+nullableMarker
+  =  do
+    mark <- questionMark
+    pure [mark]
+  |  pure []
 
 typeArguments :: KtTypeArgs
 typeArguments

@@ -114,7 +114,7 @@ node FunctionParam name ty variadic _ where
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
-node FunctionScope ty _ [ReturnStmt [result]] where
+node FunctionScope [CastType ty [] NoTypeArguments _] _ [ReturnStmt [result]] where
   require (ty /= "Int" || typeOf result /= KtString) `orFail` E_TYPE { expected = ty, actual = "String" }
   type = KtUnit
 

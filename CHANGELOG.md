@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.1
+
+- Preserve Kotlin return-type structure and diagnose explicit and inferred bottom types in generic varargs.
+
+- Show project semantic diagnostics with source positions in the standalone compiler.
+
 ## 2.8.0
 
 - Allow a project native adapter to validate the parsed AST before optimization.

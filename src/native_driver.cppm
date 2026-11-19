@@ -34,8 +34,14 @@ static void usage(FILE *out){
 }
 static int errors;
 static void diagnostic(void *user,const psl_diag *diag){
- (void)user;
- if(diag && diag->severity==PSL_SEV_ERROR)++errors;
+ if(!diag)return;
+ if(diag->severity==PSL_SEV_ERROR)++errors;
+ if(user && diag->def){
+   const char *path=*(const char *const *)user;
+   const psl_str code=diag->def->code;
+   fprintf(stderr,"%s:%" PRIu32 ":%" PRIu32 ": %.*s\n",path,diag->span.line,diag->span.col,
+           (int)code.len,code.ptr);
+ }
 }
 static char *read_source(const char *path,size_t *length){
  FILE *f=fopen(path,"rb");if(!f)return NULL;
@@ -118,7 +124,7 @@ int main(int argc,char **argv){
  @m@_ctx *semantic=@m@_ctx_new(&analysis,NULL);
  if(!semantic || @m@_analyze(semantic,root,diagnostic,NULL)<0 || errors){fprintf(stderr,"semantic validation failed (%d errors)\n",errors);goto cleanup;}
 #ifdef PARSLEY_NATIVE_CHECK
- if(PARSLEY_NATIVE_CHECK(root,diagnostic,NULL)<0 || errors){
+ if(PARSLEY_NATIVE_CHECK(root,diagnostic,&input)<0 || errors){
    fprintf(stderr,"project semantic validation failed (%d errors)\n",errors);
    goto cleanup;
  }

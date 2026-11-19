@@ -88,7 +88,9 @@ int main(void) {
     CHECK(shape(root->children[1], KOTLIN_NODE_LIST, 1));
     const kotlin_node *function = root->children[1]->children[0];
     CHECK(shape(function, KOTLIN_NODE_FUNDECL, 4));
-    CHECK(psl_str_eq(function->children[2]->text_val, psl_str_lit("Double")));
+    const kotlin_node *return_types = function->children[2];
+    CHECK(shape(return_types, KOTLIN_NODE_LIST, 1));
+    CHECK(psl_str_eq(return_types->children[0]->children[0]->text_val, psl_str_lit("Double")));
     const kotlin_node *scope = function->children[3];
     CHECK(shape(scope, KOTLIN_NODE_FUNCTIONSCOPE, 3));
     const kotlin_node *params = scope->children[1];

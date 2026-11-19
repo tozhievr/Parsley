@@ -53,7 +53,7 @@ data KtPostfix
   | AssertNotNull
 
 data KtCastType
-  = CastType Text [Text] KtTypeArgs Bool
+  = CastType Text [Text] KtTypeArgs [Text]
 
 data KtTypeArgs
   = NoTypeArguments
@@ -82,7 +82,7 @@ data KtParam
   | FunctionParam Text Text Bool [KtExpr]
 
 data KtFunctionScope
-  = FunctionScope Text [KtParam] [KtStmt]
+  = FunctionScope [KtCastType] [KtParam] [KtStmt]
 
 data KtTypeParam
   = TypeParameter Text [KtCastType]
@@ -98,7 +98,7 @@ data KtDecl
   | TypeAliasDecl Text Text
   | InterfaceDecl Text KtTypeParams [KtDecl]
   | CompanionDecl Text [KtDecl]
-  | FunDecl Text KtTypeParams Text KtFunctionScope
+  | FunDecl Text KtTypeParams [KtCastType] KtFunctionScope
   | PropDecl Bool Text Text [KtExpr]
 
 data KtFile

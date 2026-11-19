@@ -142,6 +142,24 @@ def main():
                                 encoding="utf-8", timeout=15)
         if result.returncode != 1 or "project semantic validation failed (3 errors)" not in result.stderr:
             raise RuntimeError(f"Standalone compiler missed call diagnostics: {result.stderr!r}")
+        bottom_calls = out / "bottom-calls.kt"
+        marked = (b"fun <T> collect(vararg xs: T) {}\n"
+                  b"fun test() { collect<Nothing?>(); collect<"
+                  b"<!ILLEGAL_TYPE_ARGUMENT_FOR_VARARG_PARAMETER_WARNING!>Nothing<!>>() }\n"
+                  b"fun main(): Int = 42")
+        clean, expected = unmark(marked)
+        located = subprocess.run([probe, "--diagnostic-spans"], input=clean,
+                                 capture_output=True, timeout=15, check=True)
+        verdict, *messages = located.stdout.decode().splitlines()
+        comparison = compare_diagnostics(expected, messages)
+        if verdict != "accept" or comparison[0] != "diagnostics-match":
+            raise RuntimeError(f"Incorrect Kotlin vararg warning: {comparison}")
+        bottom_calls.write_bytes(clean)
+        result = subprocess.run([compiler, bottom_calls, "--run"], capture_output=True,
+                                encoding="utf-8", timeout=15, check=True)
+        if result.stdout.strip() != "42" or result.stderr.count(
+                "ILLEGAL_TYPE_ARGUMENT_FOR_VARARG_PARAMETER_WARNING") != 1:
+            raise RuntimeError(f"Standalone compiler mishandled vararg warning: {result.stderr!r}")
         failures = gaps = 0
         for case in cases:
             verdict, *messages = run(probe, source=case["source"]).splitlines()
