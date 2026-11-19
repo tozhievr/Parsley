@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.35.1
+
+- Embed nextc resources with length-aware string views to fix Ubuntu builds.
+
 ## 2.35.0
 
 - Evaluate closed Kotlin `when` statements with ordered conditions and scoped branches.
