@@ -116,6 +116,13 @@ def main():
         source = ROOT / "integration" / "test.kt"
         if run(compiler, source, "--run").strip() != "42":
             raise RuntimeError("Expected the Kotlin JIT entry to return 42")
+        when_box = out / "when.kt"
+        when_box.write_text(
+            'fun choose(n: Int): Int { when (n) { 0, 1 -> return 42 }; return 24 }\n'
+            'fun box(): String { when { choose(1) + choose(5) == 66 -> return "OK"; '
+            'else -> return "FAIL" } }\n', encoding="utf-8")
+        if run(compiler, when_box, "--run", "--return", "cstr") != "OK\n":
+            raise RuntimeError("Kotlin when did not select the expected branches")
         executable = out / "kotlin-test.exe"
         run(compiler, source, "--emit", "exe", "-o", executable)
         result = subprocess.run([executable], capture_output=True, timeout=15)

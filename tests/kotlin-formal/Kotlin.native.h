@@ -608,6 +608,58 @@ static bool kotlin_eval_constant(const kotlin_node *node, const struct kt_consta
     }
 }
 
+static enum kt_flow kotlin_eval_when(const kotlin_node *stmt, struct kt_constants *env,
+                                     unsigned depth, struct kt_const *out) {
+    const kotlin_node *subjects = stmt->children[0];
+    const kotlin_node *branches = stmt->children[1];
+    struct kt_const subject = {0};
+    const bool has_subject = subjects->child_count == 1;
+    enum kt_flow flow = KT_CONTINUE;
+    if (subjects->child_count > 1 ||
+        (has_subject && !kotlin_eval_constant(subjects->children[0], env, depth, &subject))) {
+        flow = KT_FAILED;
+        goto cleanup;
+    }
+
+    for (size_t i = 0; i < branches->child_count; ++i) {
+        const kotlin_node *branch = branches->children[i];
+        if (branch->tag == KOTLIN_NODE_WHENELSE) {
+            flow = kotlin_eval_box_block(branch->children[0], env, depth, out);
+            break;
+        }
+        if (branch->tag != KOTLIN_NODE_WHENBRANCH) {
+            flow = KT_FAILED;
+            break;
+        }
+        const kotlin_node *conditions = branch->children[0];
+        bool matched = false;
+        for (size_t j = 0; j < conditions->child_count && !matched; ++j) {
+            struct kt_const condition = {0}, comparison = {0};
+            bool ok = kotlin_eval_constant(conditions->children[j], env, depth, &condition);
+            if (ok && has_subject) {
+                ok = kotlin_eval_constant_binary(KOTLIN_NODE_EQ, &subject, &condition, &comparison);
+                matched = ok && comparison.number;
+            } else if (ok) {
+                ok = condition.kind == KT_CONST_BOOL;
+                matched = ok && condition.number;
+            }
+            cg_buffer_free(&condition.text);
+            if (!ok) {
+                flow = KT_FAILED;
+                goto cleanup;
+            }
+        }
+        if (matched) {
+            flow = kotlin_eval_box_block(branch->children[1], env, depth, out);
+            break;
+        }
+    }
+
+cleanup:
+    cg_buffer_free(&subject.text);
+    return flow;
+}
+
 static enum kt_flow kotlin_eval_box_block(const kotlin_node *body, struct kt_constants *env,
                                           unsigned depth, struct kt_const *out) {
     if (depth >= 64) return KT_FAILED;
@@ -639,6 +691,8 @@ static enum kt_flow kotlin_eval_box_block(const kotlin_node *body, struct kt_con
                 cg_buffer_free(&replacement.text);
                 flow = KT_FAILED;
             }
+        } else if (stmt->tag == KOTLIN_NODE_WHENSTMT) {
+            flow = kotlin_eval_when(stmt, env, depth + 1, out);
         } else if (stmt->tag == KOTLIN_NODE_IFSTMT) {
             struct kt_const condition = {0};
             if (kotlin_eval_constant(stmt->children[0], env, depth + 1, &condition) &&

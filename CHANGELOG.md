@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.35.0
+
+- Evaluate closed Kotlin `when` statements with ordered conditions and scoped branches.
+
 ## 2.34.0
 
 - Run full JetBrains Kotlin suites with bounded parallelism and ordered per-file reports.
