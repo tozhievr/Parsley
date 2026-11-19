@@ -644,7 +644,12 @@ identifier
 
 callArg :: KtExpr
 callArg
-  =  NamedArg <$> (identifier <* "=") <*> expr
+  =  NamedArg <$> (identifier <* "=") <*> callArgValue
+  |  callArgValue
+
+callArgValue :: KtExpr
+callArgValue
+  =  SpreadArg <$> ("*" *> expr)
   |  expr
 
 ifExpr :: KtExpr

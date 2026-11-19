@@ -156,7 +156,7 @@ def main():
         annotation_entry = declarative / "annotation.kt"
         annotation_entry.write_text(
             'annotation class Outer { annotation class Inner }\n'
-            '@Outer.Inner fun box(): String { return "OK" }\n', encoding="utf-8")
+            '@Outer.Inner fun box() = "OK"\n', encoding="utf-8")
         if run(declarative_compiler, annotation_entry, "--run", "--return", "cstr") != "OK\n":
             raise RuntimeError("Annotation declarations blocked the declarative box entry")
         invalid_entry = declarative / "invalid.kt"

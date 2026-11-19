@@ -201,6 +201,16 @@ node FunDecl "box" NoTypeParameters [CastType "String" [] NoTypeArguments []] (F
   entryCstr = result
   entryCstrConstructor = "StrLit"
 
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunDecl "box" NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [result]]) where
+  predeclare Function "box" KtAny
+  type = KtUnit
+  entryPassive = True
+  entryCstr = result
+  entryCstrConstructor = "StrLit"
+
 node FunDecl name _ _ functionScope where
   entryPassive = True
   predeclare Function name KtAny

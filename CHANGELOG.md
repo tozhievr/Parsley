@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.18.0
+
+- Preserve spread arguments in Kotlin call and annotation syntax.
+- Generate the native Kotlin `box()` entry for a string literal with inferred return type.
+
 ## 2.17.0
 
 - Preserve variadic constructor parameters and their default expressions in the Kotlin AST.
