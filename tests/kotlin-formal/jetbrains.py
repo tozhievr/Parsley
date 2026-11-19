@@ -120,11 +120,13 @@ def classify(path, suite, probe, compiler):
             return compare_diagnostics(expected_diagnostics, messages)
         except ValueError as error:
             return "probe-error", f"invalid located diagnostic: {error}"
-    result = invoke([compiler, path, "--emit", "mir"])
+    result = invoke([compiler, path, "--return", "cstr", "--run"])
     if result.returncode:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
-        return "mir-reject" if result.returncode == 1 else "compiler-error", detail
-    return "mir-emitted", ""
+        return "box-reject" if result.returncode == 1 else "compiler-error", detail
+    if result.stdout in (b"OK\n", b"OK\r\n"):
+        return "box-pass", ""
+    return "box-fail", repr(result.stdout.decode("utf-8", errors="replace"))
 
 
 def sample(integration, selection, limit, probe, compiler):
@@ -148,4 +150,4 @@ def sample(integration, selection, limit, probe, compiler):
     if not counts:
         raise ValueError(f"No .kt files found: {selection}")
     print(f"JetBrains {selection}: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
-    return bool(counts.keys() & {"probe-error", "compiler-error", "timeout"})
+    return bool(counts.keys() & {"probe-error", "compiler-error", "timeout", "box-fail"})

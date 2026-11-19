@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.9.0
+
+- Add a C string JIT result ABI and run supported Kotlin box functions through the generated compiler.
+
 ## 2.8.1
 
 - Preserve Kotlin return-type structure and diagnose explicit and inferred bottom types in generic varargs.

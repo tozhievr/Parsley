@@ -160,6 +160,13 @@ def main():
         if result.stdout.strip() != "42" or result.stderr.count(
                 "ILLEGAL_TYPE_ARGUMENT_FOR_VARARG_PARAMETER_WARNING") != 1:
             raise RuntimeError(f"Standalone compiler mishandled vararg warning: {result.stderr!r}")
+        box = out / "box.kt"
+        box.write_text('fun value(): String = "OK"\nfun box() = value()', encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "OK":
+            raise RuntimeError("Kotlin box did not return OK")
+        box.write_text('fun box(): String = "FAIL"\n', encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
+            raise RuntimeError("Kotlin box did not return its own string value")
         failures = gaps = 0
         for case in cases:
             verdict, *messages = run(probe, source=case["source"]).splitlines()

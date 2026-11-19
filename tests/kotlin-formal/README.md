@@ -51,13 +51,15 @@ Each selection can be a directory or an individual `.kt` file. Directories
 are traversed in sorted order, stopping at the limit for each selection.
 The PSI probe compares the syntax verdict with the presence of an error node
 in the adjacent snapshot. The diagnostics probe removes inline expectation
-markers, then compares diagnostic codes and UTF-8 byte ranges. The codegen probe attempts MIR
-emission after parsing. Fixtures with embedded files or modules are reported
+markers, then compares diagnostic codes and UTF-8 byte ranges. The codegen probe attempts JIT
+execution after parsing, using the native compiler's `--return cstr --run` mode. Fixtures with embedded files or modules are reported
 separately. The sample reports syntax differences and MIR rejections, and fails
-on tool errors and timeouts. The diagnostic comparison maps known equivalent
+on tool errors, timeouts and incorrect executed box results. The diagnostic comparison maps known equivalent
 codes and reports missing and extra entries. Token-derived ranges are available
-when the AST retains source tokens. Full PSI trees and `box()` execution with
-JetBrains' runtime are outside the current probe.
+when the AST retains source tokens. A box case passes when its compiled entry
+returns exactly `OK`. The current native adapter supports string literals and
+chains of parameterless top-level calls, with no JetBrains runtime libraries.
+Full PSI tree comparison remains outside the current probe.
 
 ## Coverage boundaries
 

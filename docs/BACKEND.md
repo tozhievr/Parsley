@@ -33,7 +33,10 @@ in nextc/docs are broader than this implemented snapshot. A PE image uses the
 Windows ABI and imports ExitProcess from kernel32.dll. PE/flat entry adapters
 convert the entry result to an i32 exit status. --return f64 (default), bool,
 i32, or i64 selects the language entry ABI. --os selects the nextc target ABI;
-cross-target execution is not implicit. -O0/-O1 select nextc optimization.
+cross-target execution is not implicit. With `--return cstr`, a language
+adapter may return a pointer to a NUL-terminated string that remains valid
+until JIT cleanup. `--run` writes it followed by one newline. Image entry
+adapters (`exe` and `flat`) require a scalar exit status. -O0/-O1 select nextc optimization.
 --no-ast-opt disables the earlier inferred AST optimization.
 
 The standalone driver parses the complete input, checks its original semantics,

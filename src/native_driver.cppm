@@ -27,7 +27,7 @@ static void usage(FILE *out){
        "  --run                      Execute with the Windows JIT\n"
        "  --emit FORMAT              mir, asm, object (default), exe, or flat\n"
        "  -o FILE                    Required for object, exe and flat output\n"
-       "  --return TYPE              f64, bool, i32, or i64 (default: " PARSLEY_NATIVE_RETURN ")\n"
+       "  --return TYPE              f64, bool, i32, i64, or cstr (default: " PARSLEY_NATIVE_RETURN ")\n"
        "  --os TARGET                windows, linux, or baremetal\n"
        "  -O0, -O1                   Select nextc optimization level\n"
        "  --no-ast-opt               Skip AST optimization\n",out);
@@ -89,6 +89,7 @@ int main(int argc,char **argv){
        else if(!strcmp(value,"bool"))result=CG_T_I1;
        else if(!strcmp(value,"i32"))result=CG_T_I32;
        else if(!strcmp(value,"i64"))result=CG_T_I64;
+       else if(!strcmp(value,"cstr"))result=CG_T_PTR;
        else{fprintf(stderr,"unknown return type\n");return 2;}
      }else{
        if(!strcmp(value,"windows"))options.os=CG_OS_WINDOWS;
@@ -103,6 +104,9 @@ int main(int argc,char **argv){
  if(!input){usage(stderr);return 2;}
  if(strcmp(emit,"mir") && strcmp(emit,"asm") && strcmp(emit,"object") && strcmp(emit,"exe") && strcmp(emit,"flat")){
    fprintf(stderr,"unknown emission format\n");return 2;
+ }
+ if(!run && result==CG_T_PTR && (!strcmp(emit,"exe") || !strcmp(emit,"flat"))){
+   fprintf(stderr,"cstr results require --run or a caller that consumes the pointer ABI\n");return 2;
  }
  if(!strcmp(emit,"exe") && options.os!=CG_OS_WINDOWS){fprintf(stderr,"PE output requires the Windows ABI\n");return 2;}
  if(!run && !output && strcmp(emit,"mir") && strcmp(emit,"asm")){
@@ -142,6 +146,13 @@ int main(int argc,char **argv){
    if(result==CG_T_F64){double (*f)(void);_Static_assert(sizeof(f)==sizeof(address),"function address width");memcpy(&f,&address,sizeof(f));printf("%.17g\n",f());}
    else if(result==CG_T_I1){bool (*f)(void);memcpy(&f,&address,sizeof(f));printf("%d\n",(int)f());}
    else if(result==CG_T_I32){int32_t (*f)(void);memcpy(&f,&address,sizeof(f));printf("%" PRId32 "\n",f());}
+   else if(result==CG_T_PTR){
+     const char *(*f)(void);
+     memcpy(&f,&address,sizeof(f));
+     const char *value=f();
+     if(!value){cg_diag_error(&diag,"cstr entry returned null");goto cleanup;}
+     puts(value);
+   }
    else{int64_t (*f)(void);memcpy(&f,&address,sizeof(f));printf("%" PRId64 "\n",f());}
    status=0;goto cleanup;
  }

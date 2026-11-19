@@ -211,12 +211,97 @@ static int kotlin_check_calls(const kotlin_node *root, psl_sink sink, void *user
 
 #ifndef KOTLIN_CALL_CHECK_ONLY
 #define PARSLEY_NATIVE_CHECK kotlin_check_calls
+/* The box result ABI is a NUL-terminated UTF-8 string in read-only MIR data. */
+static cg_value_t kotlin_box_literal(kotlin_backend_context *ctx, psl_str literal) {
+    if (literal.len < 2 || literal.len > UINT32_MAX ||
+        literal.ptr[0] != '"' || literal.ptr[literal.len - 1] != '"') return CG_INVALID;
+    char *data = malloc(literal.len);
+    if (!data) return CG_INVALID;
+    size_t size = 0;
+    bool valid = true;
+    for (size_t i = 1; i < literal.len - 1; ++i) {
+        char ch = literal.ptr[i];
+        if (ch == '\\') {
+            if (++i >= literal.len - 1) { valid = false; break; }
+            ch = literal.ptr[i];
+            switch (ch) {
+                case 'n': ch = '\n'; break;
+                case 'r': ch = '\r'; break;
+                case 't': ch = '\t'; break;
+                case 'b': ch = '\b'; break;
+                case '"': case '\'': case '\\': case '$': break;
+                default: valid = false; break;
+            }
+        } else if (ch == '$' || ch == '\n' || ch == '\r' || ch == '\0') {
+            valid = false;
+        }
+        if (!valid) break;
+        data[size++] = ch;
+    }
+    cg_value_t result = CG_INVALID;
+    if (valid) {
+        data[size++] = '\0';
+        cg_builder_t *builder = kotlin_backend_builder(ctx);
+        char name[48];
+        snprintf(name, sizeof(name), "kotlin_string_%" PRIu32, builder->module->symbols.count);
+        cg_symbol_t symbol = cg_module_add_data(builder->module, name, (uint32_t)size, 1,
+                                                data, CG_DATA_RO, CG_BIND_LOCAL);
+        if (symbol != CG_INVALID) result = cg_build_symaddr(builder, symbol);
+    }
+    free(data);
+    return result;
+}
+
+static bool kotlin_box_return_type(const kotlin_node *types) {
+    if (!types->child_count) return true;
+    const kotlin_node *type = types->children[0];
+    return psl_str_eq(type->children[0]->text_val, psl_str_lit("String")) &&
+           !type->children[1]->child_count && !type->children[3]->child_count &&
+           type->children[2]->tag == KOTLIN_NODE_NOTYPEARGUMENTS;
+}
+
+static cg_value_t kotlin_lower_box_function(kotlin_backend_context *ctx, const kotlin_node *function,
+                                             const kotlin_node *decls, unsigned depth) {
+    if (!function || depth >= 64 || function->children[1]->tag != KOTLIN_NODE_NOTYPEPARAMETERS ||
+        !kotlin_box_return_type(function->children[2])) return CG_INVALID;
+    const kotlin_node *scope = function->children[3];
+    const kotlin_node *body = scope->children[2];
+    if (scope->children[1]->child_count || body->child_count != 1 ||
+        body->children[0]->tag != KOTLIN_NODE_RETURNSTMT) return CG_INVALID;
+    const kotlin_node *returns = body->children[0]->children[0];
+    if (returns->child_count != 1) return CG_INVALID;
+    const kotlin_node *expr = returns->children[0];
+    if (expr->tag == KOTLIN_NODE_STRLIT) return kotlin_box_literal(ctx, expr->children[0]->text_val);
+    if (expr->tag != KOTLIN_NODE_CALL || expr->children[1]->child_count) return CG_INVALID;
+    const kotlin_node *callee = kotlin_call_target(decls, expr->children[0]->text_val);
+    return kotlin_lower_box_function(ctx, callee, decls, depth + 1);
+}
+
+static cg_value_t kotlin_lower_box(kotlin_backend_context *ctx, const kotlin_node *decls) {
+    for (size_t i = 0; i < decls->child_count; ++i) {
+        const kotlin_node_tag tag = decls->children[i]->tag;
+        if (tag != KOTLIN_NODE_FUNDECL && tag != KOTLIN_NODE_IMPORTDECL) {
+            cg_diag_error(kotlin_backend_diagnostic(ctx), "box lowering supports only top-level functions and imports");
+            return CG_INVALID;
+        }
+    }
+    const kotlin_node *function = kotlin_call_target(decls, psl_str_lit("box"));
+    cg_value_t result = kotlin_lower_box_function(ctx, function, decls, 0);
+    if (result == CG_INVALID)
+        cg_diag_error(kotlin_backend_diagnostic(ctx), "unsupported or missing Kotlin box string entry");
+    return result;
+}
+
 /* Native entry adapter for the Kotlin conformance project. */
 static bool kotlin_lower_entry(kotlin_backend_context *ctx, const kotlin_node *node,
                                cg_value_t *out, void *user) {
     (void)user;
     if (node->tag == KOTLIN_NODE_KTFILE) {
         const kotlin_node *decls = node->children[1];
+        if (kotlin_backend_builder(ctx)->func->ret_type == CG_T_PTR) {
+            *out = kotlin_lower_box(ctx, decls);
+            return true;
+        }
         const kotlin_node *entry = NULL;
         for (size_t i = 0; i < decls->child_count; ++i) {
             const kotlin_node *decl = decls->children[i];
