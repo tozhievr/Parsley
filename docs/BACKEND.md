@@ -81,6 +81,13 @@ A flat text constructor can declare `value = cstrQuoted text` and
 `effects = []` with provenance. It emits a NUL-terminated value in read-only
 MIR data. The intrinsic decodes basic escapes and rejects interpolation.
 
+For a flat expression constructor, use `nativeI32 = i32Binary op lhs rhs
+[AddTag, SubTag, MulTag]` or `nativeI32 = i32Negation op operand NegTag`
+with provenance. The tags are language AST constructors. The backend
+recursively lowers operands, requires i32 values, and emits wrapping
+addition, subtraction, multiplication or negation. Other tags remain
+unsupported by that equation.
+
 ## Extending a language
 
 When the CLI generates a native backend, it copies an optional adjacent

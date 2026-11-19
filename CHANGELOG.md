@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.14.0
+
+- Lower declared signed 32-bit arithmetic directly to MIR and use it for Kotlin integer expressions.
+
 ## 2.13.0
 
 - Generate declarative C string entries and lower quoted string literals to nextc read-only data.

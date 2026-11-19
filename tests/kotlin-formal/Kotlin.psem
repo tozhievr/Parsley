@@ -116,10 +116,18 @@ node LambdaParameter name _ where
 node TypeTestChain _ _ where
   type = KtBool
 
+{-# SOURCE kotlinSpec "expressions/prefix-expressions" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
 node Unary op e where
+  nativeI32 = i32Negation op e Neg
   type = if op == Not then KtBool else typeOf e
 
+{-# SOURCE kotlinSpec "expressions/additive-expressions" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
 node Bin op l r where
+  nativeI32 = i32Binary op l r [Add, Sub, Mul]
   require ((op /= Div && op /= Mod) || constFold r /= Just 0) `orFail` W_DIV_ZERO
   type = if op == Eq || op == Neq || op == Lt || op == Gt || op == Le || op == Ge || op == And || op == Or
          then KtBool

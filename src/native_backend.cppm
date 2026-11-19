@@ -183,6 +183,72 @@ inline const E *literal_operand(const Ctor& c, psl::PslStatus minimum,
   return pure ? arg : nullptr;
 }
 
+// A native arithmetic equation identifies the AST operands and names of
+// the operator constructors. It does not infer operator meaning from names.
+inline bool emit_i32_arithmetic(std::ostringstream& out, const Ctor& c,
+                                const std::string& module, psl::PslStatus minimum) {
+  if (!c.rule || !c.exhaustive) return false;
+  const auto& provenance = c.rule->provenance;
+  if (!provenance.has_status || !provenance.has_confidence || provenance.source_name.empty() ||
+      static_cast<int>(provenance.status) < static_cast<int>(minimum)) return false;
+  const E *equation = nullptr;
+  for (const auto& st : c.rule->stmts) {
+    if (st.kind != psl::PslNodeStmt::Kind::AssignAttr || st.target_var != "nativeI32") continue;
+    if (equation) return false;
+    equation = st.expr.get();
+  }
+  if (!equation || equation->kind != E::Kind::Call) return false;
+  const bool unary = equation->name == "i32Negation" && equation->args.size() == 3;
+  const bool binary = equation->name == "i32Binary" && equation->args.size() == 4;
+  if (!unary && !binary) return false;
+  const std::size_t operands = unary ? 2 : 3;
+  std::vector<std::size_t> indices;
+  for (std::size_t i = 0; i < operands; ++i) {
+    const auto& arg = equation->args[i];
+    if (!arg || arg->kind != E::Kind::Var || !c.vars.contains(arg->name)) return false;
+    indices.push_back(c.vars.at(arg->name));
+  }
+  const auto& operations = equation->args[operands];
+  if (!operations) return false;
+  std::vector<std::string> names;
+  auto add_name = [&](const E *e) {
+    if (!e || e->kind != E::Kind::Ctor || !e->args.empty() ||
+        std::find(names.begin(), names.end(), e->name) != names.end()) return false;
+    names.push_back(e->name);
+    return true;
+  };
+  if (unary) {
+    if (!add_name(operations.get())) return false;
+  } else {
+    if (operations->kind != E::Kind::List || operations->args.size() != 3) return false;
+    for (const auto& op : operations->args) if (!add_name(op.get())) return false;
+  }
+
+  out << "case " << c.tag << ":{\n"
+      << "const N *op=n->children[" << indices[0] << "];\n"
+      << "if(op->child_count)return b_error(cx,\"invalid i32 operator\");\n"
+      << "cg_op_t operation;\n";
+  static constexpr std::string_view opcodes[] = {"CG_OP_ADD", "CG_OP_SUB", "CG_OP_MUL"};
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    out << (i ? "else if" : "if") << "(psl_str_eq(op->ctor_name,psl_str_lit("
+        << c23_text::literal(names[i]) << ")))operation=" << opcodes[unary ? 1 : i] << ";\n";
+  }
+  out << "else return b_error(cx,\"no declarative i32 lowering for this operator\");\n"
+      << "cg_value_t left=" << module << "_backend_node(cx,n->children[" << indices[1] << "]);\n"
+      << "if(left==CG_INVALID)return CG_INVALID;\n"
+      << "if(cg_value_type(cx->builder.func,left)!=CG_T_I32)return b_error(cx,\"i32 operand required\");\n";
+  if (unary) {
+    out << "return cg_build_binary(&cx->builder,operation,"
+        << "cg_build_iconst(&cx->builder,CG_T_I32,0),left);}\n";
+  } else {
+    out << "cg_value_t right=" << module << "_backend_node(cx,n->children[" << indices[2] << "]);\n"
+        << "if(right==CG_INVALID)return CG_INVALID;\n"
+        << "if(cg_value_type(cx->builder.func,right)!=CG_T_I32)return b_error(cx,\"i32 operand required\");\n"
+        << "return cg_build_binary(&cx->builder,operation,left,right);}\n";
+  }
+  return true;
+}
+
 inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
                           psl::PslStatus minimum){
   std::ostringstream o;
@@ -256,6 +322,7 @@ inline std::string source(const std::vector<Ctor>& ctors,const std::string& m,
         << "return b_quoted_cstr(cx,field->text_val);}\n";
       continue;
     }
+    if (emit_i32_arithmetic(o, c, m, minimum)) continue;
     if(!c.eligible)continue;
     o<<"case "<<c.tag<<":{\n";int seq=0;auto result=expr(o,c.value,c,seq,m);o<<"return "<<result<<";}\n";
   }

@@ -122,6 +122,19 @@ def main():
         declarative_compiler = generated / "kotlin_compiler.exe"
         if run(declarative_compiler, source, "--run", "--return", "i32").strip() != "42":
             raise RuntimeError("Kotlin main did not execute from its PSL description")
+        arithmetic = declarative / "arithmetic.kt"
+        for expression, expected_result in (("-(7 * 6) + 46 - 1", "3"),
+                                            ("2147483647 + 1", "-2147483648")):
+            arithmetic.write_text(f"fun main(): Int = {expression}", encoding="utf-8")
+            actual = run(declarative_compiler, arithmetic, "--run", "--return", "i32",
+                         "--no-ast-opt", "-O0").strip()
+            if actual != expected_result:
+                raise RuntimeError(f"Wrong declarative i32 result for {expression}: {actual}")
+        arithmetic.write_text("fun main(): Int = -(7 * 6) + 46 - 1", encoding="utf-8")
+        mir = run(declarative_compiler, arithmetic, "--emit", "mir", "--return", "i32",
+                  "--no-ast-opt")
+        if any(opcode not in mir for opcode in ("mul", "add", "sub")):
+            raise RuntimeError(f"Declarative arithmetic did not emit operations: {mir}")
         string_entry = declarative / "string.kt"
         for kotlin_literal, value in (('"OK"', "OK"), (r'"a\tb\$\\"', "a\tb$\\")):
             string_entry.write_text(f"fun box(): String = {kotlin_literal}", encoding="utf-8")
