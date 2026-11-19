@@ -142,8 +142,7 @@
   {
     "id": "lambda",
     "source": "fun f() { val fn = { x: Int -> x + 1 } }",
-    "parse": true,
-    "gap": "lambda literals"
+    "parse": true
   },
   {
     "id": "destructuring",
@@ -227,6 +226,18 @@
   {
     "id": "local-variables-are-sequential",
     "source": "fun f() { val a = b; val b = 1 }",
+    "parse": true,
+    "diag": "E_UNDECLARED"
+  },
+  {
+    "id": "lambda-parameter-scope",
+    "source": "fun f() { val fn = { x: Int -> x }; val y = fn }",
+    "parse": true,
+    "diag": "!E_UNDECLARED"
+  },
+  {
+    "id": "lambda-parameter-does-not-leak",
+    "source": "fun f() { val fn = { x -> x }; val y = x }",
     "parse": true,
     "diag": "E_UNDECLARED"
   }

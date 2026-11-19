@@ -45,8 +45,19 @@ data KtExpr
   | CastChain KtExpr [KtCast]
   | ThrowExpr KtExpr
   | TryExpr [KtStmt] KtTryContinuation
+  | LambdaExpr KtLambdaScope
   | IfExpr KtExpr [KtStmt] [KtStmt]
   | WhenExpr [KtExpr] [KtWhenBranch]
+
+data KtLambdaScope
+  = LambdaScope KtLambdaParams [KtStmt]
+
+data KtLambdaParams
+  = ImplicitLambdaParams
+  | ExplicitLambdaParams [KtLambdaParam]
+
+data KtLambdaParam
+  = LambdaParameter Text [KtCastType]
 
 data KtTryContinuation
   = CatchHandlers KtCatchClause [KtCatchClause] KtFinally
@@ -64,6 +75,7 @@ data KtPostfix
   | InvokeSuffix [KtExpr]
   | IndexSuffix KtExpr
   | AssertNotNull
+  | TrailingLambdaSuffix KtExpr
 
 data KtCastType
   = CastType Text [Text] KtTypeArgs [Text]

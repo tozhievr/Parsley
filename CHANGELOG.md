@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.11.2
+
+- Parse Kotlin lambda literals and trailing lambdas, preserving explicit parameter scopes.
+
 ## 2.11.1
 
 - Preserve Kotlin type alias targets and evaluate immutable constructor-property reads in closed native box bodies.

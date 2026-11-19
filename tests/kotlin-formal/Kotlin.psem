@@ -84,6 +84,20 @@ node CatchClause name _ body where
   scope body $ declare Variable name KtAny
   type = KtUnit
 
+{-# SOURCE kotlinSpec "expressions/lambda-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node LambdaExpr body where
+  scope body $ pure ()
+  type = KtAny
+
+{-# SOURCE kotlinSpec "expressions/lambda-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node LambdaParameter name _ where
+  declare Variable name KtAny
+  type = KtUnit
+
 node Unary op e where
   type = if op == Not then KtBool else typeOf e
 

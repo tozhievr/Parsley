@@ -481,6 +481,7 @@ postfixSuffix
   |  InvokeSuffix <$> parens (callArg `sepBy` ",")
   |  IndexSuffix <$> brackets expr
   |  "!!" *> pure AssertNotNull
+  |  TrailingLambdaSuffix <$> lambdaExpr
 
 atom :: KtExpr
 atom
@@ -493,6 +494,7 @@ atom
   |  ("null" *> pure NullLit)
   |  ThrowExpr <$> ("throw" *> expr)
   |  tryExpr
+  |  lambdaExpr
   |  ifExpr
   |  whenExpr
   |  do
@@ -523,8 +525,28 @@ atom
     arr <- identifier
     idx <- brackets expr
     pure (Index (Var arr) idx)
+  |  Call <$> identifier <*> trailingLambdaArgument
   |  Var <$> identifier
   |  parens expr
+
+trailingLambdaArgument :: [KtExpr]
+trailingLambdaArgument = do
+  arg <- lambdaExpr
+  pure [arg]
+
+lambdaExpr :: KtExpr
+lambdaExpr = LambdaExpr <$> ("{" *> lambdaScope <* "}")
+
+lambdaScope :: KtLambdaScope
+lambdaScope = LambdaScope <$> lambdaParameters <*> many stmt
+
+lambdaParameters :: KtLambdaParams
+lambdaParameters
+  =  ExplicitLambdaParams <$> ((lambdaParameter `sepBy` ",") <* "->")
+  |  pure ImplicitLambdaParams
+
+lambdaParameter :: KtLambdaParam
+lambdaParameter = LambdaParameter <$> identifier <*> functionReturnType
 
 tryExpr :: KtExpr
 tryExpr = TryExpr <$> ("try" *> block) <*> tryContinuation
