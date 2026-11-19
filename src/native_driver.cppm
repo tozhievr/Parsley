@@ -117,6 +117,12 @@ int main(int argc,char **argv){
  }
  @m@_ctx *semantic=@m@_ctx_new(&analysis,NULL);
  if(!semantic || @m@_analyze(semantic,root,diagnostic,NULL)<0 || errors){fprintf(stderr,"semantic validation failed (%d errors)\n",errors);goto cleanup;}
+#ifdef PARSLEY_NATIVE_CHECK
+ if(PARSLEY_NATIVE_CHECK(root,diagnostic,NULL)<0 || errors){
+   fprintf(stderr,"project semantic validation failed (%d errors)\n",errors);
+   goto cleanup;
+ }
+#endif
  if(ast_opt){
    @m@_opt_result opt=@m@_optimize(&optimized,root,NULL,NULL,0);
    if(opt.status){fprintf(stderr,"AST optimization failed: %d\n",opt.status);goto cleanup;}root=opt.root;

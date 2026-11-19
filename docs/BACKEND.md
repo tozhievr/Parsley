@@ -68,6 +68,10 @@ standalone driver. Define `PARSLEY_NATIVE_RESULT` (a nextc type),
 `PARSLEY_NATIVE_OPTIONS` (a pointer to the module's backend options).
 The hook receives the original language's root after validation and optional
 AST optimization. For a complete file the hook can select an entry declaration.
+An adapter can also define `PARSLEY_NATIVE_CHECK` as a function taking the
+module's root, a `psl_sink` and its user pointer. The standalone driver invokes
+it after PSL analysis and before optimization. Return a negative result for
+an analysis failure or emit an error through the sink to reject the source.
 
 ~~~c
 #include "language_backend.h"

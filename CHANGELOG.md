@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.0
+
+- Allow a project native adapter to validate the parsed AST before optimization.
+- Check argument binding and primitive literal compatibility for unambiguous non-generic Kotlin top-level functions.
+
 ## 2.7.5
 
 - Carry token-derived source ranges into generated PSL ASTs and compare located Kotlin diagnostics with JetBrains expectations.

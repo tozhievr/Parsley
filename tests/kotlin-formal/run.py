@@ -126,6 +126,22 @@ def main():
         comparison = compare_diagnostics(expected, messages)
         if verdict != "accept" or comparison[0] != "diagnostics-match":
             raise RuntimeError(f"Lost Kotlin diagnostic location: {comparison}")
+        marked = (b"fun f(x: Int) {}\n"
+                  b"fun g() { f(1); f(<!ARGUMENT_TYPE_MISMATCH!>false<!>); "
+                  b"<!NO_VALUE_FOR_PARAMETER!>f<!>(<!NAMED_PARAMETER_NOT_FOUND!>y<!> = 1) }")
+        clean, expected = unmark(marked)
+        located = subprocess.run([probe, "--diagnostic-spans"], input=clean,
+                                 capture_output=True, timeout=15, check=True)
+        verdict, *messages = located.stdout.decode().splitlines()
+        comparison = compare_diagnostics(expected, messages)
+        if verdict != "accept" or comparison[0] != "diagnostics-match":
+            raise RuntimeError(f"Lost Kotlin call diagnostics: {comparison}")
+        invalid_calls = out / "invalid-calls.kt"
+        invalid_calls.write_bytes(clean)
+        result = subprocess.run([compiler, invalid_calls, "--emit", "mir"], capture_output=True,
+                                encoding="utf-8", timeout=15)
+        if result.returncode != 1 or "project semantic validation failed (3 errors)" not in result.stderr:
+            raise RuntimeError(f"Standalone compiler missed call diagnostics: {result.stderr!r}")
         failures = gaps = 0
         for case in cases:
             verdict, *messages = run(probe, source=case["source"]).splitlines()

@@ -1,6 +1,9 @@
 #include "kotlin_parse.h"
 #include "kotlin_sem.h"
 
+#define KOTLIN_CALL_CHECK_ONLY
+#include "Kotlin.native.h"
+
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,5 +55,5 @@ int main(int argc, char **argv) {
     if (parse_only) return 0;
     kotlin_ctx *context = kotlin_ctx_new(&semantic_arena, NULL);
     if (!context || kotlin_analyze(context, root, diagnostic, &located) < 0) return 2;
-    return 0;
+    return kotlin_check_calls(root, diagnostic, &located) < 0 ? 2 : 0;
 }
