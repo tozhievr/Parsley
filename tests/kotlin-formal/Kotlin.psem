@@ -12,6 +12,7 @@ type KtTy = KtInt | KtDouble | KtString | KtBool | KtUnit | KtNull | KtAny | KtE
 
 kind Variable where shadowing = Warn
 kind Function
+kind CallableParameter
 kind TypeName
 kind Constructor
 kind TypeAlias
@@ -169,11 +170,12 @@ node Bin op l r where
 {-# CONFIDENCE 0.9 #-}
 node Call f args where
   nativeCall = callCstr f args
+  callback <- lookup CallableParameter f
   fn <- lookup Function f
   classifier <- lookup Constructor f
   alias <- lookup TypeAlias f
-  require (isResolved fn || isResolved classifier || isResolved alias) `orFail` E_UNDECLARED { name = f }
-  type = if isResolved fn then typeOf fn else if isResolved classifier then typeOf classifier else typeOf alias
+  require (isResolved callback || isResolved fn || isResolved classifier || isResolved alias) `orFail` E_UNDECLARED { name = f }
+  type = if isResolved callback then typeOf callback else if isResolved fn then typeOf fn else if isResolved classifier then typeOf classifier else typeOf alias
 
 {-# SOURCE kotlinSpec "expressions/function-calls-and-property-access" #-}
 {-# STATUS draft #-}
@@ -282,6 +284,21 @@ node FunDecl name NoTypeParameters [CastType "String" [] NoTypeArguments []] (Fu
   nativeCstrBody = result
   nativeCstrParameters = parameters
   predeclare Function name KtAny
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunctionTypedParam name _ False _ where
+  declare CallableParameter name KtAny
+  declare Variable name KtAny
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunctionTypedParam name _ _ _ where
+  declare Variable name KtAny
   type = KtUnit
 
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}

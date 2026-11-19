@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.31.0
+
+- Parse structural Kotlin function types in function and constructor parameters and in return types.
+
 ## 2.30.0
 
 - Preserve Kotlin extension function receivers, including generic and nullable named receivers.

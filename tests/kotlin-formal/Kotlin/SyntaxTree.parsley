@@ -84,6 +84,8 @@ data KtPostfix
 
 data KtCastType
   = CastType Text [Text] KtTypeArgs [Text]
+  | FunctionType [KtCastType] KtCastType
+  | NamedTypeParameter Text KtCastType
   | StarProjection
   | InProjection KtCastType
   | OutProjection KtCastType
@@ -117,7 +119,9 @@ data KtStmt
 data KtParam
   = Param Text Text Text
   | ExtendedClassParam Text Text Text Bool [KtExpr]
+  | FunctionTypedClassParam Text Text KtCastType Bool [KtExpr]
   | FunctionParam Text Text Bool [KtExpr]
+  | FunctionTypedParam Text KtCastType Bool [KtExpr]
 
 data KtFunctionScope
   = FunctionScope [KtCastType] [KtParam] [KtStmt]

@@ -167,7 +167,8 @@ classParamMut
 
 classParam :: KtParam
 classParam
-  =  do
+  =  functionTypedClassParam
+  |  do
     _        <- many modifier
     "vararg"
     mut      <- classParamMut
@@ -191,6 +192,17 @@ classParam
     ":"
     ty   <- typeExpr
     pure (Param mut name ty)
+
+functionTypedClassParam :: KtParam
+functionTypedClassParam = do
+  _        <- many modifier
+  variadic <- ("vararg" *> pure True) <|> pure False
+  mut      <- classParamMut
+  name     <- identifier
+  ":"
+  ty       <- functionType
+  default_ <- optInit
+  pure (FunctionTypedClassParam mut name ty variadic default_)
 
 interfaceDecl :: KtDecl
 interfaceDecl = do
@@ -276,7 +288,22 @@ funDecl = do
   pure (FunDecl name types retTy (FunctionScope retTy params body))
 
 funParam :: KtParam
-funParam = do
+funParam
+  =  functionTypedParam
+  |  namedTypeParam
+
+functionTypedParam :: KtParam
+functionTypedParam = do
+  _        <- many declarationAnnotation
+  variadic <- ("vararg" *> lookahead identifier *> pure True) <|> pure False
+  name     <- identifier
+  ":"
+  ty       <- functionType
+  default_ <- optInit
+  pure (FunctionTypedParam name ty variadic default_)
+
+namedTypeParam :: KtParam
+namedTypeParam = do
   _        <- many declarationAnnotation
   variadic <- ("vararg" *> lookahead identifier *> pure True) <|> pure False
   name     <- identifier
@@ -539,7 +566,25 @@ castSuffix
   |  SafeCast <$> ("as?" *> castType)
 
 castType :: KtCastType
-castType = do
+castType
+  =  functionType
+  |  namedCastType
+
+functionType :: KtCastType
+functionType = do
+  _      <- many declarationAnnotation
+  params <- parens (functionTypeParameter `sepEndBy` ",")
+  "->"
+  result <- castType
+  pure (FunctionType params result)
+
+functionTypeParameter :: KtCastType
+functionTypeParameter
+  =  NamedTypeParameter <$> (identifier <* ":") <*> castType
+  |  castType
+
+namedCastType :: KtCastType
+namedCastType = do
   _        <- many declarationAnnotation
   first    <- identifier
   rest     <- many ("." *> identifier)

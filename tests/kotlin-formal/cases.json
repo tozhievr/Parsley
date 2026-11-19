@@ -24,6 +24,12 @@
     "diag": "E_UNDECLARED"
   },
   {
+    "id": "callable-parameter",
+    "source": "fun apply(f: (Int) -> Int): Int = f(1)",
+    "parse": true,
+    "diag": "!E_UNDECLARED"
+  },
+  {
     "id": "arithmetic",
     "source": "fun f(): Int = 1 + 2 * 3",
     "parse": true
