@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.32.0
+
+- Parse Kotlin character literals and distinguish `Char` from `String` in PSL.
+
 ## 2.31.0
 
 - Parse structural Kotlin function types in function and constructor parameters and in return types.

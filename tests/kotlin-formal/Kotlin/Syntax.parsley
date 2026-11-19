@@ -646,6 +646,7 @@ atom
   |  BinaryLit <$> binaryLit
   |  IntLit <$> intLit
   |  StrLit <$> strLit
+  |  CharLit <$> charLit
   |  BoolLit <$> boolLit
   |  ("null" *> pure NullLit)
   |  CollectionLit <$> ("[" *> (expr `sepEndBy` ",") <* "]")

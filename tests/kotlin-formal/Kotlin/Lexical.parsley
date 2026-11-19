@@ -9,6 +9,9 @@ token intLit       = /[0-9]+/ :: Double
 token strLit       = /"([^"\\]|\\.)*"/ :: Text
 token hexLit       = /0[xX][0-9a-fA-F]([0-9a-fA-F_]*[0-9a-fA-F])?/ :: Text
 token binaryLit    = /0[bB][01]([01_]*[01])?/ :: Text
+-- A raw Char is one BMP code point. The byte ranges exclude malformed UTF-8 and surrogates.
+-- Unicode escapes can still spell any UTF-16 code unit.
+token charLit      = /'([\x00-\x09\x0B-\x0C\x0E-\x26\x28-\x5B\x5D-\x7F]|[\xC2-\xDF][\x80-\xBF]|\xE0[\xA0-\xBF][\x80-\xBF]|[\xE1-\xEC\xEE-\xEF][\x80-\xBF]{2}|\xED[\x80-\x9F][\x80-\xBF]|\\([tbrn'"\\$]|u[0-9A-Fa-f]{4}))'/ :: Text
 token boolLit      = /true|false/ :: Bool
 token questionMark = /[?]/
 token openBrace    = "{"

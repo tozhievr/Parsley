@@ -8,7 +8,7 @@ import Kotlin.Lints
 source kotlinSpec = manual "Kotlin Language Specification" rev "1.9-rfc+0.1"
 
 -- Типы и символы -------------------------------------------------
-type KtTy = KtInt | KtDouble | KtString | KtBool | KtUnit | KtNull | KtAny | KtErr
+type KtTy = KtInt | KtDouble | KtString | KtChar | KtBool | KtUnit | KtNull | KtAny | KtErr
 
 kind Variable where shadowing = Warn
 kind Function
@@ -72,6 +72,12 @@ node StrLit text where
   type = KtString
   value = cstrQuoted text
   effects = []
+
+{-# SOURCE kotlinSpec "expressions/character-literals" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node CharLit _ where
+  type = KtChar
 
 {-# SOURCE kotlinSpec "expressions/boolean-literals" #-}
 {-# STATUS draft #-}

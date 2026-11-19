@@ -30,6 +30,16 @@
     "diag": "!E_UNDECLARED"
   },
   {
+    "id": "reject-multichar-literal",
+    "source": "fun f() = 'ab'",
+    "parse": false
+  },
+  {
+    "id": "reject-unknown-character-escape",
+    "source": "fun f() = '\\q'",
+    "parse": false
+  },
+  {
     "id": "arithmetic",
     "source": "fun f(): Int = 1 + 2 * 3",
     "parse": true
