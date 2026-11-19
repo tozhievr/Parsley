@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.20.0
+
+- Add reproducible offsets to JetBrains Kotlin corpus batches.
+
 ## 2.19.0
 
 - Parse Kotlin type annotations and retain bracketed collection literals in the AST.

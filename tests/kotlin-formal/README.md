@@ -47,6 +47,8 @@ Run a bounded sample under `integration/` on Windows:
 
     python tests/kotlin-formal/run.py --cli build/parsley.exe --cc clang --jetbrains psi/operators --jetbrains diagnostics/tests/arguments --jetbrains codegen/box/basics --sample-limit 6
 
+Pass `--sample-offset 100 --sample-limit 100` to run the second batch for each selected path. Paths are visited in the same sorted traversal on each run, and files before the offset are skipped without opening them.
+
 Each selection can be a directory or an individual `.kt` file. Directories
 are traversed in sorted order, stopping at the limit for each selection.
 The PSI probe compares the syntax verdict with the presence of an error node

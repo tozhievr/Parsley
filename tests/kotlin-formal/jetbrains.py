@@ -129,7 +129,7 @@ def classify(path, suite, probe, compiler):
     return "box-fail", repr(result.stdout.decode("utf-8", errors="replace"))
 
 
-def sample(integration, selection, limit, probe, compiler):
+def sample(integration, selection, limit, probe, compiler, *, offset=0):
     directory = (integration / selection).resolve()
     if not directory.is_relative_to(integration) or not directory.exists():
         raise ValueError(f"Unknown JetBrains corpus path: {selection}")
@@ -137,7 +137,7 @@ def sample(integration, selection, limit, probe, compiler):
     if not parts or parts[0] not in ("psi", "diagnostics", "codegen"):
         raise ValueError(f"Choose a path under psi, diagnostics or codegen: {selection}")
     counts = Counter()
-    for path in islice(source_files(directory), limit):
+    for path in islice(source_files(directory), offset, offset + limit):
         if path.suffix != ".kt":
             raise ValueError(f"Expected a .kt input: {path}")
         try:
@@ -148,6 +148,7 @@ def sample(integration, selection, limit, probe, compiler):
         detail = " ".join(detail.split())[:240]
         print(f"{status:22} {path.relative_to(integration).as_posix()}  {detail}")
     if not counts:
-        raise ValueError(f"No .kt files found: {selection}")
+        raise ValueError(f"No .kt files found in {selection} at offset {offset}")
+    print(f"JetBrains batch {selection}: offset={offset}, files={sum(counts.values())}")
     print(f"JetBrains {selection}: " + ", ".join(f"{key}={value}" for key, value in sorted(counts.items())))
     return bool(counts.keys() & {"probe-error", "compiler-error", "timeout", "box-fail"})

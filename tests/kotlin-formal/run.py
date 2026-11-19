@@ -63,7 +63,11 @@ def main():
                         help="Sample a path relative to integration/ (repeatable)")
     parser.add_argument("--sample-limit", type=int, default=12,
                         help="Maximum Kotlin files to open per selected path (default: 12)")
+    parser.add_argument("--sample-offset", type=int, default=0,
+                        help="Skip this many sorted Kotlin paths per selection (default: 0)")
     args = parser.parse_args()
+    if args.sample_offset < 0:
+        parser.error("--sample-offset must be non-negative")
     if args.sample_limit < 1:
         parser.error("--sample-limit must be positive")
     cases = json.loads((ROOT / "cases.json").read_text(encoding="utf-8"))
@@ -288,7 +292,8 @@ def main():
                 print(f"PASS {case['id']}")
         print(f"{len(cases) - failures - gaps} passed, {gaps} known gaps, {failures} regressions")
         for selection in args.jetbrains:
-            failures += sample(ROOT / "integration", selection, args.sample_limit, probe, compiler)
+            failures += sample(ROOT / "integration", selection, args.sample_limit, probe, compiler,
+                               offset=args.sample_offset)
         return int(bool(failures or (args.strict and gaps)))
 
 
