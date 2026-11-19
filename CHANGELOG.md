@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.35.2
+
+- Write Kotlin conformance logs as UTF-8 under Windows CI.
+
 ## 2.35.1
 
 - Embed nextc resources with length-aware string views to fix Ubuntu builds.
