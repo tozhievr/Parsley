@@ -77,6 +77,13 @@ node Call f args where
   fn <- lookup Function f `orFail` E_UNDECLARED { name = f }
   type = typeOf fn
 
+{-# SOURCE kotlinSpec "expressions/function-calls-and-property-access" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node GenericCall f _ args where
+  fn <- lookup Function f `orFail` E_UNDECLARED { name = f }
+  type = typeOf fn
+
 node ValStmt isVar name ty init where
   declare Variable name (if ty == "" then KtAny else KtInt)
   type = KtUnit
@@ -92,7 +99,7 @@ node PropDecl isVar name ty init where
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
-node FunDecl name _ functionScope where
+node FunDecl name _ _ functionScope where
   declare Function name KtAny
   scope functionScope $ pure ()
   type = KtUnit
@@ -111,12 +118,12 @@ node FunctionScope ty _ [ReturnStmt [result]] where
   require (ty /= "Int" || typeOf result /= KtString) `orFail` E_TYPE { expected = ty, actual = "String" }
   type = KtUnit
 
-node ClassDecl kw name params members where
+node ClassDecl kw name _ params members where
   declare TypeName name KtAny
   scope members $ pure ()
   type = KtUnit
 
-node InterfaceDecl name members where
+node InterfaceDecl name _ members where
   declare TypeName name KtAny
   scope members $ pure ()
   type = KtUnit
@@ -126,6 +133,13 @@ node InterfaceDecl name members where
 {-# CONFIDENCE 0.9 #-}
 node ObjectDecl name members where
   declare TypeName name KtAny
+  scope members $ pure ()
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "declarations/companion-object-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node CompanionDecl _ members where
   scope members $ pure ()
   type = KtUnit
 

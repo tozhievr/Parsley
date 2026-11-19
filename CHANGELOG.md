@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.4
+
+- Parse Kotlin companion declarations and type parameters with bounds on classes, interfaces and functions, and explicit type arguments on calls.
+
 ## 2.7.3
 
 - Parse chained Kotlin postfix expressions, casts and throw expressions.

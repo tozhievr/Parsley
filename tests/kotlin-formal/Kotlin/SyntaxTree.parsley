@@ -33,6 +33,7 @@ data KtExpr
   | Bin KtOp KtExpr KtExpr
   | Unary KtUnaryOp KtExpr
   | Call Text [KtExpr]
+  | GenericCall Text KtTypeArgs [KtExpr]
   | NamedArg Text KtExpr
   | SafeMember KtExpr Text
   | SafeMethodCall KtExpr Text [KtExpr]
@@ -52,7 +53,11 @@ data KtPostfix
   | AssertNotNull
 
 data KtCastType
-  = CastType [Text] [KtCastType] Bool
+  = CastType Text [Text] KtTypeArgs Bool
+
+data KtTypeArgs
+  = NoTypeArguments
+  | TypeArguments KtCastType [KtCastType]
 
 data KtCast
   = CheckedCast KtCastType
@@ -79,13 +84,21 @@ data KtParam
 data KtFunctionScope
   = FunctionScope Text [KtParam] [KtStmt]
 
+data KtTypeParam
+  = TypeParameter Text [KtCastType]
+
+data KtTypeParams
+  = NoTypeParameters
+  | TypeParameters KtTypeParam [KtTypeParam]
+
 data KtDecl
   = ImportDecl [Text] Text
-  | ClassDecl Text Text [KtParam] [KtDecl]
+  | ClassDecl Text Text KtTypeParams [KtParam] [KtDecl]
   | ObjectDecl Text [KtDecl]
   | TypeAliasDecl Text Text
-  | InterfaceDecl Text [KtDecl]
-  | FunDecl Text Text KtFunctionScope
+  | InterfaceDecl Text KtTypeParams [KtDecl]
+  | CompanionDecl Text [KtDecl]
+  | FunDecl Text KtTypeParams Text KtFunctionScope
   | PropDecl Bool Text Text [KtExpr]
 
 data KtFile

@@ -28,9 +28,10 @@ static bool kotlin_lower_entry(kotlin_backend_context *ctx, const kotlin_node *n
         return true;
     }
     if (node->tag == KOTLIN_NODE_FUNDECL) {
-        const kotlin_node *scope = node->children[2];
+        const kotlin_node *scope = node->children[3];
         const kotlin_node *body = scope->children[2];
-        if (psl_str_eq(node->children[1]->text_val, psl_str_lit("Int")) &&
+        if (node->children[1]->tag == KOTLIN_NODE_NOTYPEPARAMETERS &&
+            psl_str_eq(node->children[2]->text_val, psl_str_lit("Int")) &&
             scope->children[1]->child_count == 0 && body->child_count == 1 &&
             body->children[0]->tag == KOTLIN_NODE_RETURNSTMT &&
             body->children[0]->children[0]->child_count == 1) {

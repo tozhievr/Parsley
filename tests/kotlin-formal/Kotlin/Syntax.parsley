@@ -104,6 +104,7 @@ classDecl :: KtDecl
 classDecl = do
   kind    <- classKind
   name    <- identifier
+  types   <- typeParameters
   params  <- classParamList <|> (do
   pure [])
   _       <- superClause <|> (do
@@ -111,7 +112,7 @@ classDecl = do
   members <- classBody <|> (do
   pure [])
   optSemi
-  pure (ClassDecl kind name params members)
+  pure (ClassDecl kind name types params members)
 
 superClause :: ()
 superClause = do
@@ -150,26 +151,56 @@ interfaceDecl = do
   _       <- many modifier
   "interface"
   name    <- identifier
+  types   <- typeParameters
   members <- classBody <|> (do
   pure [])
   optSemi
-  pure (InterfaceDecl name members)
+  pure (InterfaceDecl name types members)
 
 classBody :: [KtDecl]
 classBody = braces (many memberDecl)
 
 memberDecl :: KtDecl
-memberDecl = many modifier *> (funDecl <|> propDecl <|> classDecl <|> interfaceDecl <|> objectDecl <|> typeAliasDecl)
+memberDecl = many modifier *> (companionDecl <|> funDecl <|> propDecl <|> classDecl <|> interfaceDecl <|> objectDecl <|> typeAliasDecl)
+
+companionDecl :: KtDecl
+companionDecl = do
+  "companion"
+  "object"
+  name    <- identifier <|> pure ""
+  members <- classBody <|> pure []
+  optSemi
+  pure (CompanionDecl name members)
+
+typeParameters :: KtTypeParams
+typeParameters
+  =  TypeParameters <$> ("<" *> typeParameter) <*> many ("," *> typeParameter) <* ">"
+  |  pure NoTypeParameters
+
+typeParameter :: KtTypeParam
+typeParameter = do
+  name   <- identifier
+  bounds <- typeParameterBound
+  pure (TypeParameter name bounds)
+
+typeParameterBound :: [KtCastType]
+typeParameterBound
+  =  do
+    ":"
+    bound <- castType
+    pure [bound]
+  |  pure []
 
 funDecl :: KtDecl
 funDecl = do
   "fun"
+  types  <- typeParameters
   name   <- identifier
   params <- parens (funParam `sepBy` ",")
   retTy  <- optRetType
   body   <- funBody
   optSemi
-  pure (FunDecl name retTy (FunctionScope retTy params body))
+  pure (FunDecl name types retTy (FunctionScope retTy params body))
 
 funParam :: KtParam
 funParam = do
@@ -405,10 +436,19 @@ castSuffix
 
 castType :: KtCastType
 castType = do
-  path     <- lookahead identifier *> (identifier `sepBy` ".")
-  args     <- ("<" *> lookahead identifier *> (castType `sepBy` ",") <* ">") <|> pure []
+  first    <- identifier
+  rest     <- many ("." *> identifier)
+  args     <- typeArguments
   nullable <- ("?" *> pure True) <|> pure False
-  pure (CastType path args nullable)
+  pure (CastType first rest args nullable)
+
+typeArguments :: KtTypeArgs
+typeArguments
+  =  presentTypeArguments
+  |  pure NoTypeArguments
+
+presentTypeArguments :: KtTypeArgs
+presentTypeArguments = TypeArguments <$> ("<" *> castType) <*> many ("," *> castType) <* ">"
 
 prefixExpr :: KtExpr
 prefixExpr
@@ -464,6 +504,7 @@ atom
     "."
     fld <- identifier
     pure (Member (Var obj) fld)
+  |  GenericCall <$> identifier <*> presentTypeArguments <*> parens (callArg `sepBy` ",")
   |  Call <$> identifier <*> parens (callArg `sepBy` ",")
   |  do
     arr <- identifier
@@ -476,6 +517,7 @@ identifier :: Text
 identifier
   =  ident
   |  ("vararg" *> pure "vararg")
+  |  ("companion" *> pure "companion")
 
 callArg :: KtExpr
 callArg
