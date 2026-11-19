@@ -4913,7 +4913,7 @@ inline std::string emit_parse_source(const std::string& mod_low,
 
   o << "#define PARSLEY_INTERNAL 1\n#include \"include/" << mod_low << "_parser.h\"\n\n";
   o << "static " << mod_low << "_node *convert_parser_value(psl_arena *arena,const ParsleyValue *value,size_t depth) {\n";
-  o << "  if(!value || depth>128u){arena->error=2;return NULL;}\n  psl_span span={0u,0u,1u,1u};\n";
+  o << "  if(!value || depth>128u){arena->error=2;return NULL;}\n  psl_span span={value->source_offset,value->source_length,value->source_line,value->source_column};\n";
   o << "  switch(value->kind){\n";
   o << "    case PARSLEY_VAL_STRING:return " << mod_low << "_new_str_node(arena,psl_str_make(value->string_val,value->string_len),span);\n";
   o << "    case PARSLEY_VAL_NUMBER:return " << mod_low << "_new_num_node(arena,value->is_int?(double)value->integer_val:value->number_val,span);\n";

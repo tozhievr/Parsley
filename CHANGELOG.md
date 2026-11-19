@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.5
+
+- Carry token-derived source ranges into generated PSL ASTs and compare located Kotlin diagnostics with JetBrains expectations.
+
 ## 2.7.4
 
 - Parse Kotlin companion declarations and type parameters with bounds on classes, interfaces and functions, and explicit type arguments on calls.

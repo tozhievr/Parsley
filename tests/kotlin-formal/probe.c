@@ -6,17 +6,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 static void diagnostic(void *user, const psl_diag *diag) {
-    (void)user;
+    const bool located = *(const bool *)user;
     if (diag->def) {
         psl_str code = diag->def->code;
-        printf("diagnostic %.*s\n", (int)code.len, code.ptr);
+        if (located) {
+            printf("%.*s %" PRIu32 " %" PRIu32 "\n", (int)code.len, code.ptr,
+                   diag->span.offset, diag->span.len);
+        } else {
+            printf("diagnostic %.*s\n", (int)code.len, code.ptr);
+        }
     }
 }
 
 int main(int argc, char **argv) {
     const bool parse_only = argc == 2 && strcmp(argv[1], "--parse-only") == 0;
-    if (argc != 1 && !parse_only) return 2;
+    bool located = argc == 2 && strcmp(argv[1], "--diagnostic-spans") == 0;
+    if (argc != 1 && !parse_only && !located) return 2;
+#ifdef _WIN32
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1) return 2;
+#endif
     static char input[65536];
     static unsigned char parser_memory[4 * 1024 * 1024];
     static unsigned char semantic_memory[8 * 1024 * 1024];
@@ -37,6 +51,6 @@ int main(int argc, char **argv) {
     puts("accept");
     if (parse_only) return 0;
     kotlin_ctx *context = kotlin_ctx_new(&semantic_arena, NULL);
-    if (!context || kotlin_analyze(context, root, diagnostic, NULL) < 0) return 2;
+    if (!context || kotlin_analyze(context, root, diagnostic, &located) < 0) return 2;
     return 0;
 }

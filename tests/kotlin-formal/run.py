@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from jetbrains import sample
+from jetbrains import compare_diagnostics, sample, unmark
 
 ROOT = Path(__file__).resolve().parent
 
@@ -118,6 +118,14 @@ def main():
         print(run(native), end="")
         probe = out / "probe.exe"
         run(args.cc, *strict_c, *frontend, ROOT / "probe.c", "-o", probe)
+        marked = b"// probe\r\nfun f(): Int = <!UNRESOLVED_REFERENCE!>missing<!>"
+        clean, expected = unmark(marked)
+        located = subprocess.run([probe, "--diagnostic-spans"], input=clean,
+                                 capture_output=True, timeout=15, check=True)
+        verdict, *messages = located.stdout.decode().splitlines()
+        comparison = compare_diagnostics(expected, messages)
+        if verdict != "accept" or comparison[0] != "diagnostics-match":
+            raise RuntimeError(f"Lost Kotlin diagnostic location: {comparison}")
         failures = gaps = 0
         for case in cases:
             verdict, *messages = run(probe, source=case["source"]).splitlines()

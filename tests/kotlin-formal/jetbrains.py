@@ -22,19 +22,56 @@ def source_files(directory):
                 yield Path(root) / name
 
 
+MARKER_ENTRY = re.compile(rb'\s*([A-Z][A-Z0-9_]*)(?:\((?:"(?:\\.|[^"\\])*"|[^"()])*\))?\s*(,|$)')
+KOTLIN_DIAGNOSTIC = {"E_UNDECLARED": "UNRESOLVED_REFERENCE"}
+
+
+def marker_codes(text):
+    codes = []
+    while text:
+        entry = MARKER_ENTRY.match(text)
+        if not entry:
+            raise ValueError("unsupported diagnostic marker")
+        codes.append(entry[1].decode("ascii"))
+        text = text[entry.end():]
+    return codes
+
+
 def unmark(source):
-    depth = count = 0
+    clean = bytearray()
+    expected = Counter()
+    pending = []
+    start = 0
     for marker in DIAGNOSTIC.finditer(source):
+        clean.extend(source[start:marker.start()])
+        start = marker.end()
         if marker[0] == b"<!>":
-            depth -= 1
-            if depth < 0:
-                return None, 0
+            if not pending:
+                raise ValueError("unpaired diagnostic marker")
+            offset, codes = pending.pop()
+            expected.update((code, offset, len(clean) - offset) for code in codes)
         else:
-            depth += 1
-            count += 1
-    if depth:
-        return None, 0
-    return DIAGNOSTIC.sub(b"", source), count
+            pending.append((len(clean), marker_codes(marker[0][2:-2])))
+    if pending:
+        raise ValueError("unclosed diagnostic marker")
+    clean.extend(source[start:])
+    return bytes(clean), expected
+
+
+def compare_diagnostics(expected, messages):
+    actual = Counter()
+    for message in messages:
+        code, offset, length = message.split()
+        actual[KOTLIN_DIAGNOSTIC.get(code, code), int(offset), int(length)] += 1
+    missing, extra = expected - actual, actual - expected
+
+    def detail(label, diagnostics):
+        values = ", ".join(f"{code}@{offset}+{length}" for code, offset, length in diagnostics.elements())
+        return f"{label}: {values}" if values else ""
+
+    if missing or extra:
+        return "diagnostics-diff", "; ".join(filter(None, (detail("missing", missing), detail("extra", extra))))
+    return "diagnostics-match", f"{sum(expected.values())} diagnostic(s)"
 
 
 def invoke(argv, source=None):
@@ -49,12 +86,12 @@ def classify(path, suite, probe, compiler):
     source = source.removeprefix(b"\xef\xbb\xbf")
     if MULTI_FILE.search(source):
         return "unsupported-fixture", "FILE/MODULE directives"
-    count = 0
     if suite == "diagnostics":
-        source, count = unmark(source)
-        if source is None:
-            return "unsupported-fixture", "unbalanced diagnostic annotations"
-    args = [probe, "--parse-only"] if suite != "diagnostics" else [probe]
+        try:
+            source, expected_diagnostics = unmark(source)
+        except ValueError as error:
+            return "unsupported-fixture", str(error)
+    args = [probe, "--diagnostic-spans" if suite == "diagnostics" else "--parse-only"]
     result = invoke(args, source)
     if result.returncode:
         return "probe-error", f"frontend probe exit {result.returncode}"
@@ -76,11 +113,13 @@ def classify(path, suite, probe, compiler):
         return ("psi-syntax-agrees" if matches else "psi-syntax-diff"), detail
     if verdict == "reject":
         if suite == "diagnostics":
-            parse_detail += f"; {count} annotated diagnostic span(s)"
+            parse_detail += f"; {sum(expected_diagnostics.values())} expected diagnostic(s)"
         return "parse-reject", parse_detail
     if suite == "diagnostics":
-        return "diagnostics-observed", f"{count} annotated span(s); " + (
-            ", ".join(messages) if messages else "Parsley emitted none")
+        try:
+            return compare_diagnostics(expected_diagnostics, messages)
+        except ValueError as error:
+            return "probe-error", f"invalid located diagnostic: {error}"
     result = invoke([compiler, path, "--emit", "mir"])
     if result.returncode:
         detail = result.stderr.decode("utf-8", errors="replace").strip()

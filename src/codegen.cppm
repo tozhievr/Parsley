@@ -516,6 +516,7 @@ inline std::string generate_c23_header(const ir::Grammar& g,
   out << "  char* ctor_name;\n";
   out << "  ParsleyValue** items;\n";
   out << "  size_t item_count;\n  ParsleyValue* list_head;\n  ParsleyValue* list_tail;\n";
+  out << "  uint32_t source_offset, source_length, source_line, source_column;\n";
   out << "};\n\n";
 
   out << "typedef struct ParsleyTextList { char** items; size_t len; } ParsleyTextList;\n";
@@ -1062,12 +1063,29 @@ static ParsleyValue* pv_string(const char* s, size_t len) {
   return v;
 }
 
+/* Zero source_line denotes a value without an originating token. */
+static void pv_merge_source(ParsleyValue* value, const ParsleyValue* child) {
+  if (!child || !child->source_line) return;
+  uint32_t end = child->source_offset + child->source_length;
+  if (value->source_line) {
+    uint32_t current_end = value->source_offset + value->source_length;
+    if (current_end > end) end = current_end;
+  }
+  if (!value->source_line || child->source_offset < value->source_offset) {
+    value->source_offset = child->source_offset;
+    value->source_line = child->source_line;
+    value->source_column = child->source_column;
+  }
+  value->source_length = end - value->source_offset;
+}
+
 static ParsleyValue* pv_list(ParsleyValue** items, size_t count) {
   ParsleyValue* v = pv_alloc(PARSLEY_VAL_LIST);
   if (v && count > 0) {
     v->items = (ParsleyValue**)p_malloc(sizeof(ParsleyValue*) * count);
     memcpy(v->items, items, sizeof(ParsleyValue*) * count);
     v->item_count = count;
+    for (size_t i = 0; i < count; ++i) pv_merge_source(v, items[i]);
   }
   return v;
 }
@@ -1077,6 +1095,8 @@ static ParsleyValue* pv_list_cons(ParsleyValue* head, ParsleyValue* tail) {
   if (count == SIZE_MAX) { p_fatal(2); return NULL; }
   ParsleyValue* v = pv_alloc(PARSLEY_VAL_LIST);
   v->item_count = count + 1; v->list_head = head; v->list_tail = tail;
+  pv_merge_source(v, head);
+  pv_merge_source(v, tail);
   return v;
 }
 static ParsleyValue* pv_tuple(ParsleyValue** items, size_t count) {
@@ -1085,6 +1105,7 @@ static ParsleyValue* pv_tuple(ParsleyValue** items, size_t count) {
     v->items = (ParsleyValue**)p_malloc(sizeof(ParsleyValue*) * count);
     memcpy(v->items, items, sizeof(ParsleyValue*) * count);
     v->item_count = count;
+    for (size_t i = 0; i < count; ++i) pv_merge_source(v, items[i]);
   }
   return v;
 }
@@ -1097,6 +1118,7 @@ static ParsleyValue* pv_ctor(const char* name, ParsleyValue** items, size_t coun
       v->items = (ParsleyValue**)p_malloc(sizeof(ParsleyValue*) * count);
       memcpy(v->items, items, sizeof(ParsleyValue*) * count);
       v->item_count = count;
+      for (size_t i = 0; i < count; ++i) pv_merge_source(v, items[i]);
     }
   }
   return v;
@@ -1127,6 +1149,7 @@ static ParsleyValue* pv_clone_impl(const ParsleyValue* v) {
   c->number_val = v->number_val;
   c->integer_val = v->integer_val;
   c->is_int = v->is_int;
+  pv_merge_source(c, v);
   c->string_len=v->string_len; if (v->string_val) c->string_val = p_strdup_n(v->string_val,v->string_len);
   if (v->ctor_name) c->ctor_name = p_strdup(v->ctor_name);
   if (v->kind == PARSLEY_VAL_LIST && v->list_head) {
@@ -1731,6 +1754,15 @@ static void p_scannerless_skip(ParsleyParser* p) {
   }
 }
 
+static void pv_token_source(ParsleyValue* value, size_t offset, size_t length,
+                            int line, int column) {
+  if (!value) return;
+  value->source_offset = (uint32_t)offset;
+  value->source_length = (uint32_t)length;
+  value->source_line = (uint32_t)line;
+  value->source_column = (uint32_t)column;
+}
+
 static bool p_match_token(ParsleyParser* p, const char* token_id, ParsleyValue** out) {
   if (!p->scannerless) {
     if (p->tok_pos >= p->token_count) {
@@ -1748,6 +1780,7 @@ static bool p_match_token(ParsleyParser* p, const char* token_id, ParsleyValue**
     }
     if (!cur->is_eof && !cur->is_lex_error && strcmp(cur->id, token_id) == 0) {
       *out = p_track(p, token_to_value(cur->def, cur->lexeme, cur->lexeme_len));
+      pv_token_source(*out, cur->start_offset, cur->lexeme_len, cur->line, cur->col);
       p->tok_pos++;
       return true;
     }
@@ -1800,6 +1833,7 @@ static bool p_match_token(ParsleyParser* p, const char* token_id, ParsleyValue**
   }
 
   *out = p_track(p, token_to_value(target, p->input + p->char_pos, mlen));
+  pv_token_source(*out, p->char_pos, mlen, p->line, p->col);
   advance_line_col(p->input + p->char_pos, mlen, &p->line, &p->col);
   p->char_pos += mlen;
   p_apply_mode_action(target, p->mode_stack, &p->mode_depth);
