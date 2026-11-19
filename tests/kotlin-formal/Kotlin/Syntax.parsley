@@ -12,14 +12,38 @@ optSemi
     pure ()
 
 packageHeader :: [Text]
-packageHeader
+packageHeader = many fileAnnotation *> packageName
+
+packageName :: [Text]
+packageName
   =  ("package" *> (identifier `sepBy` ".") <* optSemi)
   |  do
     pure []
 
+annotationBody :: ()
+annotationBody = do
+  _ <- identifier
+  _ <- many ("." *> identifier)
+  _ <- optional (parens (callArg `sepEndBy` ","))
+  pure ()
+
+annotationPayload :: ()
+annotationPayload
+  =  "[" *> some annotationBody *> "]" *> pure ()
+  |  annotationBody
+
+fileAnnotation :: ()
+fileAnnotation = "@" *> "file" *> ":" *> annotationPayload
+
+declarationAnnotation :: ()
+declarationAnnotation
+  =  "@" *> ("field" <|> "property" <|> "get" <|> "set" <|> "receiver" <|> "param" <|> "setparam" <|> "delegate" <|> "all") *> ":" *> annotationPayload
+  |  "@" *> annotationPayload
+
 modifier :: ()
 modifier
-  =  "data" *> (do
+  =  declarationAnnotation
+  |  "data" *> (do
   pure ())
   |  "open" *> (do
   pure ())
@@ -37,6 +61,10 @@ modifier
 classKind :: Text
 classKind
   =  do
+    "annotation"
+    "class"
+    pure "annotation"
+  |  do
     "data"
     "class"
     pure "data"
@@ -61,7 +89,7 @@ topLevelDecl
   =  importDecl
   |  classDecl
   |  interfaceDecl
-  |  (many modifier *> (funDecl <|> propDecl <|> objectDecl <|> typeAliasDecl))
+  |  (many modifier *> (classDecl <|> funDecl <|> propDecl <|> objectDecl <|> typeAliasDecl))
 
 objectDecl :: KtDecl
 objectDecl = do
@@ -203,6 +231,7 @@ funDecl = do
 
 funParam :: KtParam
 funParam = do
+  _        <- many declarationAnnotation
   variadic <- ("vararg" *> lookahead identifier *> pure True) <|> pure False
   name     <- identifier
   ":"
@@ -583,6 +612,17 @@ identifier
   =  ident
   |  ("vararg" *> pure "vararg")
   |  ("companion" *> pure "companion")
+  |  ("annotation" *> pure "annotation")
+  |  ("file" *> pure "file")
+  |  ("field" *> pure "field")
+  |  ("property" *> pure "property")
+  |  ("get" *> pure "get")
+  |  ("set" *> pure "set")
+  |  ("receiver" *> pure "receiver")
+  |  ("param" *> pure "param")
+  |  ("setparam" *> pure "setparam")
+  |  ("delegate" *> pure "delegate")
+  |  ("all" *> pure "all")
 
 callArg :: KtExpr
 callArg

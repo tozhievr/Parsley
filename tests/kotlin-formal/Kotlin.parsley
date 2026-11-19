@@ -32,6 +32,7 @@ example "lambda_arguments" : "fun f() = run { x: Int -> x }" parses-to KtFile []
 example "trailing_lambda_suffix" : "fun f() = apply(1) { 2 }" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [PostfixChain (Call "apply" [IntLit 1]) [TrailingLambdaSuffix (LambdaExpr "{" (LambdaScope ImplicitLambdaParams [ExprStmt (IntLit 2)]) "}")]]])]
 example "trailing_comma" : "fun f(x: Int,) = g(x,)" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [FunctionParam "x" "Int" False []] [ReturnStmt [Call "g" [Var "x"]]])]
 example "type_test_precedence" : "fun f(x: Any) = x !is Int == true" parses-to KtFile [] [FunDecl "f" NoTypeParameters [] (FunctionScope [] [FunctionParam "x" "Any" False []] [ReturnStmt [Bin Eq (TypeTestChain (Var "x") [TypeTest False (CastType "Int" [] NoTypeArguments [])]) (BoolLit True)]])]
+example "annotation_declarations" : "@file:demo.Mark\npackage sample\nannotation class Outer { annotation class Inner }\n@Outer.Inner fun tagged(@param:demo.Mark x: Int) = x" parses-to KtFile ["sample"] [ClassDecl "annotation" "Outer" NoTypeParameters [] [ClassDecl "annotation" "Inner" NoTypeParameters [] [] False] False, FunDecl "tagged" NoTypeParameters [] (FunctionScope [] [FunctionParam "x" "Int" False []] [ReturnStmt [Var "x"]])]
 example "err_lone_comma" : "fun f(,) {}" fails-at (1, 7) expecting ")"
 example "err_expr" : "fun bad(): Int = 1 +" fails-at (1, 21) expecting "expression"
 example "err_rbrace" : "fun bad() { val x = 1" fails-at (1, 22) expecting "}"

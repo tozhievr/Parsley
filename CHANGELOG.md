@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.16.0
+
+- Parse Kotlin annotation classes and annotation prefixes on declarations and parameters.
+
 ## 2.15.1
 
 - Lower Kotlin conditionals used as the sole statement in a value-producing branch.
