@@ -145,8 +145,8 @@ int main(int argc,char **argv){
  const @m@_backend_options *configured=PARSLEY_NATIVE_OPTIONS;
  @m@_backend_options lowering={0};
  if(configured)lowering=*configured;
- if(!lowering.resolve_cstr_body){
-   lowering.resolve_cstr_body=@m@_native_cstr_body;
+ if(!lowering.resolve_cstr_body && !lowering.resolve_cstr_function){
+   lowering.resolve_cstr_function=@m@_native_cstr_function;
    lowering.resolve_user=semantic;
  }
  module=@m@_backend_lower_entry(program,root,"language_main",result,NULL,0,&lowering,&diag);

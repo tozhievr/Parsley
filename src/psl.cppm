@@ -4997,6 +4997,8 @@ inline std::string emit_sem_header(const std::string& mod_low, const std::string
     << mod_low << "_node **entry);\n";
   o << "PARSLEY_API const " << mod_low << "_node *" << mod_low
     << "_native_cstr_body(void *context, psl_str name);\n";
+  o << "PARSLEY_API const " << mod_low << "_node *" << mod_low
+    << "_native_cstr_function(void *context, psl_str name, size_t argc, psl_str *parameter);\n";
   o << "PARSLEY_API int " << mod_low << "_psl_selftest(void);\n\n";
   o << "PARSLEY_API size_t " << mod_low << "_diag_count(const " << mod_low << "_ctx *cx);\n";
   o << "PARSLEY_API size_t " << mod_low << "_nodes_visited(const " << mod_low << "_ctx *cx);\n";
@@ -6216,16 +6218,17 @@ inline std::string emit_sem_source(const PslModule& psem,
 
 
   bodies << "const " << mod_low << "_node *" << mod_low
-         << "_native_cstr_body(void *context,psl_str name){\n";
+         << "_native_cstr_function(void *context,psl_str name,size_t argc,psl_str *parameter){\n";
   bool callable = false;
   for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri)
     callable |= !entry_binding(ri, "nativeFunctionName").empty() &&
                 !entry_binding(ri, "nativeCstrBody").empty();
   if (!callable) {
-    bodies << "  (void)context;(void)name;return NULL;\n}\n";
+    bodies << "  (void)context;(void)name;(void)argc;(void)parameter;return NULL;\n}\n";
   } else {
     bodies << "  " << mod_low << "_ctx *cx=context;\n"
-           << "  if(!cx || !cx->node_count || !name.ptr || !name.len)return NULL;\n"
+           << "  if(!cx || !cx->node_count || !name.ptr || !name.len || argc>1 || (argc && !parameter))return NULL;\n"
+           << "  if(parameter)*parameter=(psl_str){0};\n"
            << "  int32_t list=-1;\n";
     for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
       const auto field = entry_binding(ri, "entryCandidates");
@@ -6242,21 +6245,33 @@ inline std::string emit_sem_source(const PslModule& psem,
     for (std::size_t ri = 0; ri < psem.node_rules.size(); ++ri) {
       const auto name = entry_binding(ri, "nativeFunctionName");
       const auto body = entry_binding(ri, "nativeCstrBody");
+      const auto parameter = entry_binding(ri, "nativeCstrParameter");
+      if (name.empty() || body.empty()) continue;
       bodies << "    if(!matched){pat_bind_node_" << ri << " b={0};\n"
              << "      if(match_pat_node_" << ri << "(cx,candidate,&b)){\n"
              << "        matched=1;\n";
       if (!name.empty() && !body.empty()) {
-        bodies << "        if(b.nid_" << name << ">=0 && b.nid_" << body << ">=0){\n"
+        bodies << "        if(argc==" << (parameter.empty() ? 0 : 1)
+               << " && b.nid_" << name << ">=0 && b.nid_" << body << ">=0){\n"
                << "          const " << mod_low << "_node *identifier=cx->nodes[b.nid_" << name << "].node;\n"
                << "          if(identifier->tag==" << mod_up << "_NODE_STRING && psl_str_eq(identifier->text_val,name)){\n"
-               << "            if(body)return NULL;\n"
-               << "            body=cx->nodes[b.nid_" << body << "].node;\n"
+               << "            if(body)return NULL;\n";
+        if (!parameter.empty())
+          bodies << "            if(b.nid_" << parameter << "<0)return NULL;\n"
+                 << "            const " << mod_low << "_node *param=cx->nodes[b.nid_" << parameter << "].node;\n"
+                 << "            if(param->tag!=" << mod_up << "_NODE_STRING)return NULL;\n"
+                 << "            *parameter=param->text_val;\n";
+        bodies << "            body=cx->nodes[b.nid_" << body << "].node;\n"
                << "          }\n        }\n";
       }
       bodies << "      }\n    }\n";
     }
     bodies << "  }\n  return body;\n}\n";
   }
+
+  bodies << "const " << mod_low << "_node *" << mod_low
+         << "_native_cstr_body(void *context,psl_str name){return " << mod_low
+         << "_native_cstr_function(context,name,0,NULL);}\n";
 
   // Pass 4: CFG & Bitvector Dataflow Solver
   for (std::size_t fi = 0; fi < psem.flow_rules.size(); ++fi) {

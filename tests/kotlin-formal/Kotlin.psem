@@ -83,7 +83,11 @@ node BoolLit literal where
 node NullLit where
   type = KtNull
 
+{-# SOURCE kotlinSpec "expressions/identifier-expressions" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
 node Var x where
+  nativeCall = readCstrParameter x
   sym  <- lookup Variable x `orFail` E_UNDECLARED { name = x }
   type =  typeOf sym
 
@@ -252,10 +256,24 @@ node FunDecl name NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [result]]
   predeclare Function name KtAny
   type = KtUnit
 
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
 node FunDecl name _ _ functionScope where
   entryPassive = True
   predeclare Function name KtAny
   scope functionScope $ pure ()
+  type = KtUnit
+
+{-# SOURCE kotlinSpec "declarations/function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node FunDecl name NoTypeParameters [CastType "String" [] NoTypeArguments []] (FunctionScope _ [FunctionParam parameter "String" False []] [ReturnStmt [result]]) where
+  entryPassive = True
+  nativeFunctionName = name
+  nativeCstrBody = result
+  nativeCstrParameter = parameter
+  predeclare Function name KtAny
   type = KtUnit
 
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}

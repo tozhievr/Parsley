@@ -18,6 +18,12 @@
     "diag": "!E_UNDECLARED"
   },
   {
+    "id": "native-string-parameter-does-not-escape",
+    "source": "fun identity(value: String): String = value\nfun bad(): String = value",
+    "parse": true,
+    "diag": "E_UNDECLARED"
+  },
+  {
     "id": "arithmetic",
     "source": "fun f(): Int = 1 + 2 * 3",
     "parse": true

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.28.0
+
+- Pass a positional string argument through generated Kotlin native calls.
+
 ## 2.27.0
 
 - Generate direct native calls to parameterless Kotlin string functions from PSL declarations.

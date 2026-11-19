@@ -100,9 +100,12 @@ MIR blocks. A statement can expose its expression through `value = valueOf expr`
 and `effects = []`.
 
 A call constructor can declare `nativeCall = callCstr name arguments`.
-The standalone compiler resolves a unique parameterless function from
-`entryCandidates` using the first matching PSL rule with
-`nativeFunctionName = name` and `nativeCstrBody = body`. The callee must
+The standalone compiler resolves a unique function by name and arity from
+`entryCandidates` using the first matching native signature rule with
+`nativeFunctionName = name` and `nativeCstrBody = body`. A function can bind
+one positional C string parameter with `nativeCstrParameter = parameter`.
+A reference constructor can read that parameter with
+`nativeCall = readCstrParameter name`. The callee must
 lower to a C string and is emitted as a local MIR function. The backend's
 step and depth limits also bound lowering of callees. This lowering does
 not support recursive call graphs.
