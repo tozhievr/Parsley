@@ -106,9 +106,9 @@ data KtTypeParams
 
 data KtDecl
   = ImportDecl [Text] Text
-  | ClassDecl Text Text KtTypeParams [KtParam] [KtDecl]
+  | ClassDecl Text Text KtTypeParams [KtParam] [KtDecl] Bool
   | ObjectDecl Text [KtDecl]
-  | TypeAliasDecl Text Text
+  | TypeAliasDecl Text KtCastType
   | InterfaceDecl Text KtTypeParams [KtDecl]
   | CompanionDecl Text [KtDecl]
   | FunDecl Text KtTypeParams [KtCastType] KtFunctionScope

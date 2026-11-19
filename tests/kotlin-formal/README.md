@@ -61,7 +61,9 @@ returns exactly `OK`. The current native adapter supports string literals and
 chains of parameterless top-level calls and parameterless companion-qualified
 calls without companion initializers. Closed bodies may use immutable local
 values, local reassignment, string templates, constant `if` branches and
-direct calls with positional primitive arguments. These are evaluated
+direct calls with positional primitive arguments. It also supports reads of
+immutable primary-constructor properties on simple classes, including through
+non-generic type aliases. These are evaluated
 before MIR emission, which stores the resulting string in read-only data.
 The adapter uses no JetBrains runtime libraries.
 Full PSI tree comparison remains outside the current probe.

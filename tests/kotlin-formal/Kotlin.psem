@@ -14,6 +14,7 @@ kind Variable where shadowing = Warn
 kind Function
 kind TypeName
 kind Constructor
+kind TypeAlias
 
 {-# SOURCE kotlinSpec "builtins/stdlib" "2026-01-15" #-}
 builtin println :: Function (KtAny -> KtUnit)
@@ -95,8 +96,9 @@ node Bin op l r where
 node Call f args where
   fn <- lookup Function f
   classifier <- lookup Constructor f
-  require (isResolved fn || isResolved classifier) `orFail` E_UNDECLARED { name = f }
-  type = if isResolved fn then typeOf fn else typeOf classifier
+  alias <- lookup TypeAlias f
+  require (isResolved fn || isResolved classifier || isResolved alias) `orFail` E_UNDECLARED { name = f }
+  type = if isResolved fn then typeOf fn else if isResolved classifier then typeOf classifier else typeOf alias
 
 {-# SOURCE kotlinSpec "expressions/function-calls-and-property-access" #-}
 {-# STATUS draft #-}
@@ -139,7 +141,7 @@ node FunctionScope [CastType ty [] NoTypeArguments _] _ [ReturnStmt [result]] wh
   require (ty /= "Int" || typeOf result /= KtString) `orFail` E_TYPE { expected = ty, actual = "String" }
   type = KtUnit
 
-node ClassDecl kw name _ params members where
+node ClassDecl kw name _ params members _ where
   predeclare Constructor name KtAny
   predeclare TypeName name KtAny
   scope members $ pure ()
@@ -169,7 +171,8 @@ node CompanionDecl _ members where
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
 node TypeAliasDecl name _ where
-  declare TypeName name KtAny
+  predeclare TypeAlias name KtAny
+  predeclare TypeName name KtAny
   type = KtUnit
 
 node KtFile pkg decls where

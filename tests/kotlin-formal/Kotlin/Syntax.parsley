@@ -78,7 +78,7 @@ typeAliasDecl = do
   "typealias"
   name   <- identifier
   "="
-  target <- typeExpr
+  target <- castType
   optSemi
   pure (TypeAliasDecl name target)
 
@@ -107,12 +107,11 @@ classDecl = do
   types   <- typeParameters
   params  <- classParamList <|> (do
   pure [])
-  _       <- superClause <|> (do
-  pure ())
+  hasBase <- (superClause *> pure True) <|> pure False
   members <- classBody <|> (do
   pure [])
   optSemi
-  pure (ClassDecl kind name types params members)
+  pure (ClassDecl kind name types params members hasBase)
 
 superClause :: ()
 superClause = do

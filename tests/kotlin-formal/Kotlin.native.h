@@ -230,6 +230,7 @@ struct kt_constants {
     struct kt_binding bindings[64];
     size_t count;
     const kotlin_node *functions;
+    const kotlin_node *declarations;
     unsigned *steps;
 };
 
@@ -389,7 +390,8 @@ static bool kotlin_eval_constant_call(const kotlin_node *node, const struct kt_c
     const kotlin_node *scope = target->children[3];
     const kotlin_node *params = scope->children[1];
     const kotlin_node *args = node->children[1];
-    struct kt_constants callee = {.functions = env->functions, .steps = env->steps};
+    struct kt_constants callee = {.functions = env->functions, .declarations = env->declarations,
+                                  .steps = env->steps};
     if (params->child_count != args->child_count ||
         params->child_count > sizeof(callee.bindings) / sizeof(callee.bindings[0])) return false;
 
@@ -413,6 +415,66 @@ static bool kotlin_eval_constant_call(const kotlin_node *node, const struct kt_c
     }
     while (callee.count) cg_buffer_free(&callee.bindings[--callee.count].value.text);
     return ok;
+}
+
+static const kotlin_node *kotlin_constructor_class(const kotlin_node *decls, psl_str name) {
+    for (unsigned hop = 0; hop < 64; ++hop) {
+        const kotlin_node *found = NULL;
+        for (size_t i = 0; i < decls->child_count; ++i) {
+            const kotlin_node *decl = decls->children[i];
+            const bool is_class = decl->tag == KOTLIN_NODE_CLASSDECL;
+            if (!is_class && decl->tag != KOTLIN_NODE_TYPEALIASDECL) continue;
+            if (!psl_str_eq(name, decl->children[is_class ? 1 : 0]->text_val)) continue;
+            if (found) return NULL;
+            found = decl;
+        }
+        if (!found || found->tag == KOTLIN_NODE_CLASSDECL) return found;
+        const kotlin_node *type = found->children[1];
+        if (type->children[1]->child_count || type->children[3]->child_count ||
+            type->children[2]->tag != KOTLIN_NODE_NOTYPEARGUMENTS) return NULL;
+        name = type->children[0]->text_val;
+    }
+    return NULL;
+}
+
+static bool kotlin_eval_constructor_property(const kotlin_node *node, const struct kt_constants *env,
+                                             unsigned depth, struct kt_const *out) {
+    const kotlin_node *call = node->children[0], *suffixes = node->children[1];
+    if (call->tag != KOTLIN_NODE_CALL || suffixes->child_count != 1) return false;
+    const kotlin_node *suffix = suffixes->children[0];
+    if (suffix->tag != KOTLIN_NODE_SELECTSUFFIX || suffix->children[0]->bool_val) return false;
+    const psl_str name = call->children[0]->text_val;
+    /* Calls ambiguous with a top-level function need overload resolution. */
+    for (size_t i = 0; i < env->functions->child_count; ++i) {
+        const kotlin_node *decl = env->functions->children[i];
+        if (decl->tag == KOTLIN_NODE_FUNDECL && psl_str_eq(name, decl->children[0]->text_val))
+            return false;
+    }
+    const kotlin_node *klass = kotlin_constructor_class(env->declarations, name);
+    if (!klass || klass->children[5]->bool_val || klass->children[4]->child_count ||
+        !psl_str_eq(klass->children[0]->text_val, psl_str_lit("class")) ||
+        klass->children[2]->tag != KOTLIN_NODE_NOTYPEPARAMETERS) return false;
+    const kotlin_node *params = klass->children[3], *args = call->children[1];
+    if (params->child_count != args->child_count) return false;
+    const psl_str property = suffix->children[1]->text_val;
+    bool selected = false;
+    for (size_t i = 0; i < params->child_count; ++i) {
+        const kotlin_node *param = params->children[i];
+        const bool matches = psl_str_eq(property, param->children[1]->text_val);
+        if (matches && (selected || !psl_str_eq(param->children[0]->text_val, psl_str_lit("val"))))
+            return false;
+        struct kt_const value = {0};
+        bool ok = kotlin_eval_constant(args->children[i], env, depth + 1, &value) &&
+                  kotlin_constant_has_type(&value, param->children[2]->text_val);
+        if (ok && matches) {
+            *out = value;
+            selected = true;
+        } else {
+            cg_buffer_free(&value.text);
+        }
+        if (!ok) return false;
+    }
+    return selected;
 }
 
 static bool kotlin_eval_constant(const kotlin_node *node, const struct kt_constants *env,
@@ -441,6 +503,8 @@ static bool kotlin_eval_constant(const kotlin_node *node, const struct kt_consta
             out->number = value->number;
             return value->kind != KT_CONST_TEXT || kotlin_append_constant(&out->text, value);
         }
+        case KOTLIN_NODE_POSTFIXCHAIN:
+            return kotlin_eval_constructor_property(node, env, depth, out);
         case KOTLIN_NODE_CALL:
             return kotlin_eval_constant_call(node, env, depth, out);
         case KOTLIN_NODE_BIN: {
@@ -560,7 +624,7 @@ static cg_value_t kotlin_lower_box_function(kotlin_backend_context *ctx, const k
     const kotlin_node *body = scope->children[2];
     if (scope->children[1]->child_count) return CG_INVALID;
     unsigned steps = 0;
-    struct kt_constants env = {.functions = scope_decls, .steps = &steps};
+    struct kt_constants env = {.functions = scope_decls, .declarations = decls, .steps = &steps};
     struct kt_const constant = {0};
     const enum kt_flow flow = kotlin_eval_box_block(body, &env, 0, &constant);
     cg_value_t value = flow == KT_RETURN && constant.kind == KT_CONST_TEXT
@@ -591,8 +655,9 @@ static cg_value_t kotlin_lower_box_function(kotlin_backend_context *ctx, const k
 static cg_value_t kotlin_lower_box(kotlin_backend_context *ctx, const kotlin_node *decls) {
     for (size_t i = 0; i < decls->child_count; ++i) {
         const kotlin_node_tag tag = decls->children[i]->tag;
-        if (tag != KOTLIN_NODE_FUNDECL && tag != KOTLIN_NODE_IMPORTDECL && tag != KOTLIN_NODE_CLASSDECL) {
-            cg_diag_error(kotlin_backend_diagnostic(ctx), "box lowering supports only top-level functions, classes and imports");
+        if (tag != KOTLIN_NODE_FUNDECL && tag != KOTLIN_NODE_IMPORTDECL &&
+            tag != KOTLIN_NODE_CLASSDECL && tag != KOTLIN_NODE_TYPEALIASDECL) {
+            cg_diag_error(kotlin_backend_diagnostic(ctx), "box lowering supports top-level functions, classes, type aliases and imports");
             return CG_INVALID;
         }
     }

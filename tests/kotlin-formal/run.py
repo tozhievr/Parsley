@@ -185,6 +185,16 @@ def main():
         box.write_text(mutable_box.replace("compute(3)", "compute(4)"), encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
             raise RuntimeError("Kotlin box ignored the changed argument")
+        alias_box = ('class Pair(val x: Int, val y: Int)\n'
+                     'typealias First = Pair\n'
+                     'typealias Second = First\n'
+                     'fun box(): String { if (Second(1, 2).y != 2) return "FAIL"; return "OK" }')
+        box.write_text(alias_box, encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "OK":
+            raise RuntimeError("Kotlin alias constructor returned the wrong property")
+        box.write_text(alias_box.replace("Second(1, 2)", "Second(1, 3)"), encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
+            raise RuntimeError("Kotlin alias constructor ignored the changed argument")
         box.write_text('fun box(): String = "FAIL"\n', encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
             raise RuntimeError("Kotlin box did not return its own string value")

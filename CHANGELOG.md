@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.11.1
+
+- Preserve Kotlin type alias targets and evaluate immutable constructor-property reads in closed native box bodies.
+
 ## 2.11.0
 
 - Add PSL `predeclare` for sibling declarations and enable forward function and class references in Kotlin.
