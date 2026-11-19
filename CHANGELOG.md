@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.30.0
+
+- Preserve Kotlin extension function receivers, including generic and nullable named receivers.
+
 ## 2.29.0
 
 - Generate Kotlin native calls with multiple positional string parameters.

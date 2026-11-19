@@ -137,6 +137,7 @@ data KtDecl
   | InterfaceDecl Text KtTypeParams [KtDecl]
   | CompanionDecl Text [KtDecl]
   | FunDecl Text KtTypeParams [KtCastType] KtFunctionScope
+  | ExtensionFunDecl KtCastType Text KtTypeParams [KtCastType] KtFunctionScope
   | PropDecl Bool Text Text [KtExpr]
 
 data KtFile

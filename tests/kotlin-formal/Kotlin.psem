@@ -259,6 +259,14 @@ node FunDecl name NoTypeParameters [] (FunctionScope [] [] [ReturnStmt [result]]
 {-# SOURCE kotlinSpec "declarations/function-declaration" #-}
 {-# STATUS draft #-}
 {-# CONFIDENCE 0.9 #-}
+{-# SOURCE kotlinSpec "declarations/extension-function-declaration" #-}
+{-# STATUS draft #-}
+{-# CONFIDENCE 0.9 #-}
+node ExtensionFunDecl _ _ _ _ functionScope where
+  entryPassive = True
+  scope functionScope $ declare Variable "this" KtAny
+  type = KtUnit
+
 node FunDecl name _ _ functionScope where
   entryPassive = True
   predeclare Function name KtAny

@@ -43,6 +43,7 @@ declarationAnnotation
 modifier :: ()
 modifier
   =  declarationAnnotation
+  |  ("operator" *> lookahead ("fun" *> pure () <|> modifier) *> pure ())
   |  "data" *> (do
   pure ())
   |  "open" *> (do
@@ -89,7 +90,7 @@ topLevelDecl
   =  importDecl
   |  classDecl
   |  interfaceDecl
-  |  (many modifier *> (classDecl <|> funDecl <|> propDecl <|> objectDecl <|> typeAliasDecl))
+  |  (many modifier *> (classDecl <|> extensionFunDecl <|> funDecl <|> propDecl <|> objectDecl <|> typeAliasDecl))
 
 objectDecl :: KtDecl
 objectDecl = do
@@ -206,7 +207,7 @@ classBody :: [KtDecl]
 classBody = braces (many memberDecl)
 
 memberDecl :: KtDecl
-memberDecl = many modifier *> (companionDecl <|> funDecl <|> propDecl <|> classDecl <|> interfaceDecl <|> objectDecl <|> typeAliasDecl)
+memberDecl = many modifier *> (companionDecl <|> extensionFunDecl <|> funDecl <|> propDecl <|> classDecl <|> interfaceDecl <|> objectDecl <|> typeAliasDecl)
 
 companionDecl :: KtDecl
 companionDecl = do
@@ -235,6 +236,33 @@ typeParameterBound
     bound <- castType
     pure [bound]
   |  pure []
+
+extensionReceiver :: KtCastType
+extensionReceiver = do
+  first <- identifier
+  rest  <- many ("." *> identifier <* lookahead ("." <|> "<" <|> "?."))
+  args  <- typeArguments
+  mark  <- extensionReceiverSeparator
+  pure (CastType first rest args mark)
+
+extensionReceiverSeparator :: [Text]
+extensionReceiverSeparator
+  =  do
+    mark <- "?." *> pure "?"
+    pure [mark]
+  |  "." *> pure []
+
+extensionFunDecl :: KtDecl
+extensionFunDecl = do
+  "fun"
+  types    <- typeParameters
+  receiver <- extensionReceiver
+  name     <- identifier
+  params   <- parens (funParam `sepEndBy` ",")
+  retTy    <- functionReturnType
+  body     <- funBody
+  optSemi
+  pure (ExtensionFunDecl receiver name types retTy (FunctionScope retTy params body))
 
 funDecl :: KtDecl
 funDecl = do
@@ -665,6 +693,7 @@ identifier
   |  ("delegate" *> pure "delegate")
   |  ("all" *> pure "all")
   |  ("out" *> pure "out")
+  |  ("operator" *> pure "operator")
 
 callArg :: KtExpr
 callArg
