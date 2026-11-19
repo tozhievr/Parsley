@@ -168,6 +168,15 @@ def main():
                        'fun box() = A.answer()\n', encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "OK":
             raise RuntimeError("Kotlin companion call did not return OK")
+        template_box = ('fun box(): String { val n = 2; val word = "OK"; '
+                        'val got = "$word:${n * 3}"; '
+                        'if (got != "OK:6") return "FAIL: $got"; return word }')
+        box.write_text(template_box, encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "OK":
+            raise RuntimeError("Kotlin string interpolation produced an unexpected result")
+        box.write_text(template_box.replace("OK:6", "OK:7"), encoding="utf-8")
+        if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL: OK:6":
+            raise RuntimeError("Kotlin template box did not take its failure branch")
         box.write_text('fun box(): String = "FAIL"\n', encoding="utf-8")
         if run(compiler, box, "--return", "cstr", "--run").strip() != "FAIL":
             raise RuntimeError("Kotlin box did not return its own string value")

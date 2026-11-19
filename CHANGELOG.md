@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.10.1
+
+- Compile closed Kotlin box bodies with immutable locals, string interpolation and constant branches.
+
 ## 2.10.0
 
 - Expose `isResolved` in PSL and support Kotlin companion-qualified string calls in the native box entry.

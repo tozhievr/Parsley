@@ -211,18 +211,97 @@ static int kotlin_check_calls(const kotlin_node *root, psl_sink sink, void *user
 
 #ifndef KOTLIN_CALL_CHECK_ONLY
 #define PARSLEY_NATIVE_CHECK kotlin_check_calls
-/* The box result ABI is a NUL-terminated UTF-8 string in read-only MIR data. */
-static cg_value_t kotlin_box_literal(kotlin_backend_context *ctx, psl_str literal) {
-    if (literal.len < 2 || literal.len > UINT32_MAX ||
-        literal.ptr[0] != '"' || literal.ptr[literal.len - 1] != '"') return CG_INVALID;
-    char *data = malloc(literal.len);
-    if (!data) return CG_INVALID;
-    size_t size = 0;
-    bool valid = true;
-    for (size_t i = 1; i < literal.len - 1; ++i) {
+/* Evaluate closed, side-effect-free box bodies before emitting their string. */
+enum kt_const_kind { KT_CONST_UNSUPPORTED, KT_CONST_INT, KT_CONST_BOOL, KT_CONST_TEXT };
+
+struct kt_const {
+    enum kt_const_kind kind;
+    int32_t number;
+    cg_buffer_t text;
+};
+
+struct kt_binding {
+    psl_str name;
+    struct kt_const value;
+};
+
+struct kt_constants {
+    struct kt_binding bindings[64];
+    size_t count;
+};
+
+static bool kotlin_text_append(cg_buffer_t *text, const void *ptr, size_t size) {
+    return size <= 65535u - text->bytes.count && (!size || cg_buffer_bytes(text, ptr, size));
+}
+
+static const struct kt_const *kotlin_constant(const struct kt_constants *env, psl_str name) {
+    for (size_t i = env->count; i > 0; --i)
+        if (psl_str_eq(name, env->bindings[i - 1].name)) return &env->bindings[i - 1].value;
+    return NULL;
+}
+
+static bool kotlin_eval_constant(const kotlin_node *, const struct kt_constants *,
+                                 unsigned, struct kt_const *);
+
+static bool kotlin_append_constant(cg_buffer_t *text, const struct kt_const *value) {
+    if (value->kind == KT_CONST_TEXT)
+        return kotlin_text_append(text, value->text.bytes.data, value->text.bytes.count);
+    if (value->kind == KT_CONST_INT) {
+        char digits[16];
+        int count = snprintf(digits, sizeof(digits), "%" PRId32, value->number);
+        return count > 0 && kotlin_text_append(text, digits, (size_t)count);
+    }
+    if (value->kind == KT_CONST_BOOL)
+        return value->number ? kotlin_text_append(text, "true", 4)
+                             : kotlin_text_append(text, "false", 5);
+    return false;
+}
+
+static bool kotlin_append_interpolation(cg_buffer_t *text, psl_str expr,
+                                        const struct kt_constants *env, unsigned depth) {
+    static const char prefix[] = "fun interpolated() = ";
+    if (expr.len > 4096) return false;
+    char source[sizeof(prefix) + 4096];
+    memcpy(source, prefix, sizeof(prefix) - 1);
+    memcpy(source + sizeof(prefix) - 1, expr.ptr, expr.len);
+    void *memory = malloc(256u * 1024u);
+    if (!memory) return false;
+    psl_arena arena;
+    psl_arena_init(&arena, memory, 256u * 1024u);
+    const kotlin_node *root = NULL;
+    bool ok = false;
+    if (kotlin_parse(&arena, psl_str_make(source, sizeof(prefix) - 1 + expr.len), &root, NULL) == 0 &&
+        root->children[1]->child_count == 1) {
+        const kotlin_node *decl = root->children[1]->children[0];
+        if (decl->tag == KOTLIN_NODE_FUNDECL) {
+            const kotlin_node *body = decl->children[3]->children[2];
+            if (body->child_count == 1 && body->children[0]->tag == KOTLIN_NODE_RETURNSTMT) {
+                const kotlin_node *returns = body->children[0]->children[0];
+                struct kt_const value = {0};
+                ok = returns->child_count == 1 &&
+                     kotlin_eval_constant(returns->children[0], env, depth + 1, &value) &&
+                     kotlin_append_constant(text, &value);
+                cg_buffer_free(&value.text);
+            }
+        }
+    }
+    free(memory);
+    return ok;
+}
+
+static bool kotlin_name_byte(char ch, bool first) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' ||
+           (!first && ch >= '0' && ch <= '9');
+}
+
+static bool kotlin_eval_template(psl_str literal, const struct kt_constants *env, unsigned depth,
+                                 cg_buffer_t *text) {
+    if (literal.len < 2 || literal.ptr[0] != '"' || literal.ptr[literal.len - 1] != '"') return false;
+    const size_t end = literal.len - 1;
+    for (size_t i = 1; i < end; ++i) {
         char ch = literal.ptr[i];
         if (ch == '\\') {
-            if (++i >= literal.len - 1) { valid = false; break; }
+            if (++i >= end) return false;
             ch = literal.ptr[i];
             switch (ch) {
                 case 'n': ch = '\n'; break;
@@ -230,27 +309,150 @@ static cg_value_t kotlin_box_literal(kotlin_backend_context *ctx, psl_str litera
                 case 't': ch = '\t'; break;
                 case 'b': ch = '\b'; break;
                 case '"': case '\'': case '\\': case '$': break;
-                default: valid = false; break;
+                default: return false;
             }
-        } else if (ch == '$' || ch == '\n' || ch == '\r' || ch == '\0') {
-            valid = false;
+        } else if (ch == '$' && i + 1 < end) {
+            size_t start = i + 1;
+            if (literal.ptr[start] == '{') {
+                ++start;
+                size_t stop = start;
+                while (stop < end && literal.ptr[stop] != '}') ++stop;
+                if (stop == end || !kotlin_append_interpolation(
+                        text, psl_str_make(literal.ptr + start, stop - start), env, depth)) return false;
+                i = stop;
+                continue;
+            }
+            if (kotlin_name_byte(literal.ptr[start], true)) {
+                size_t stop = start + 1;
+                while (stop < end && kotlin_name_byte(literal.ptr[stop], false)) ++stop;
+                const struct kt_const *value = kotlin_constant(env, psl_str_make(literal.ptr + start, stop - start));
+                if (!value || !kotlin_append_constant(text, value)) return false;
+                i = stop - 1;
+                continue;
+            }
+        } else if (ch == '\n' || ch == '\r' || ch == '\0') {
+            return false;
         }
-        if (!valid) break;
-        data[size++] = ch;
+        if (!kotlin_text_append(text, &ch, 1)) return false;
     }
-    cg_value_t result = CG_INVALID;
-    if (valid) {
-        data[size++] = '\0';
-        cg_builder_t *builder = kotlin_backend_builder(ctx);
-        char name[48];
-        snprintf(name, sizeof(name), "kotlin_string_%" PRIu32, builder->module->symbols.count);
-        cg_symbol_t symbol = cg_module_add_data(builder->module, name, (uint32_t)size, 1,
-                                                data, CG_DATA_RO, CG_BIND_LOCAL);
-        if (symbol != CG_INVALID) result = cg_build_symaddr(builder, symbol);
-    }
-    free(data);
-    return result;
+    return true;
 }
+
+static bool kotlin_eval_constant_binary(kotlin_node_tag op, const struct kt_const *left,
+                                        const struct kt_const *right, struct kt_const *out) {
+    if (left->kind != right->kind) return false;
+    if (op == KOTLIN_NODE_EQ || op == KOTLIN_NODE_NEQ) {
+        bool equal = left->kind == KT_CONST_TEXT
+            ? left->text.bytes.count == right->text.bytes.count &&
+                (!left->text.bytes.count || !memcmp(left->text.bytes.data, right->text.bytes.data,
+                                                    left->text.bytes.count))
+            : left->number == right->number;
+        out->kind = KT_CONST_BOOL;
+        out->number = op == KOTLIN_NODE_EQ ? equal : !equal;
+        return true;
+    }
+    if (left->kind == KT_CONST_TEXT && op == KOTLIN_NODE_ADD) {
+        out->kind = KT_CONST_TEXT;
+        return kotlin_append_constant(&out->text, left) && kotlin_append_constant(&out->text, right);
+    }
+    if (left->kind != KT_CONST_INT) return false;
+    uint32_t bits;
+    switch (op) {
+        case KOTLIN_NODE_ADD: bits = (uint32_t)left->number + (uint32_t)right->number; break;
+        case KOTLIN_NODE_SUB: bits = (uint32_t)left->number - (uint32_t)right->number; break;
+        case KOTLIN_NODE_MUL: bits = (uint32_t)left->number * (uint32_t)right->number; break;
+        default: return false;
+    }
+    out->kind = KT_CONST_INT;
+    out->number = (int32_t)(bits <= INT32_MAX ? (int64_t)bits : (int64_t)bits - INT64_C(4294967296));
+    return true;
+}
+
+static bool kotlin_eval_constant(const kotlin_node *node, const struct kt_constants *env,
+                                 unsigned depth, struct kt_const *out) {
+    if (depth >= 64) return false;
+    switch (node->tag) {
+        case KOTLIN_NODE_STRLIT:
+            out->kind = KT_CONST_TEXT;
+            return kotlin_eval_template(node->children[0]->text_val, env, depth, &out->text);
+        case KOTLIN_NODE_INTLIT: {
+            const double number = node->children[0]->num_val;
+            if (!(number >= 0 && number <= INT32_MAX)) return false;
+            out->kind = KT_CONST_INT;
+            out->number = (int32_t)number;
+            return true;
+        }
+        case KOTLIN_NODE_BOOLLIT:
+            out->kind = KT_CONST_BOOL;
+            out->number = node->children[0]->bool_val;
+            return true;
+        case KOTLIN_NODE_VAR: {
+            const struct kt_const *value = kotlin_constant(env, node->children[0]->text_val);
+            if (!value) return false;
+            out->kind = value->kind;
+            out->number = value->number;
+            return value->kind != KT_CONST_TEXT || kotlin_append_constant(&out->text, value);
+        }
+        case KOTLIN_NODE_BIN: {
+            struct kt_const left = {0}, right = {0};
+            bool ok = kotlin_eval_constant(node->children[1], env, depth + 1, &left) &&
+                      kotlin_eval_constant(node->children[2], env, depth + 1, &right) &&
+                      kotlin_eval_constant_binary(node->children[0]->tag, &left, &right, out);
+            cg_buffer_free(&left.text);
+            cg_buffer_free(&right.text);
+            return ok;
+        }
+        default: return false;
+    }
+}
+
+enum kt_flow { KT_FAILED, KT_CONTINUE, KT_RETURN };
+
+static enum kt_flow kotlin_eval_box_block(const kotlin_node *body, struct kt_constants *env,
+                                          unsigned depth, struct kt_const *out) {
+    if (depth >= 64) return KT_FAILED;
+    const size_t saved = env->count;
+    enum kt_flow flow = KT_CONTINUE;
+    for (size_t i = 0; i < body->child_count && flow == KT_CONTINUE; ++i) {
+        const kotlin_node *stmt = body->children[i];
+        if (stmt->tag == KOTLIN_NODE_VALSTMT && !stmt->children[0]->bool_val &&
+            !stmt->children[2]->text_val.len && stmt->children[3]->child_count == 1 &&
+            env->count < sizeof(env->bindings) / sizeof(env->bindings[0])) {
+            struct kt_binding *binding = &env->bindings[env->count];
+            *binding = (struct kt_binding){.name = stmt->children[1]->text_val};
+            bool ok = kotlin_eval_constant(stmt->children[3]->children[0], env, depth + 1, &binding->value);
+            ++env->count;
+            if (!ok) flow = KT_FAILED;
+        } else if (stmt->tag == KOTLIN_NODE_IFSTMT) {
+            struct kt_const condition = {0};
+            if (kotlin_eval_constant(stmt->children[0], env, depth + 1, &condition) &&
+                condition.kind == KT_CONST_BOOL) {
+                flow = kotlin_eval_box_block(stmt->children[condition.number ? 1 : 2], env, depth + 1, out);
+            } else {
+                flow = KT_FAILED;
+            }
+            cg_buffer_free(&condition.text);
+        } else if (stmt->tag == KOTLIN_NODE_RETURNSTMT && stmt->children[0]->child_count == 1) {
+            flow = kotlin_eval_constant(stmt->children[0]->children[0], env, depth + 1, out)
+                ? KT_RETURN : KT_FAILED;
+        } else {
+            flow = KT_FAILED;
+        }
+    }
+    while (env->count > saved) cg_buffer_free(&env->bindings[--env->count].value.text);
+    return flow;
+}
+
+static cg_value_t kotlin_emit_box_text(kotlin_backend_context *ctx, cg_buffer_t *text) {
+    if (!cg_buffer_u8(text, 0)) return CG_INVALID;
+    cg_builder_t *builder = kotlin_backend_builder(ctx);
+    char name[48];
+    snprintf(name, sizeof(name), "kotlin_string_%" PRIu32, builder->module->symbols.count);
+    cg_symbol_t symbol = cg_module_add_data(builder->module, name, text->bytes.count, 1,
+                                            text->bytes.data, CG_DATA_RO, CG_BIND_LOCAL);
+    return symbol == CG_INVALID ? CG_INVALID : cg_build_symaddr(builder, symbol);
+}
+
 
 static bool kotlin_box_return_type(const kotlin_node *types) {
     if (!types->child_count) return true;
@@ -292,12 +494,20 @@ static cg_value_t kotlin_lower_box_function(kotlin_backend_context *ctx, const k
         !kotlin_box_return_type(function->children[2])) return CG_INVALID;
     const kotlin_node *scope = function->children[3];
     const kotlin_node *body = scope->children[2];
-    if (scope->children[1]->child_count || body->child_count != 1 ||
-        body->children[0]->tag != KOTLIN_NODE_RETURNSTMT) return CG_INVALID;
+    if (scope->children[1]->child_count) return CG_INVALID;
+    struct kt_constants env = {0};
+    struct kt_const constant = {0};
+    const enum kt_flow flow = kotlin_eval_box_block(body, &env, 0, &constant);
+    cg_value_t value = flow == KT_RETURN && constant.kind == KT_CONST_TEXT
+        ? kotlin_emit_box_text(ctx, &constant.text) : CG_INVALID;
+    cg_buffer_free(&constant.text);
+    if (value != CG_INVALID) return value;
+    if (body->child_count != 1 || body->children[0]->tag != KOTLIN_NODE_RETURNSTMT)
+        return CG_INVALID;
     const kotlin_node *returns = body->children[0]->children[0];
     if (returns->child_count != 1) return CG_INVALID;
     const kotlin_node *expr = returns->children[0];
-    if (expr->tag == KOTLIN_NODE_STRLIT) return kotlin_box_literal(ctx, expr->children[0]->text_val);
+
     if (expr->tag == KOTLIN_NODE_CALL && !expr->children[1]->child_count) {
         const kotlin_node *callee = kotlin_call_target(scope_decls, expr->children[0]->text_val);
         return kotlin_lower_box_function(ctx, callee, decls, scope_decls, depth + 1);
