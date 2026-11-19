@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.17.0
+
+- Preserve variadic constructor parameters and their default expressions in the Kotlin AST.
+
 ## 2.16.1
 
 - Allow annotation class declarations alongside declarative Kotlin native entry points.

@@ -108,6 +108,7 @@ data KtStmt
 
 data KtParam
   = Param Text Text Text
+  | ExtendedClassParam Text Text Text Bool [KtExpr]
   | FunctionParam Text Text Bool [KtExpr]
 
 data KtFunctionScope

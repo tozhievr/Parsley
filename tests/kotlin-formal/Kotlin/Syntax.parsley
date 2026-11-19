@@ -165,13 +165,31 @@ classParamMut
     pure ""
 
 classParam :: KtParam
-classParam = do
-  _    <- many modifier
-  mut  <- classParamMut
-  name <- identifier
-  ":"
-  ty   <- typeExpr
-  pure (Param mut name ty)
+classParam
+  =  do
+    _        <- many modifier
+    "vararg"
+    mut      <- classParamMut
+    name     <- identifier
+    ":"
+    ty       <- typeExpr
+    default_ <- optInit
+    pure (ExtendedClassParam mut name ty True default_)
+  |  do
+    _    <- many modifier
+    mut  <- classParamMut
+    name <- identifier
+    ":"
+    ty   <- typeExpr
+    e    <- "=" *> expr
+    pure (ExtendedClassParam mut name ty False [e])
+  |  do
+    _    <- many modifier
+    mut  <- classParamMut
+    name <- identifier
+    ":"
+    ty   <- typeExpr
+    pure (Param mut name ty)
 
 interfaceDecl :: KtDecl
 interfaceDecl = do
